@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install package dependencies
+        run: dart pub get
+
+      - name: Install Python benchmark dependencies
+        run: uv sync
+
+      - name: Analyze package
+        run: dart analyze
+
+      - name: Run tests with coverage
+        run: dart test --coverage=coverage
+
+      - name: Install example dependencies
+        working-directory: example
+        run: flutter pub get
+
+      - name: Build macOS example
+        working-directory: example
+        run: flutter build macos --debug
+
+      - name: Build iOS simulator example
+        working-directory: example
+        run: flutter build ios --simulator --debug
+
+      - name: Validate pub.dev package contents
+        run: dart pub publish --dry-run
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-json
+          path: coverage/
+
+  parity:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: core
+            groups: arith,unary_reduce,tensor,index_extra,misc
+          - id: advanced
+            groups: scan,conv,linalg,fast,quant
+          - id: random
+            groups: random
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Dart dependencies
+        run: dart pub get
+
+      - name: Install Python parity dependencies
+        run: uv sync
+
+      - name: Run Python parity group
+        run: .venv/bin/python benchmark/parity_py.py --groups "${{ matrix.groups }}" > benchmark/out/parity_python_${{ matrix.id }}.json
+
+      - name: Run Dart parity group
+        run: dart --packages=.dart_tool/package_config.json benchmark/parity_dart.dart --groups="${{ matrix.groups }}" > benchmark/out/parity_dart_${{ matrix.id }}.json
+
+      - name: Compare parity group
+        run: python3 benchmark/parity_compare.py --python-json benchmark/out/parity_python_${{ matrix.id }}.json --dart-json benchmark/out/parity_dart_${{ matrix.id }}.json --output benchmark/out/parity_report_${{ matrix.id }}.json

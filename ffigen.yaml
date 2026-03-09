@@ -1,0 +1,27 @@
+# Run with `dart run ffigen --config ffigen.yaml`.
+name: MlxBindings
+description: |
+  Bindings for the vendored MLX C API.
+
+  Regenerate bindings with `dart run ffigen --config ffigen.yaml`.
+output: 'lib/src/raw/mlx_bindings.g.dart'
+headers:
+  entry-points:
+    - 'third_party/mlx-c/mlx/c/mlx.h'
+  include-directives:
+    - '**/mlx/c/*.h'
+compiler-opts:
+  - '-Ithird_party/mlx-c'
+  - '-Ithird_party/mlx'
+ffi-native:
+  asset-id: 'package:dart_mlx_ffi/dart_mlx_ffi_bindings_generated.dart'
+comments:
+  style: any
+  length: full
+silence-enum-warning: true
+functions:
+  exclude:
+    - '_mlx_error'
+globals:
+  exclude:
+    - 'mlx_array_empty'

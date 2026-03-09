@@ -1,0 +1,52 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install package dependencies
+        run: dart pub get
+
+      - name: Analyze package
+        run: dart analyze
+
+      - name: Run tests
+        run: dart test
+
+      - name: Install example dependencies
+        working-directory: example
+        run: flutter pub get
+
+      - name: Build macOS example
+        working-directory: example
+        run: flutter build macos --debug
+
+      - name: Build iOS simulator example
+        working-directory: example
+        run: flutter build ios --simulator --debug
+
+      - name: Validate pub.dev package contents
+        run: dart pub publish --dry-run
+
+  publish:
+    needs: validate
+    permissions:
+      id-token: write
+      contents: read
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1

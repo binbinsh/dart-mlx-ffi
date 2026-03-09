@@ -1,0 +1,52 @@
+# System files
+.DS_Store
+*.class
+*.log
+*.swp
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IDE files
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Dart and Flutter
+# Libraries should not include pubspec.lock, per
+# https://dart.dev/guides/libraries/private-files#pubspeclock.
+/pubspec.lock
+.dart_tool/
+.flutter-plugins-dependencies
+/coverage/
+**/doc/api/
+
+# Python and uv
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Native build outputs
+**/build/
+**/CMakeCache.txt
+**/CMakeFiles/
+**/cmake_install.cmake
+**/compile_commands.json
+**/build.ninja
+**/.ninja_deps
+**/.ninja_log
+**/_deps/
+**/*.dSYM/
+DerivedData/

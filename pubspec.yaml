@@ -1,0 +1,31 @@
+name: dart_mlx_ffi
+description: Production-ready Dart FFI bindings for MLX C on Apple platforms.
+version: 26.0308.1557
+homepage: https://github.com/binbinsh/dart-mlx-ffi
+repository: https://github.com/binbinsh/dart-mlx-ffi
+issue_tracker: https://github.com/binbinsh/dart-mlx-ffi/issues
+documentation: https://ml-explore.github.io/mlx-c/
+
+topics:
+  - ffi
+  - machine-learning
+  - apple-silicon
+  - mlx
+
+platforms:
+  ios:
+  macos:
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  code_assets: ^1.0.0
+  ffi: ^2.1.4
+  hooks: ^1.0.0
+  logging: ^1.3.0
+
+dev_dependencies:
+  ffigen: ^20.1.1
+  flutter_lints: ^6.0.0
+  test: ^1.28.0
