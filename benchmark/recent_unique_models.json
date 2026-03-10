@@ -1,0 +1,52 @@
+[
+  {
+    "model_id": "mlx-community/JOSIE-1.1-4B-Instruct-4bit",
+    "kind": "text",
+    "published_at": "2026-03-09T13:02:20+00:00"
+  },
+  {
+    "model_id": "mlx-community/GLM-4.7-Flash-abliterated-mxfp8",
+    "kind": "text",
+    "published_at": "2026-03-07T06:24:54+00:00"
+  },
+  {
+    "model_id": "mlx-community/Ming-omni-tts-0.5B-4bit",
+    "kind": "tts",
+    "published_at": "2026-03-07T00:41:05+00:00"
+  },
+  {
+    "model_id": "mlx-community/MiniCPM-o-4_5-4bit",
+    "kind": "vlm",
+    "published_at": "2026-03-06T17:10:26+00:00"
+  },
+  {
+    "model_id": "mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit",
+    "kind": "vlm",
+    "published_at": "2026-03-10T06:30:07+00:00"
+  },
+  {
+    "model_id": "mlx-community/tiny-aya-fire-4bit",
+    "kind": "text",
+    "published_at": "2026-03-05T21:53:49+00:00"
+  },
+  {
+    "model_id": "mlx-community/Qwen3.5-0.8B-4bit",
+    "kind": "vlm",
+    "published_at": "2026-03-05T15:10:26+00:00"
+  },
+  {
+    "model_id": "mlx-community/Huihui-Qwen3.5-27B-abliterated-6bit",
+    "kind": "text",
+    "published_at": "2026-03-04T21:27:58+00:00"
+  },
+  {
+    "model_id": "mlx-community/IQuest-Coder-V1-7B-Thinking-mlx_8bit",
+    "kind": "text",
+    "published_at": "2026-03-03T22:49:27+00:00"
+  },
+  {
+    "model_id": "mlx-community/DASD-4B-Thinking-bfloat16",
+    "kind": "text",
+    "published_at": "2026-03-01T19:02:30+00:00"
+  }
+]
