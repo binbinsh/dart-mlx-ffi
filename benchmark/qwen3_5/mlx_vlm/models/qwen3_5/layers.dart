@@ -10,8 +10,7 @@ extension on Qwen3_5Runner {
     MlxArray input,
     int seqLen, {
     int? layerIndex,
-  }
-  ) {
+  }) {
     final wantedLayer = int.tryParse(
       Platform.environment['QWEN35_TRACE_LAYER'] ?? '',
     );
@@ -92,8 +91,12 @@ extension on Qwen3_5Runner {
       kRope,
       v4,
       scale: 1 / math.sqrt(config.headDim),
-      maskMode: Platform.environment['QWEN35_FORCE_MASK'] == '1' ? '' : 'causal',
-      mask: Platform.environment['QWEN35_FORCE_MASK'] == '1' ? _causalMask(seqLen) : null,
+      maskMode: Platform.environment['QWEN35_FORCE_MASK'] == '1'
+          ? ''
+          : 'causal',
+      mask: Platform.environment['QWEN35_FORCE_MASK'] == '1'
+          ? _causalMask(seqLen)
+          : null,
     );
     if (traceFull) {
       stderr.writeln('qwen35_run: full attn ${_previewAttn(attn)}');
@@ -143,19 +146,21 @@ extension on Qwen3_5Runner {
     final traceLinear =
         Platform.environment['QWEN35_TRACE_LINEAR'] == '1' &&
         (wantedLayer == null || wantedLayer == layerIndex);
-    final dumpLayer = int.tryParse(Platform.environment['QWEN35_DUMP_LAYER'] ?? '');
+    final dumpLayer = int.tryParse(
+      Platform.environment['QWEN35_DUMP_LAYER'] ?? '',
+    );
     final dumpStage = Platform.environment['QWEN35_DUMP_STAGE'];
     final dumpPath = Platform.environment['QWEN35_DUMP_PATH'];
     final linearInput = _useHighRankLinear
         ? input
         : input.reshape([seqLen, config.hiddenSize]);
-    final mixedQkv = layer.inProjQkv.apply(linearInput, config: config).reshape([
-      1,
-      seqLen,
-      layer.convWeight.shape[0],
-    ]);
+    final mixedQkv = layer.inProjQkv.apply(linearInput, config: config).reshape(
+      [1, seqLen, layer.convWeight.shape[0]],
+    );
     if (traceLinear) {
-      stderr.writeln('qwen35_run: linear mixed_qkv ${_previewLastSeq(mixedQkv)}');
+      stderr.writeln(
+        'qwen35_run: linear mixed_qkv ${_previewLastSeq(mixedQkv)}',
+      );
     }
     final z = layer.inProjZ.apply(linearInput, config: config).reshape([
       1,
@@ -205,7 +210,9 @@ extension on Qwen3_5Runner {
     }
     final siluConv = _silu(convOut);
     if (traceLinear) {
-      stderr.writeln('qwen35_run: linear conv_out ${_previewLastSeq(siluConv)}');
+      stderr.writeln(
+        'qwen35_run: linear conv_out ${_previewLastSeq(siluConv)}',
+      );
     }
     convOut.close();
 
@@ -228,7 +235,10 @@ extension on Qwen3_5Runner {
           config.linearKeyHeadDim,
         ]);
     final v = siluConv
-        .slice(start: [0, 0, 2 * keyDim], stop: [1, seqLen, 2 * keyDim + valueDim])
+        .slice(
+          start: [0, 0, 2 * keyDim],
+          stop: [1, seqLen, 2 * keyDim + valueDim],
+        )
         .reshape([
           1,
           seqLen,
@@ -243,7 +253,11 @@ extension on Qwen3_5Runner {
 
     final invScale = 1 / math.sqrt(config.linearKeyHeadDim.toDouble());
     final qNorm = mx.fast.rmsNorm(q, eps: 1e-6);
-    final qScale = _broadcastScalar(invScale * invScale, qNorm.shape, qNorm.dtype);
+    final qScale = _broadcastScalar(
+      invScale * invScale,
+      qNorm.shape,
+      qNorm.dtype,
+    );
     final qScaled = qNorm * qScale;
     qScale.close();
     qNorm.close();
@@ -254,7 +268,9 @@ extension on Qwen3_5Runner {
       Qwen3_5Runner._dumpAny(qScaled, dumpPath);
     }
     if (traceLinear) {
-      stderr.writeln('qwen35_run: linear q_scaled ${_previewLastHead(qScaled)}');
+      stderr.writeln(
+        'qwen35_run: linear q_scaled ${_previewLastHead(qScaled)}',
+      );
     }
     final kNorm = mx.fast.rmsNorm(k, eps: 1e-6);
     final kScale = _broadcastScalar(invScale, kNorm.shape, kNorm.dtype);
@@ -268,7 +284,9 @@ extension on Qwen3_5Runner {
       Qwen3_5Runner._dumpAny(kScaled, dumpPath);
     }
     if (traceLinear) {
-      stderr.writeln('qwen35_run: linear k_scaled ${_previewLastHead(kScaled)}');
+      stderr.writeln(
+        'qwen35_run: linear k_scaled ${_previewLastHead(kScaled)}',
+      );
     }
     q.close();
     k.close();
@@ -298,7 +316,9 @@ extension on Qwen3_5Runner {
       Qwen3_5Runner._dumpAny(out, dumpPath);
     }
     if (traceLinear) {
-      stderr.writeln('qwen35_run: linear gdelta_out ${_previewLastLinear(out)}');
+      stderr.writeln(
+        'qwen35_run: linear gdelta_out ${_previewLastLinear(out)}',
+      );
     }
 
     final norm = mx.fast.rmsNorm(
@@ -329,7 +349,11 @@ extension on Qwen3_5Runner {
       stderr.writeln('qwen35_run: linear gated ${_previewLastLinear(gated)}');
     }
     final outInput = _useHighRankLinear
-        ? gated.reshape([1, seqLen, config.linearNumValueHeads * config.linearValueHeadDim])
+        ? gated.reshape([
+            1,
+            seqLen,
+            config.linearNumValueHeads * config.linearValueHeadDim,
+          ])
         : gated.reshape([
             seqLen,
             config.linearNumValueHeads * config.linearValueHeadDim,
@@ -355,7 +379,9 @@ extension on Qwen3_5Runner {
     MlxArray dtBias, {
     int? layerIndex,
   }) {
-    final dumpLayer = int.tryParse(Platform.environment['QWEN35_DUMP_LAYER'] ?? '');
+    final dumpLayer = int.tryParse(
+      Platform.environment['QWEN35_DUMP_LAYER'] ?? '',
+    );
     final dumpStage = Platform.environment['QWEN35_DUMP_STAGE'];
     final dumpPath = Platform.environment['QWEN35_DUMP_PATH'];
     final beta = b.sigmoid();
@@ -365,16 +391,12 @@ extension on Qwen3_5Runner {
         dumpLayer == layerIndex) {
       Qwen3_5Runner._dumpAny(beta, dumpPath);
     }
-    final aLogExpanded = aLog.reshape([
-      1,
-      1,
-      config.linearNumValueHeads,
-    ]).broadcastTo(a.shape);
-    final dtBiasExpanded = dtBias.reshape([
-      1,
-      1,
-      config.linearNumValueHeads,
-    ]).broadcastTo(a.shape);
+    final aLogExpanded = aLog
+        .reshape([1, 1, config.linearNumValueHeads])
+        .broadcastTo(a.shape);
+    final dtBiasExpanded = dtBias
+        .reshape([1, 1, config.linearNumValueHeads])
+        .broadcastTo(a.shape);
     final g = _getComputeGCompiled()([aLogExpanded, a, dtBiasExpanded]).first;
     if (dumpLayer != null &&
         dumpPath != null &&
@@ -572,7 +594,7 @@ extension on Qwen3_5Runner {
         expertsForApply,
         config: config,
         sortedIndices: false,
-      )!;
+      );
       final gateOut = gateRaw.reshape([1, seqLen, topK, moeSize]);
       gateRaw.close();
       final upRaw = upProjQ.applyExperts(
@@ -580,7 +602,7 @@ extension on Qwen3_5Runner {
         expertsForApply,
         config: config,
         sortedIndices: false,
-      )!;
+      );
       final upOut = upRaw.reshape([1, seqLen, topK, moeSize]);
       upRaw.close();
       inputForExperts.close();
@@ -589,22 +611,20 @@ extension on Qwen3_5Runner {
       upOut.close();
       final downOut = downProjQ
           .applyExperts(
-            fused.reshape([
-              1,
-              seqLen,
-              topK,
-              1,
-              moeSize,
-            ]),
+            fused.reshape([1, seqLen, topK, 1, moeSize]),
             inds3d,
             config: config,
             sortedIndices: false,
-          )!
+          )
           .reshape([1, seqLen, topK, config.hiddenSize]);
-        fused.close();
+      fused.close();
       final weighted = downOut * normScores.reshape([1, seqLen, topK, 1]);
       downOut.close();
-      final moeY = weighted.sum(axis: 2).reshape([1, seqLen, config.hiddenSize]);
+      final moeY = weighted.sum(axis: 2).reshape([
+        1,
+        seqLen,
+        config.hiddenSize,
+      ]);
       weighted.close();
 
       final sharedGate = layer.sharedGateProj.apply(x2d, config: config);
@@ -723,10 +743,7 @@ extension on Qwen3_5Runner {
     }
     if (rank == 3) {
       return input
-          .slice(
-            start: [0, index, 0],
-            stop: [1, index + 1, input.shape[2]],
-          )
+          .slice(start: [0, index, 0], stop: [1, index + 1, input.shape[2]])
           .reshape(shape);
     }
     throw StateError('Unsupported slice rank: $rank');
@@ -761,9 +778,8 @@ extension on Qwen3_5Runner {
   }
 
   List<double> _previewAttn(MlxArray array, {int limit = 8}) {
-    final resolvedLimit = int.tryParse(
-      Platform.environment['QWEN35_TRACE_LIMIT'] ?? '',
-    ) ?? limit;
+    final resolvedLimit =
+        int.tryParse(Platform.environment['QWEN35_TRACE_LIMIT'] ?? '') ?? limit;
     final last = array
         .slice(
           start: [0, 0, array.shape[2] - 1, 0],
@@ -788,9 +804,8 @@ extension on Qwen3_5Runner {
   }
 
   List<double> _previewLastSeq(MlxArray array, {int limit = 8}) {
-    final resolvedLimit = int.tryParse(
-      Platform.environment['QWEN35_TRACE_LIMIT'] ?? '',
-    ) ?? limit;
+    final resolvedLimit =
+        int.tryParse(Platform.environment['QWEN35_TRACE_LIMIT'] ?? '') ?? limit;
     final last = array.shape.length == 3
         ? array
               .slice(
@@ -814,9 +829,8 @@ extension on Qwen3_5Runner {
   }
 
   List<double> _previewLastHead(MlxArray array, {int limit = 8}) {
-    final resolvedLimit = int.tryParse(
-      Platform.environment['QWEN35_TRACE_LIMIT'] ?? '',
-    ) ?? limit;
+    final resolvedLimit =
+        int.tryParse(Platform.environment['QWEN35_TRACE_LIMIT'] ?? '') ?? limit;
     final last = array
         .slice(
           start: [0, array.shape[1] - 1, 0, 0],
@@ -832,9 +846,8 @@ extension on Qwen3_5Runner {
   }
 
   List<double> _previewLastLinear(MlxArray array, {int limit = 8}) {
-    final resolvedLimit = int.tryParse(
-      Platform.environment['QWEN35_TRACE_LIMIT'] ?? '',
-    ) ?? limit;
+    final resolvedLimit =
+        int.tryParse(Platform.environment['QWEN35_TRACE_LIMIT'] ?? '') ?? limit;
     final flat = array
         .slice(
           start: [0, array.shape[1] - 1, 0, 0],

@@ -40,6 +40,7 @@ __pycache__/
 
 # Benchmark outputs
 /benchmark/out/
+/vendors/
 
 # Native build outputs
 **/build/
