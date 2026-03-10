@@ -2,41 +2,8 @@ part of 'qwen3_5.dart';
 
 MlxMetalKernel? _gatedDeltaKernel;
 bool _gatedDeltaKernelTried = false;
-MlxFunction? _gatedDeltaStepCompiled;
 MlxFunction? _swiGluCompiled;
 MlxFunction? _computeGCompiled;
-
-MlxFunction _getGatedDeltaStepCompiled() {
-  final existing = _gatedDeltaStepCompiled;
-  if (existing != null) {
-    return existing;
-  }
-  final fn = MlxFunction.fromCallback((args) {
-    final q = args[0];
-    final k = args[1];
-    final v = args[2];
-    final g = args[3];
-    final beta = args[4];
-    final state = args[5];
-    final decay = g.reshape([g.shape[0], g.shape[1], 1, 1]);
-    final decayed = state * decay;
-    decay.close();
-    final kvMem = (decayed * k.reshape([k.shape[0], k.shape[1], 1, k.shape[2]])).sum(axis: 3);
-    final delta = (v - kvMem) * beta.reshape([beta.shape[0], beta.shape[1], 1]);
-    kvMem.close();
-    final newState =
-        decayed +
-        k.reshape([k.shape[0], k.shape[1], 1, k.shape[2]]) *
-            delta.reshape([delta.shape[0], delta.shape[1], delta.shape[2], 1]);
-    decayed.close();
-    final y =
-        (newState * q.reshape([q.shape[0], q.shape[1], 1, q.shape[2]])).sum(axis: 3);
-    return [y, newState];
-  });
-  _gatedDeltaStepCompiled = fn.compile(shapeless: true);
-  fn.close();
-  return _gatedDeltaStepCompiled!;
-}
 
 MlxFunction _getSwiGluCompiled() {
   final existing = _swiGluCompiled;

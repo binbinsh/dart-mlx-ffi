@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 
@@ -17,7 +18,7 @@ void main(List<String> args) {
       ),
     );
   }
-  print(jsonEncode(results));
+  stdout.writeln(jsonEncode(results));
 }
 
 Map<String, Object?> parityCases() {
@@ -119,7 +120,10 @@ Map<String, Object?> parityCases() {
   final miscIn = f32([4], 67);
   final miscPos = pos([4], 69);
   final roundIn = f32([4], 71);
-  final erfinvIn = MlxArray.fromFloat32List([-0.75, -0.25, 0.25, 0.75], shape: [4]);
+  final erfinvIn = MlxArray.fromFloat32List(
+    [-0.75, -0.25, 0.25, 0.75],
+    shape: [4],
+  );
   final special = MlxArray.fromFloat32List(
     [double.nan, double.infinity, double.negativeInfinity, 1.0],
     shape: [4],
@@ -149,15 +153,25 @@ Map<String, Object?> parityCases() {
     'repeat': enc(mx.repeat(v3, 2)),
     'roll': enc(mx.roll(v4, [1])),
     'median': enc(mx.median(miscIn)),
-    'nan_to_num': enc(mx.nanToNum(special, nan: 0.0, posInf: 9.0, negInf: -9.0)),
-    'divmod_q': enc(mx.divmod(
-      MlxArray.fromFloat32List([5.0, 7.0], shape: [2]),
-      MlxArray.fromFloat32List([2.0, 2.0], shape: [2]),
-    ).quotient),
-    'divmod_r': enc(mx.divmod(
-      MlxArray.fromFloat32List([5.0, 7.0], shape: [2]),
-      MlxArray.fromFloat32List([2.0, 2.0], shape: [2]),
-    ).remainder),
+    'nan_to_num': enc(
+      mx.nanToNum(special, nan: 0.0, posInf: 9.0, negInf: -9.0),
+    ),
+    'divmod_q': enc(
+      mx
+          .divmod(
+            MlxArray.fromFloat32List([5.0, 7.0], shape: [2]),
+            MlxArray.fromFloat32List([2.0, 2.0], shape: [2]),
+          )
+          .quotient,
+    ),
+    'divmod_r': enc(
+      mx
+          .divmod(
+            MlxArray.fromFloat32List([5.0, 7.0], shape: [2]),
+            MlxArray.fromFloat32List([2.0, 2.0], shape: [2]),
+          )
+          .remainder,
+    ),
   };
 
   final scanInput = f32([6], 75);
@@ -187,7 +201,9 @@ Map<String, Object?> parityCases() {
     'conv2d': enc(mx.conv2d(conv2In, conv2W, padding: [1, 1])),
     'conv3d': enc(mx.conv3d(conv3In, conv3W, padding: [1, 1, 1])),
     'conv_transpose1d': enc(mx.convTranspose1d(conv1In, conv1W, padding: 1)),
-    'conv_transpose2d': enc(mx.convTranspose2d(conv2In, conv2W, padding: [1, 1])),
+    'conv_transpose2d': enc(
+      mx.convTranspose2d(conv2In, conv2W, padding: [1, 1]),
+    ),
   };
 
   final base = f32([3, 3], 93);
@@ -197,10 +213,7 @@ Map<String, Object?> parityCases() {
   );
   final rhs = f32([3, 2], 95);
   final tri = mx.tril(spd);
-  final eigSpd = mx.add(
-    spd,
-    mx.multiply(mx.eye(3, m: 3), full([3, 3], 0.25)),
-  );
+  final eigSpd = mx.add(spd, mx.multiply(mx.eye(3, m: 3), full([3, 3], 0.25)));
   final svdIn = f32([3, 3], 97);
   final qr = mx.linalg.qr(svdIn);
   final eigh = mx.linalg.eigh(eigSpd);
@@ -214,9 +227,16 @@ Map<String, Object?> parityCases() {
     'cross': enc(mx.linalg.cross(f32([3], 99), f32([3], 101))),
     'qr_reconstruct': enc(mx.matmul(qr.q, qr.r)),
     'eigh_values': enc(eigh.values),
-    'eigh_reconstruct': enc(mx.matmul(mx.matmul(eigh.vectors, mx.diag(eigh.values)), eigh.vectors.transpose())),
+    'eigh_reconstruct': enc(
+      mx.matmul(
+        mx.matmul(eigh.vectors, mx.diag(eigh.values)),
+        eigh.vectors.transpose(),
+      ),
+    ),
     'svd_values': enc(svd.s),
-    'svd_reconstruct': enc(mx.matmul(mx.matmul(svd.u!, mx.diag(svd.s)), svd.vt!)),
+    'svd_reconstruct': enc(
+      mx.matmul(mx.matmul(svd.u!, mx.diag(svd.s)), svd.vt!),
+    ),
     'solve_triangular': enc(mx.linalg.solveTriangular(tri, rhs, upper: false)),
   };
 
@@ -236,13 +256,41 @@ Map<String, Object?> parityCases() {
 
   final qWeights = f32([4, 32], 113);
   final qInput = f32([2, 32], 115);
-  final quantized = mx.quant.quantize(qWeights, groupSize: 32, bits: 8, mode: 'affine');
-  final qqInput = f32([1, 16], 117);
-  final qqWeights = f32([2, 16], 119);
+  final quantized = mx.quant.quantize(
+    qWeights,
+    groupSize: 32,
+    bits: 8,
+    mode: 'affine',
+  );
   cases['quant'] = {
-    'dequantize': enc(mx.quant.dequantize(quantized, groupSize: 32, bits: 8, mode: 'affine', dtype: MlxDType.MLX_FLOAT32)),
-    'quantized_matmul': enc(mx.quant.matmul(qInput, quantized, transpose: true, groupSize: 32, bits: 8, mode: 'affine')),
-    'gather_qmm': enc(mx.quant.gatherQmm(qInput, quantized, groupSize: 32, bits: 8, mode: 'affine')),
+    'dequantize': enc(
+      mx.quant.dequantize(
+        quantized,
+        groupSize: 32,
+        bits: 8,
+        mode: 'affine',
+        dtype: MlxDType.MLX_FLOAT32,
+      ),
+    ),
+    'quantized_matmul': enc(
+      mx.quant.matmul(
+        qInput,
+        quantized,
+        transpose: true,
+        groupSize: 32,
+        bits: 8,
+        mode: 'affine',
+      ),
+    ),
+    'gather_qmm': enc(
+      mx.quant.gatherQmm(
+        qInput,
+        quantized,
+        groupSize: 32,
+        bits: 8,
+        mode: 'affine',
+      ),
+    ),
   };
 
   final p = MlxArray.fromFloat32List([0.2, 0.7], shape: [2]);
@@ -260,12 +308,27 @@ Map<String, Object?> parityCases() {
     'split_second': enc(split.second),
     'seed_uniform': enc(seedUniform),
     'seed_normal': enc(seedNormal),
-    'bernoulli': enc(mx.random.bernoulli(p, shape: [2], key: mx.random.key(2001))),
-    'categorical': enc(mx.random.categorical(logits, axis: -1, numSamples: 4, key: mx.random.key(2002))),
-    'permutation': enc(mx.random.permutation(permInput, axis: 0, key: mx.random.key(2003))),
-    'permutation_arange': enc(mx.random.permutationArange(4, key: mx.random.key(2004))),
+    'bernoulli': enc(
+      mx.random.bernoulli(p, shape: [2], key: mx.random.key(2001)),
+    ),
+    'categorical': enc(
+      mx.random.categorical(
+        logits,
+        axis: -1,
+        numSamples: 4,
+        key: mx.random.key(2002),
+      ),
+    ),
+    'permutation': enc(
+      mx.random.permutation(permInput, axis: 0, key: mx.random.key(2003)),
+    ),
+    'permutation_arange': enc(
+      mx.random.permutationArange(4, key: mx.random.key(2004)),
+    ),
     'gumbel': enc(mx.random.gumbel([2, 2], key: mx.random.key(2005))),
-    'laplace': enc(mx.random.laplace([2, 2], loc: 1.0, scale: 0.5, key: mx.random.key(2006))),
+    'laplace': enc(
+      mx.random.laplace([2, 2], loc: 1.0, scale: 0.5, key: mx.random.key(2006)),
+    ),
     'randint': enc(mx.random.randint(0, 10, [4], key: mx.random.key(2007))),
   };
 
@@ -290,15 +353,16 @@ Map<String, Object?> enc(MlxArray x) {
 }
 
 MlxArray f32(List<int> shape, int seed, {int divisor = 64}) =>
-    MlxArray.fromFloat32List(f32List(numel(shape), seed, divisor), shape: shape);
+    MlxArray.fromFloat32List(
+      f32List(numel(shape), seed, divisor),
+      shape: shape,
+    );
 
-List<double> f32List(int count, int seed, int divisor) => List<double>.generate(
-  count,
-  (index) {
-    final numerator = ((index * (seed * 2 + 1) + seed * 7 + 13) % 257) - 128;
-    return numerator / divisor;
-  },
-);
+List<double> f32List(int count, int seed, int divisor) =>
+    List<double>.generate(count, (index) {
+      final numerator = ((index * (seed * 2 + 1) + seed * 7 + 13) % 257) - 128;
+      return numerator / divisor;
+    });
 
 MlxArray pos(List<int> shape, int seed) => MlxArray.fromFloat32List(
   f32List(numel(shape), seed, 32).map((v) => v.abs() + 0.25).toList(),
@@ -308,12 +372,18 @@ MlxArray pos(List<int> shape, int seed) => MlxArray.fromFloat32List(
 MlxArray absPos(MlxArray x) => mx.add(mx.abs(x), full(x.shape, 0.25));
 
 MlxArray ivec(List<int> shape, int seed, int mod) => MlxArray.fromInt32List(
-  List<int>.generate(numel(shape), (index) => ((index * (seed + 3)) + seed) % mod),
+  List<int>.generate(
+    numel(shape),
+    (index) => ((index * (seed + 3)) + seed) % mod,
+  ),
   shape: shape,
 );
 
 MlxArray bvec(List<int> shape, int seed) => MlxArray.fromBoolList(
-  List<bool>.generate(numel(shape), (index) => (((index * (seed + 5)) + seed) % 2) == 0),
+  List<bool>.generate(
+    numel(shape),
+    (index) => (((index * (seed + 5)) + seed) % 2) == 0,
+  ),
   shape: shape,
 );
 
