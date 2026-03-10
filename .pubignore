@@ -1,11 +1,14 @@
 .dart_tool/
 coverage/
+**/__pycache__/
+*.pyc
 example/.dart_tool/
 example/build/
 example/android/
 example/linux/
 example/web/
 example/windows/
+benchmark/out/
 
 third_party/fmt/doc/
 third_party/fmt/support/
