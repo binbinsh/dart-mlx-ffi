@@ -2,11 +2,12 @@
 
 ## Versioning
 
-- This package uses the version format `YY.MMDD.HHMM`.
-- Example: `26.0308.1557` means `2026-03-08 15:57`.
+- This package uses the canonical pub.dev-friendly version format `YY.MDD.HHMM`.
+- The middle segment is `month + day` without unnecessary leading zeroes.
+- Example: `26.308.1557` means `2026-03-08 15:57`.
 - Update [`pubspec.yaml`](/Users/binbinsh/Projects/Personal/dart-mlx-ffi/pubspec.yaml) and [`CHANGELOG.md`](/Users/binbinsh/Projects/Personal/dart-mlx-ffi/CHANGELOG.md) together.
-- Git tags must match the pubspec version and use the form `vYY.MMDD.HHMM`.
-- Example tag: `v26.0308.1557`.
+- Git tags must match the pubspec version and use the form `vYY.MDD.HHMM`.
+- Example tag: `v26.308.1557`.
 
 ## File Size
 
@@ -25,3 +26,19 @@
 - Keep Python dependency declarations in [`pyproject.toml`](/Users/binbinsh/Projects/Personal/dart-mlx-ffi/pyproject.toml).
 - Prefer `uv sync` to create/update the local environment and `uv run` to execute Python tooling.
 - Prefer `uv add` and `uv remove` over `pip install` or ad-hoc virtualenvs.
+
+## Publishing
+
+- Refresh the publish benchmark report before releasing:
+  - `uv sync`
+  - `uv run python benchmark/publish_report.py`
+- Validate locally before release:
+  - `dart analyze`
+  - `dart test`
+  - `dart pub publish --dry-run`
+- Manual first publish:
+  - `dart pub publish`
+- GitHub Actions auto-publish can be enabled after the package exists on pub.dev.
+  - In pub.dev package admin, enable publishing from GitHub Actions for this repository.
+  - The release tag must match the package version format: `vYY.MDD.HHMM`.
+  - Example: `v26.310.2016`

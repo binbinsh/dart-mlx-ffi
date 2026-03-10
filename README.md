@@ -1,253 +1,202 @@
 # dart_mlx_ffi
 
-[![CI](https://github.com/binbinsh/dart-mlx-ffi/actions/workflows/ci.yml/badge.svg)](https://github.com/binbinsh/dart-mlx-ffi/actions/workflows/ci.yml)
+`dart_mlx_ffi` is a Dart and Flutter FFI package for Apple's
+[MLX C API](https://ml-explore.github.io/mlx-c/). It vendors `mlx`, `mlx-c`,
+and the required native build pieces, then uses a build hook to compile a local
+native library for the current Apple target.
 
-`dart_mlx_ffi` is a Dart/Flutter FFI package for Apple's
-[MLX C API](https://ml-explore.github.io/mlx-c/). It targets Apple platforms,
-vendors `mlx`, `mlx-c`, and their native dependencies, and uses a build hook to
-compile a bundled native library for the current target architecture.
+## Highlights
 
-## What you get
+- Stable high-level Dart API for arrays, tensor ops, scans, linalg, FFT,
+  quantization, convolutions, streams, runtime helpers, export/import, and
+  custom fast-kernel wrappers
+- Full raw binding surface through `package:dart_mlx_ffi/raw.dart`
+- macOS packaging with native MLX build hooks included
+- Verified parity against Python MLX on deterministic operator suites
+- Verified model parity on 13 MLX checkpoints and subgraphs for publish-time
+  validation
 
-- A stable high-level Dart API for common workflows:
-  - version lookup
-  - default device inspection
-  - array creation from Dart lists
-  - array factories such as `zeros`, `ones`, `full`, `arange`
-  - like-constructors such as `zerosLike`, `onesLike`, `fullLike`
-  - shape transforms such as `reshape`, `transpose`
-  - unary ops such as `abs`, `negative`, `exp`, `log`, `sin`, `cos`,
-    `floor`, `sqrt`, `square`, `reciprocal`, `sigmoid`, `degrees`,
-    `radians`, `expm1`, `erf`, `erfinv`, `log1p`, `log2`, `log10`
-  - binary ops such as `add`, `subtract`, `multiply`, `divide`, `matmul`,
-    `greater`, `greaterEqual`, `less`, `lessEqual`, `floorDivide`,
-    `logaddexp`, `inner`
-  - numerically useful ops such as `softmax`, `logSumExp`, `topK`
-  - tensor algebra and indexing helpers such as `take`, `gather`, `slice`,
-    `sliceDynamic`, `sliceUpdate`, `sliceUpdateDynamic`, `flatten`,
-    `moveaxis`, `swapaxes`, `transposeAxes`, `tile`, `pad`, `padSymmetric`,
-    `unflatten`, `gatherMm`, `diag`, `diagonal`, `kron`, `meshgrid`,
-    `partition`, `scatter`, `einsum`, `tensordot`
-  - numeric helpers such as `linspace`, `outer`, `isClose`, `logicalAnd`,
-    `logicalOr`, `logicalNot`, `repeat`, `roll`, `median`, `maskedScatter`,
-    `nanToNum`, `divmod`
-  - scan and matrix construction helpers such as `cumsum`, `cumprod`,
-    `cummax`, `cummin`, `logcumsumexp`, `eye`, `identity`, `tri`, `tril`,
-    `triu`, `trace`
-  - comparisons and selection via `equal` and `where`
-  - reductions via `sum` and `mean`
-  - random APIs via `key`, `split`, `uniform`, `normal`, `bernoulli`,
-    `categorical`, `permutation`, `permutationArange`, `gumbel`, `laplace`,
-    `randint`, `multivariateNormal`
-  - convolution helpers via `conv1d`, `conv2d`, `conv3d`, `convGeneral`,
-    `convTranspose1d`, `convTranspose2d`, `convTranspose3d`
-  - FFT APIs via `fft`, `ifft`, `rfft`, `irfft`, `fft2`, `fftn`, `rfft2`,
-    `rfftn`, `irfft2`, `irfftn`, `fftshift`, `ifftshift`
-  - linear algebra APIs via `inv`, `solve`, `qr`, `eig`, `cholesky`, `eigh`,
-    `svd`, `pinv`, `norm`, `cross`, `eigvals`, `eigvalsh`, `lu`,
-    `luFactor`, `solveTriangular`
-  - quantization helpers via `quantize`, `dequantize`, `quantizedMatmul`,
-    `qqmm`, `gatherQmm`, `toFp8`, `fromFp8`
-  - file IO via `load`, `save`, `loadSafetensors`, `saveSafetensors`
-  - stream-aware and in-memory IO via `load(..., stream:)`, `loadBytes`,
-    `saveBytes`, `loadSafetensorsBytes`, `saveSafetensorsBytes`,
-    `MlxBytesReader`, and `MlxBytesWriter`
-  - function export/import helpers including kwargs export and incremental
-    exporters
-  - tensor composition APIs such as `concatenate`, `stack`, `broadcastTo`,
-    `expandDims`, `squeeze`, `clip`, `minimum`, `maximum`, `argmax`, `argmin`,
-    `sort`, `argsort`
-  - advanced matrix helpers such as `broadcastArrays`, `splitSections`,
-    `segmentedMm`, `blockMaskedMm`
-  - runtime helpers via `seed`, `evalAll`, `asyncEvalAll`, memory stats, and
-    Metal availability/capture helpers
-  - system helpers via `MlxStream`, `MlxDevice.info`,
-    `MlxDevice.setDefault(...)`, and `mx.distributed`
-  - fast helpers such as `layerNorm`, `rmsNorm`, `rope`, `ropeDynamic`,
-    `scaledDotProductAttention`, plus Metal/CUDA custom-kernel wrappers
-- A complete low-level raw binding layer for the MLX C surface in
-  [`package:dart_mlx_ffi/raw.dart`](lib/raw.dart)
-- Apple-native build integration for macOS and iOS simulator/device builds
+## Platform
 
-## Platform notes
+- `macOS`
 
-- The package is intended for Apple targets only.
-- MLX itself is most useful with Metal enabled.
-- If the local Xcode installation does not contain the `MetalToolchain`
-  component, the build hook automatically falls back to a CPU-only MLX build so
-  the package still compiles.
-- On this repository's current build configuration, macOS uses Metal when the
-  toolchain is present. iOS simulator builds intentionally fall back to
-  `MLX_BUILD_METAL=OFF` because the simulator Metal compile path currently emits
-  incompatible deployment flags.
-- To enable Metal shader compilation on the build machine:
+This repository's published benchmark numbers are from `macOS` on Apple
+Silicon, and the package metadata now only advertises macOS support.
+
+MLX is most useful on Apple Silicon with Metal available. If the local Xcode
+installation does not contain the `MetalToolchain` component, the build hook
+falls back to CPU-only MLX so the package still compiles.
+
+To install the Metal shader toolchain on the build machine:
 
 ```sh
 xcodebuild -downloadComponent MetalToolchain
 ```
 
-## High-level API
+## Installation
+
+```sh
+dart pub add dart_mlx_ffi
+```
+
+## Quick Start
 
 ```dart
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 
 final a = MlxArray.fromFloat32List([1, 2, 3, 4], shape: [2, 2]);
 final b = MlxArray.fromFloat32List([5, 6, 7, 8], shape: [2, 2]);
-final c = MlxOps.matmul(a, b);
-final z = MlxArray.zeros([2, 2]);
-final r = MlxArray.arange(0, 4, 1).reshape([2, 2]);
-final s = MlxOps.sum(c);
-final q = mx.linalg.qr(a);
+final c = mx.matmul(a, b);
+final s = c.sum();
 
 print(MlxVersion.current());
 print(MlxDevice.defaultDevice());
 print(c.toList());
-print(z.toList());
-print(r.transpose().toList());
 print(s.toList());
-print(q.q.shape);
 
-c.close();
-z.close();
-r.close();
 s.close();
-q.r.close();
-q.q.close();
+c.close();
 b.close();
 a.close();
 ```
 
-## Stream And IO
+## API Coverage
 
-```dart
-import 'dart:typed_data';
+Stable high-level coverage includes:
 
-import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
+- arrays and constructors
+- shape transforms and indexing helpers
+- unary, binary, comparison, and reduction ops
+- scans and matrix construction helpers
+- random generation
+- FFT and linear algebra
+- quantization helpers
+- convolution and transpose convolution
+- file, bytes, and safetensors IO
+- streams, devices, memory, and Metal helpers
+- function export/import and transform wrappers
 
-final stream = MlxStream.defaultCpu();
-final array = MlxArray.fromFloat32List([1, 2, 3, 4], shape: [2, 2]);
-
-final bytes = mx.io.saveBytes(array);
-final loaded = mx.io.loadBytes(bytes, stream: stream);
-
-final writer = MlxBytesWriter();
-mx.io.saveWriter(writer, array);
-final reader = MlxBytesReader(writer.bytes);
-final loadedAgain = mx.io.loadReader(reader, stream: stream);
-
-print(loaded.toList());
-print(loadedAgain.toList());
-
-loadedAgain.close();
-loaded.close();
-reader.close();
-writer.close();
-array.close();
-stream.close();
-```
-
-## Benchmark
-
-Run the tiny model-style benchmark from the package root:
-
-```sh
-dart run benchmark/synthetic/tiny.dart
-dart run benchmark/synthetic/tiny.dart --warmup=20 --iters=100
-```
-
-The benchmark keeps work on the MLX side, uses `MlxRuntime.evalAll(...)`, and
-reports total time, mean time per iteration, peak-memory delta, and the last
-`topK` output.
-
-Detailed benchmark results and direct Hugging Face MLX model comparisons:
-[BENCHMARK.md](BENCHMARK.md)
-
-Deterministic Python parity harness for comparable tensor APIs:
-[PARITY.md](PARITY.md)
-
-The parity harness supports `--groups` so CI can run smaller API slices.
-
-For cross-runtime parity and speed checks against `python-mlx`, sync the
-Python tooling with `uv` and run the dedicated model runners:
-
-```sh
-uv sync
-dart run benchmark/synthetic/models.dart --warmup=20 --iters=200
-uv run python benchmark/synthetic/models.py --warmup 20 --iters 200
-```
-
-These runners cover three deterministic model shapes:
-`tiny_mlp`, `tiny_conv`, and `tiny_attention`.
-
-For real Hugging Face MLX Qwen2.5 checkpoints, the benchmark runner also
-supports a compiled-graph mode:
-
-```sh
-uv run python benchmark/qwen2_5/real_nn.py --warmup 20 --iters 50 --seq-len 32 --out-dir benchmark/out/real_nn_compiled_steady
-dart --packages=.dart_tool/package_config.json benchmark/qwen2_5/real_nn.dart --manifest=benchmark/out/real_nn_compiled_steady/real_manifest.json --engine=compiled --output=benchmark/out/real_nn_compiled_steady/real_dart_compiled.json --warmup=20 --iters=50
-```
-
-You can also benchmark a single model in isolation with `--model-name`, for
-example `qwen25_15b`.
-
-For vendored reference-model coverage of newer multimodal and audio checkpoints,
-the repository also includes a multi-backend runner for:
-
-- `mlx-community/Qwen3.5-9B-MLX-4bit`
-- `mlx-community/Qwen3.5-35B-A3B-4bit`
-- `mlx-community/kitten-tts-nano-0.8-6bit`
-
-Run it directly in Python or through the Dart wrapper:
-
-```sh
-uv sync
-uv run python benchmark/run_all.py --iters 1 --warmup 1
-dart run benchmark/run_all.dart --iters=1 --warmup=1
-```
-
-These three models currently use vendored Python reference backends from
-`vendors/mlx-vlm` and `vendors/mlx-audio`; the native Dart Qwen2.5 runner
-remains the only direct-Dart Hugging Face model path in this repository today.
-The vendored `mlx-vlm` and `mlx-audio` integrations live in separate runner
-files under `benchmark/`.
-
-## Distributed
-
-- `mx.distributed.isAvailable()` checks whether the current runtime exposes MLX
-  distributed support.
-- `mx.distributed.init(strict: false)` creates a group wrapper when the backend
-  is available.
-- Single-machine developer environments may report availability but still lack
-  the launcher/runtime setup needed for actual collectives. The test suite treats
-  those cases as environment-specific rather than package bugs.
-- A dedicated smoke script is included for launcher-configured environments:
-
-```sh
-dart run tool/dist_smoke.dart
-```
-
-## Known Limits
-
-- The package targets Apple platforms only.
-- Complex tensors are supported by MLX, but high-level `toList()` intentionally
-  remains conservative and does not try to decode every dtype.
-- macOS builds use Metal when the toolchain is present.
-- iOS simulator builds intentionally stay on `MLX_BUILD_METAL=OFF`.
-- Qwen3.5 and KittenTTS repository support currently lives in the benchmark
-  tooling via vendored Python reference implementations, not the stable Dart
-  package API.
-- The raw layer remains the escape hatch for the full C surface, especially for
-  niche or backend-specific APIs that are not yet part of the stable Dart layer.
-
-## Raw bindings
-
-For full MLX C API coverage, import the raw layer directly:
+For exact C-level coverage, use:
 
 ```dart
 import 'package:dart_mlx_ffi/raw.dart' as raw;
 ```
 
-The raw layer is generated from the vendored `mlx-c` headers with `ffigen`.
+## Validation
+
+Deterministic operator parity currently covers `114` checks across arithmetic,
+tensor ops, scans, convolutions, linalg, fast ops, quantization, and random
+APIs, with `0` failures on the benchmark machine.
+
+### Benchmark Environment
+
+- Date: `2026-03-10`
+- Machine: `MacBook Pro (Mac16,5)`
+- Chip: `Apple M4 Max`
+- CPU cores: `16` (`12` performance + `4` efficiency)
+- Memory: `128 GB`
+- OS: `macOS 26.4 (25E5223i)`
+- Kernel: `Darwin 25.4.0`
+- Dart SDK: `3.11.1`
+- Python: `3.12` via `uv`
+- MLX runtime: `0.31.0`
+
+### Model Parity And Speed
+
+Method:
+
+- Each benchmark used `3` warmup iterations and `10` measured iterations.
+- Text and VLM checkpoints compare the last-token `logits[:16]`.
+- `Ming-omni-tts-0.5B-4bit` compares a deterministic `forward_with_cfg`
+  diffusion subgraph instead of full waveform generation.
+- `kitten-tts-nano-0.8-6bit` compares the full waveform for one fixed text and
+  voice.
+- The "recent 10" list uses one representative per model family, with smaller
+  variants preferred when the family has multiple sizes.
+- `mlx-community/Phi-4-reasoning-vision-15B-4bit` was not benchmarkable because
+  the remote repository snapshot was incomplete at the time of validation, so
+  `mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit` was used as the substitute
+  recent VLM entry.
+
+Results:
+
+| Model | Kind | Python avg ms | Dart avg ms | Max abs diff |
+| --- | --- | ---: | ---: | ---: |
+| `mlx-community/JOSIE-1.1-4B-Instruct-4bit` | `text` | `33.5777` | `38.2766` | `0` |
+| `mlx-community/GLM-4.7-Flash-abliterated-mxfp8` | `text` | `78.2033` | `77.7014` | `0` |
+| `mlx-community/Ming-omni-tts-0.5B-4bit` | `tts` | `4.5822` | `4.5606` | `0` |
+| `mlx-community/MiniCPM-o-4_5-4bit` | `vlm` | `135.0798` | `135.5181` | `0` |
+| `mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit` | `vlm` | `22.2738` | `22.2928` | `0` |
+| `mlx-community/tiny-aya-fire-4bit` | `text` | `25.6706` | `26.2876` | `0` |
+| `mlx-community/Qwen3.5-0.8B-4bit` | `vlm` | `5.2338` | `5.5181` | `0` |
+| `mlx-community/Huihui-Qwen3.5-27B-abliterated-6bit` | `text` | `176.6442` | `182.2428` | `0` |
+| `mlx-community/IQuest-Coder-V1-7B-Thinking-mlx_8bit` | `text` | `46.7368` | `47.1135` | `0` |
+| `mlx-community/DASD-4B-Thinking-bfloat16` | `text` | `43.8261` | `43.6674` | `0` |
+| `mlx-community/Qwen3.5-9B-MLX-4bit` | `text` | `59.8508` | `61.8239` | `0` |
+| `mlx-community/Qwen3.5-35B-A3B-4bit` | `text` | `34.7274` | `34.2320` | `0` |
+| `mlx-community/kitten-tts-nano-0.8-6bit` | `tts` | `75.3437` | `79.6089` | `3.394e-06` |
+
+Summary:
+
+- `12 / 13` model checks were exact at the chosen comparison tensor.
+- `kitten-tts-nano-0.8-6bit` matched shape and fixed-input waveform closely,
+  with residual float32-scale drift on the full waveform path
+  (`max_abs_diff = 3.393739462e-06`).
+- For large text and multimodal checkpoints, Dart imported-function execution is
+  generally in the same performance class as Python MLX once startup costs are
+  excluded.
+- `Ming-omni-tts-0.5B-4bit` is notably warmup-sensitive, so the published row
+  above uses extended warmup instead of the repository-wide default
+  `warmup=3`. With deeper warmup (`20+`), the imported MLX subgraph settles
+  near Python's imported-function timing (`~4.6 ms` on the benchmark machine).
+
+### What `Max abs diff` Means
+
+`Max abs diff` is the maximum absolute difference between the Python MLX output
+and the Dart MLX output for the compared tensor.
+
+Examples:
+
+- `0` means the compared tensor matched exactly at the chosen dtype
+- `3.393739462e-06` means the worst element differed by about `0.00000339`
+- for text and VLM rows, the compared tensor is the final-token
+  `logits[:16]`
+- for `Ming-omni-tts-0.5B-4bit`, the compared tensor is the deterministic
+  `forward_with_cfg` subgraph output
+- for `kitten-tts-nano-0.8-6bit`, the compared tensor is the full waveform
+
+### Reproduce The 13-Model Report
+
+Generate the publish-time report with `warmup=3` and `iters=10`:
+
+```sh
+uv sync
+uv run python benchmark/publish_report.py
+```
+
+The aggregated results are written to:
+
+- `benchmark/out/publish_report.json`
+
+Useful focused runs:
+
+```sh
+# full-waveform KittenTTS comparison
+uv run python benchmark/kitten_tts/mlx_audio_compare.py --warmup 3 --iters 10
+
+# deterministic Ming Omni TTS subgraph comparison
+uv run python - <<'PY'
+from benchmark.recent_tts_sweep import python_forward, export_model, dart_forward, slug
+from pathlib import Path
+model_id='mlx-community/Ming-omni-tts-0.5B-4bit'
+root = Path('benchmark/out/recent_tts') / slug(model_id)
+export_path, input_path, input_names = export_model(model_id, root)
+print(dart_forward(export_path, input_path, input_names))
+PY
+
+# generic imported-function runner for exported text or VLM artifacts
+dart run benchmark/generic_import_run.dart <export_path> <input_safetensors_path> [input_names_json]
+```
 
 ## Development
 
@@ -257,47 +206,23 @@ Regenerate the raw bindings:
 dart run ffigen --config ffigen.yaml
 ```
 
-Validate the package locally:
+Typical local verification:
 
 ```sh
 dart analyze
 dart test
-cd example && flutter build macos --debug
-cd example && flutter build ios --simulator --debug
-uv sync
-dart run benchmark/synthetic/models.dart --warmup=20 --iters=200
-uv run python benchmark/synthetic/models.py --warmup 20 --iters 200
-dart run benchmark/synthetic/tiny.dart --warmup=20 --iters=100
+dart pub publish --dry-run
 ```
 
-Release checklist: [RELEASE.md](RELEASE.md)
-Release notes: [RELEASE_NOTES.md](RELEASE_NOTES.md)
-API coverage matrix: [API_MATRIX.md](API_MATRIX.md)
-
-## Publishing
-
-The repository includes:
-
-- CI workflow: [ci.yml](.github/workflows/ci.yml)
-- pub.dev publishing workflow: [publish.yml](.github/workflows/publish.yml)
-
-Recommended release flow:
-
-1. Publish the first package version manually from a trusted local machine.
-2. Configure pub.dev trusted publishing for `github.com/binbinsh/dart-mlx-ffi`
-   with tag pattern `v{{version}}`.
-3. Use the package version format `YY.MMDD.HHMM`.
-4. Push a matching tag such as `v26.0308.1557`.
-
-The publish workflow is configured for tags matching:
-
-```text
-vYY.MMDD.HHMM
-```
-
-For example:
+Benchmark tooling uses `uv`:
 
 ```sh
-git tag v26.0308.1557
-git push origin v26.0308.1557
+uv sync
 ```
+
+## Notes
+
+- This package targets Apple platforms only.
+- The raw layer remains the escape hatch for the full MLX C surface.
+- Large benchmark artifacts under `benchmark/out/` are intentionally excluded
+  from the published package.
