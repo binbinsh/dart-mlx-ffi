@@ -41,6 +41,23 @@ abstract final class MlxOps {
     shim.dart_mlx_matmul,
   );
 
+  /// Matrix multiply with additive bias: `alpha * (a @ b) + beta * c`.
+  static MlxArray addmm(
+    MlxArray c,
+    MlxArray a,
+    MlxArray b, {
+    double alpha = 1,
+    double beta = 1,
+  }) {
+    _clearError();
+    return MlxArray._(
+      _checkHandle(
+        'dart_mlx_addmm',
+        shim.dart_mlx_addmm(c._handle, a._handle, b._handle, alpha, beta),
+      ),
+    );
+  }
+
   /// Casts an array to a different dtype.
   static MlxArray astype(MlxArray input, MlxDType dtype) {
     _clearError();
@@ -117,6 +134,44 @@ abstract final class MlxOps {
         axis == null
             ? shim.dart_mlx_mean(input._handle, keepDims)
             : shim.dart_mlx_mean_axis(input._handle, axis, keepDims),
+      ),
+    );
+  }
+
+  /// Variance reduction.
+  static MlxArray variance(
+    MlxArray input, {
+    int? axis,
+    List<int>? axes,
+    bool keepDims = false,
+    int ddof = 0,
+  }) {
+    if (axis != null && axes != null) {
+      throw ArgumentError('Provide either axis or axes, not both.');
+    }
+    _clearError();
+    if (axes != null) {
+      return _withInts(axes, (axesPtr, axesLen) {
+        return MlxArray._(
+          _checkHandle(
+            'dart_mlx_var_axes',
+            shim.dart_mlx_var_axes(
+              input._handle,
+              axesPtr,
+              axesLen,
+              keepDims,
+              ddof,
+            ),
+          ),
+        );
+      });
+    }
+    return MlxArray._(
+      _checkHandle(
+        axis == null ? 'dart_mlx_var' : 'dart_mlx_var_axis',
+        axis == null
+            ? shim.dart_mlx_var(input._handle, keepDims, ddof)
+            : shim.dart_mlx_var_axis(input._handle, axis, keepDims, ddof),
       ),
     );
   }

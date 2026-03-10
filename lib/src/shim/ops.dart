@@ -76,6 +76,38 @@ external DartMlxArrayHandle dart_mlx_mean_axis(
   bool keepdims,
 );
 
+@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Bool, ffi.Int)>()
+external DartMlxArrayHandle dart_mlx_var(
+  DartMlxArrayHandle input,
+  bool keepdims,
+  int ddof,
+);
+
+@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Int)>()
+external DartMlxArrayHandle dart_mlx_var_axis(
+  DartMlxArrayHandle input,
+  int axis,
+  bool keepdims,
+  int ddof,
+);
+
+@ffi.Native<
+  DartMlxArrayHandle Function(
+    DartMlxArrayHandle,
+    ffi.Pointer<ffi.Int>,
+    ffi.Int,
+    ffi.Bool,
+    ffi.Int,
+  )
+>()
+external DartMlxArrayHandle dart_mlx_var_axes(
+  DartMlxArrayHandle input,
+  ffi.Pointer<ffi.Int> axes,
+  int axesLen,
+  bool keepdims,
+  int ddof,
+);
+
 @ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Int)>()
 external DartMlxArrayHandle dart_mlx_fft_fft(
   DartMlxArrayHandle input,

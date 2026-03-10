@@ -151,8 +151,8 @@ stream.close();
 Run the tiny model-style benchmark from the package root:
 
 ```sh
-dart run benchmark/tiny.dart
-dart run benchmark/tiny.dart --warmup=20 --iters=100
+dart run benchmark/synthetic/tiny.dart
+dart run benchmark/synthetic/tiny.dart --warmup=20 --iters=100
 ```
 
 The benchmark keeps work on the MLX side, uses `MlxRuntime.evalAll(...)`, and
@@ -172,8 +172,8 @@ Python tooling with `uv` and run the dedicated model runners:
 
 ```sh
 uv sync
-dart run benchmark/models.dart --warmup=20 --iters=200
-uv run python benchmark/models.py --warmup 20 --iters 200
+dart run benchmark/synthetic/models.dart --warmup=20 --iters=200
+uv run python benchmark/synthetic/models.py --warmup 20 --iters 200
 ```
 
 These runners cover three deterministic model shapes:
@@ -183,12 +183,33 @@ For real Hugging Face MLX Qwen2.5 checkpoints, the benchmark runner also
 supports a compiled-graph mode:
 
 ```sh
-uv run python benchmark/real_nn.py --warmup 20 --iters 50 --seq-len 32 --out-dir benchmark/out/real_nn_compiled_steady
-dart --packages=.dart_tool/package_config.json benchmark/real_nn.dart --manifest=benchmark/out/real_nn_compiled_steady/real_manifest.json --engine=compiled --output=benchmark/out/real_nn_compiled_steady/real_dart_compiled.json --warmup=20 --iters=50
+uv run python benchmark/qwen2_5/real_nn.py --warmup 20 --iters 50 --seq-len 32 --out-dir benchmark/out/real_nn_compiled_steady
+dart --packages=.dart_tool/package_config.json benchmark/qwen2_5/real_nn.dart --manifest=benchmark/out/real_nn_compiled_steady/real_manifest.json --engine=compiled --output=benchmark/out/real_nn_compiled_steady/real_dart_compiled.json --warmup=20 --iters=50
 ```
 
 You can also benchmark a single model in isolation with `--model-name`, for
 example `qwen25_15b`.
+
+For vendored reference-model coverage of newer multimodal and audio checkpoints,
+the repository also includes a multi-backend runner for:
+
+- `mlx-community/Qwen3.5-9B-MLX-4bit`
+- `mlx-community/Qwen3.5-35B-A3B-4bit`
+- `mlx-community/kitten-tts-nano-0.8-6bit`
+
+Run it directly in Python or through the Dart wrapper:
+
+```sh
+uv sync
+uv run python benchmark/run_all.py --iters 1 --warmup 1
+dart run benchmark/run_all.dart --iters=1 --warmup=1
+```
+
+These three models currently use vendored Python reference backends from
+`vendors/mlx-vlm` and `vendors/mlx-audio`; the native Dart Qwen2.5 runner
+remains the only direct-Dart Hugging Face model path in this repository today.
+The vendored `mlx-vlm` and `mlx-audio` integrations live in separate runner
+files under `benchmark/`.
 
 ## Distributed
 
@@ -212,6 +233,9 @@ dart run tool/dist_smoke.dart
   remains conservative and does not try to decode every dtype.
 - macOS builds use Metal when the toolchain is present.
 - iOS simulator builds intentionally stay on `MLX_BUILD_METAL=OFF`.
+- Qwen3.5 and KittenTTS repository support currently lives in the benchmark
+  tooling via vendored Python reference implementations, not the stable Dart
+  package API.
 - The raw layer remains the escape hatch for the full C surface, especially for
   niche or backend-specific APIs that are not yet part of the stable Dart layer.
 
@@ -241,9 +265,9 @@ dart test
 cd example && flutter build macos --debug
 cd example && flutter build ios --simulator --debug
 uv sync
-dart run benchmark/models.dart --warmup=20 --iters=200
-uv run python benchmark/models.py --warmup 20 --iters 200
-dart run benchmark/tiny.dart --warmup=20 --iters=100
+dart run benchmark/synthetic/models.dart --warmup=20 --iters=200
+uv run python benchmark/synthetic/models.py --warmup 20 --iters 200
+dart run benchmark/synthetic/tiny.dart --warmup=20 --iters=100
 ```
 
 Release checklist: [RELEASE.md](RELEASE.md)

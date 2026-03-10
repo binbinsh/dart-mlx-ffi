@@ -406,6 +406,9 @@ final class MlxArray {
   /// Cosine.
   MlxArray cos() => MlxOps.cos(this);
 
+  /// Hyperbolic tangent.
+  MlxArray tanh() => MlxMore.tanh(this);
+
   /// Sum reduction.
   MlxArray sum({int? axis, bool keepDims = false}) =>
       MlxOps.sum(this, axis: axis, keepDims: keepDims);
@@ -413,6 +416,20 @@ final class MlxArray {
   /// Mean reduction.
   MlxArray mean({int? axis, bool keepDims = false}) =>
       MlxOps.mean(this, axis: axis, keepDims: keepDims);
+
+  /// Variance reduction.
+  MlxArray variance({
+    int? axis,
+    List<int>? axes,
+    bool keepDims = false,
+    int ddof = 0,
+  }) => MlxOps.variance(
+    this,
+    axis: axis,
+    axes: axes,
+    keepDims: keepDims,
+    ddof: ddof,
+  );
 
   /// Log-sum-exp reduction.
   MlxArray logSumExp({int? axis, bool keepDims = false}) =>
@@ -506,6 +523,14 @@ final class MlxArray {
 
   /// Matrix multiplication.
   MlxArray matmul(MlxArray other) => MlxOps.matmul(this, other);
+
+  /// Matrix multiply with additive bias: `alpha * (a @ b) + beta * c`.
+  MlxArray addmm(
+    MlxArray a,
+    MlxArray b, {
+    double alpha = 1,
+    double beta = 1,
+  }) => MlxOps.addmm(this, a, b, alpha: alpha, beta: beta);
 
   /// Casts this array to a different dtype.
   MlxArray astype(MlxDType dtype) => MlxOps.astype(this, dtype);

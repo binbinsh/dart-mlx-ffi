@@ -67,6 +67,9 @@ abstract final class MlxMore {
   static MlxArray sigmoid(MlxArray input) =>
       MlxArray._(_checkHandle('dart_mlx_sigmoid', shim.dart_mlx_sigmoid(input._handle)));
 
+  static MlxArray tanh(MlxArray input) =>
+      MlxArray._(_checkHandle('dart_mlx_tanh', shim.dart_mlx_tanh(input._handle)));
+
   static MlxArray degrees(MlxArray input) =>
       MlxArray._(_checkHandle('dart_mlx_degrees', shim.dart_mlx_degrees(input._handle)));
 
@@ -204,6 +207,7 @@ extension MlxModuleMoreExt on MlxModule {
   MlxArray square(MlxArray input) => MlxMore.square(input);
   MlxArray reciprocal(MlxArray input) => MlxMore.reciprocal(input);
   MlxArray sigmoid(MlxArray input) => MlxMore.sigmoid(input);
+  MlxArray tanh(MlxArray input) => MlxMore.tanh(input);
   MlxArray degrees(MlxArray input) => MlxMore.degrees(input);
   MlxArray radians(MlxArray input) => MlxMore.radians(input);
   MlxArray expm1(MlxArray input) => MlxMore.expm1(input);
@@ -252,6 +256,7 @@ extension MlxArrayMoreExt on MlxArray {
   MlxArray square() => MlxMore.square(this);
   MlxArray reciprocal() => MlxMore.reciprocal(this);
   MlxArray sigmoid() => MlxMore.sigmoid(this);
+  MlxArray tanh() => MlxMore.tanh(this);
   MlxArray degrees() => MlxMore.degrees(this);
   MlxArray radians() => MlxMore.radians(this);
   MlxArray expm1() => MlxMore.expm1(this);

@@ -16,7 +16,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_conv1d(
           padding,
           dilation,
           groups,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);

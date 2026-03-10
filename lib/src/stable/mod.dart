@@ -71,6 +71,15 @@ final class MlxModule {
   /// Matrix multiplication.
   MlxArray matmul(MlxArray a, MlxArray b) => MlxOps.matmul(a, b);
 
+  /// Matrix multiply with additive bias: `alpha * (a @ b) + beta * c`.
+  MlxArray addmm(
+    MlxArray c,
+    MlxArray a,
+    MlxArray b, {
+    double alpha = 1,
+    double beta = 1,
+  }) => MlxOps.addmm(c, a, b, alpha: alpha, beta: beta);
+
   /// Casts an array to a different dtype.
   MlxArray astype(MlxArray input, MlxDType dtype) => MlxOps.astype(input, dtype);
 
@@ -96,6 +105,21 @@ final class MlxModule {
   /// Mean reduction.
   MlxArray mean(MlxArray input, {int? axis, bool keepDims = false}) =>
       MlxOps.mean(input, axis: axis, keepDims: keepDims);
+
+  /// Variance reduction.
+  MlxArray variance(
+    MlxArray input, {
+    int? axis,
+    List<int>? axes,
+    bool keepDims = false,
+    int ddof = 0,
+  }) => MlxOps.variance(
+    input,
+    axis: axis,
+    axes: axes,
+    keepDims: keepDims,
+    ddof: ddof,
+  );
 
   /// Log-sum-exp reduction.
   MlxArray logSumExp(MlxArray input, {int? axis, bool keepDims = false}) =>

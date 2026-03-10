@@ -28,7 +28,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_concatenate(
     int axis) {
   auto values = build_array_vector(arrays, len);
   mlx_array out = mlx_array_new();
-  auto status = mlx_concatenate_axis(&out, values, axis, default_cpu_stream());
+  auto status = mlx_concatenate_axis(&out, values, axis, default_device_stream());
   mlx_vector_array_free(values);
   if (status != 0) {
     return nullptr;
@@ -42,7 +42,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_stack(
     int axis) {
   auto values = build_array_vector(arrays, len);
   mlx_array out = mlx_array_new();
-  auto status = mlx_stack_axis(&out, values, axis, default_cpu_stream());
+  auto status = mlx_stack_axis(&out, values, axis, default_device_stream());
   mlx_vector_array_free(values);
   if (status != 0) {
     return nullptr;
@@ -55,7 +55,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_broadcast_to(
     const int* shape,
     int dim) {
   mlx_array out = mlx_array_new();
-  if (mlx_broadcast_to(&out, input->value, shape, dim, default_cpu_stream()) !=
+  if (mlx_broadcast_to(&out, input->value, shape, dim, default_device_stream()) !=
       0) {
     return nullptr;
   }
@@ -66,7 +66,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_expand_dims(
     const DartMlxArrayHandle* input,
     int axis) {
   mlx_array out = mlx_array_new();
-  if (mlx_expand_dims(&out, input->value, axis, default_cpu_stream()) != 0) {
+  if (mlx_expand_dims(&out, input->value, axis, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -74,7 +74,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_expand_dims(
 
 extern "C" DartMlxArrayHandle* dart_mlx_squeeze(const DartMlxArrayHandle* input) {
   mlx_array out = mlx_array_new();
-  if (mlx_squeeze(&out, input->value, default_cpu_stream()) != 0) {
+  if (mlx_squeeze(&out, input->value, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -132,8 +132,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_argmax(
     bool keepdims) {
   mlx_array out = mlx_array_new();
   auto status = has_axis
-      ? mlx_argmax_axis(&out, input->value, axis, keepdims, default_cpu_stream())
-      : mlx_argmax(&out, input->value, keepdims, default_cpu_stream());
+      ? mlx_argmax_axis(&out, input->value, axis, keepdims, default_device_stream())
+      : mlx_argmax(&out, input->value, keepdims, default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -147,8 +147,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_argmin(
     bool keepdims) {
   mlx_array out = mlx_array_new();
   auto status = has_axis
-      ? mlx_argmin_axis(&out, input->value, axis, keepdims, default_cpu_stream())
-      : mlx_argmin(&out, input->value, keepdims, default_cpu_stream());
+      ? mlx_argmin_axis(&out, input->value, axis, keepdims, default_device_stream())
+      : mlx_argmin(&out, input->value, keepdims, default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -160,8 +160,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_sort(
     int axis,
     bool has_axis) {
   mlx_array out = mlx_array_new();
-  auto status = has_axis ? mlx_sort_axis(&out, input->value, axis, default_cpu_stream())
-                         : mlx_sort(&out, input->value, default_cpu_stream());
+  auto status = has_axis ? mlx_sort_axis(&out, input->value, axis, default_device_stream())
+                         : mlx_sort(&out, input->value, default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -173,8 +173,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_argsort(
     int axis,
     bool has_axis) {
   mlx_array out = mlx_array_new();
-  auto status = has_axis ? mlx_argsort_axis(&out, input->value, axis, default_cpu_stream())
-                         : mlx_argsort(&out, input->value, default_cpu_stream());
+  auto status = has_axis ? mlx_argsort_axis(&out, input->value, axis, default_device_stream())
+                         : mlx_argsort(&out, input->value, default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -187,7 +187,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_flatten(
     int end_axis) {
   mlx_array out = mlx_array_new();
   if (mlx_flatten(
-          &out, input->value, start_axis, end_axis, default_cpu_stream()) != 0) {
+          &out, input->value, start_axis, end_axis, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -199,7 +199,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_moveaxis(
     int destination) {
   mlx_array out = mlx_array_new();
   if (mlx_moveaxis(
-          &out, input->value, source, destination, default_cpu_stream()) != 0) {
+          &out, input->value, source, destination, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -211,7 +211,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_swapaxes(
     int axis2) {
   mlx_array out = mlx_array_new();
   if (mlx_swapaxes(
-          &out, input->value, axis1, axis2, default_cpu_stream()) != 0) {
+          &out, input->value, axis1, axis2, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -308,8 +308,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_logsumexp(
   mlx_array out = mlx_array_new();
   auto status = has_axis
       ? mlx_logsumexp_axis(
-            &out, input->value, axis, keepdims, default_cpu_stream())
-      : mlx_logsumexp(&out, input->value, keepdims, default_cpu_stream());
+            &out, input->value, axis, keepdims, default_device_stream())
+      : mlx_logsumexp(&out, input->value, keepdims, default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -323,8 +323,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_softmax(
     bool precise) {
   mlx_array out = mlx_array_new();
   auto status = has_axis
-      ? mlx_softmax_axis(&out, input->value, axis, precise, default_cpu_stream())
-      : mlx_softmax(&out, input->value, precise, default_cpu_stream());
+      ? mlx_softmax_axis(&out, input->value, axis, precise, default_device_stream())
+      : mlx_softmax(&out, input->value, precise, default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -338,8 +338,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_topk(
     bool has_axis) {
   mlx_array out = mlx_array_new();
   auto status = has_axis
-      ? mlx_topk_axis(&out, input->value, k, axis, default_cpu_stream())
-      : mlx_topk(&out, input->value, k, default_cpu_stream());
+      ? mlx_topk_axis(&out, input->value, k, axis, default_device_stream())
+      : mlx_topk(&out, input->value, k, default_device_stream());
   if (status != 0) {
     return nullptr;
   }

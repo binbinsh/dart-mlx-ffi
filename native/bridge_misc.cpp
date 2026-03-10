@@ -58,8 +58,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_repeat(
     bool has_axis) {
   auto out = mlx_array_new();
   auto status = has_axis
-      ? mlx_repeat_axis(&out, input->value, repeats, axis, default_cpu_stream())
-      : mlx_repeat(&out, input->value, repeats, default_cpu_stream());
+      ? mlx_repeat_axis(&out, input->value, repeats, axis, default_device_stream())
+      : mlx_repeat(&out, input->value, repeats, default_device_stream());
   if (status != 0) {
     return nullptr;
   }

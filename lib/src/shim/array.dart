@@ -155,6 +155,23 @@ external DartMlxArrayHandle dart_mlx_matmul(
   DartMlxArrayHandle rhs,
 );
 
+@ffi.Native<
+  DartMlxArrayHandle Function(
+    DartMlxArrayHandle,
+    DartMlxArrayHandle,
+    DartMlxArrayHandle,
+    ffi.Float,
+    ffi.Float,
+  )
+>()
+external DartMlxArrayHandle dart_mlx_addmm(
+  DartMlxArrayHandle c,
+  DartMlxArrayHandle a,
+  DartMlxArrayHandle b,
+  double alpha,
+  double beta,
+);
+
 @ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle)>()
 external DartMlxArrayHandle dart_mlx_equal(
   DartMlxArrayHandle lhs,
@@ -191,3 +208,6 @@ external DartMlxArrayHandle dart_mlx_sin(DartMlxArrayHandle input);
 
 @ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle)>()
 external DartMlxArrayHandle dart_mlx_cos(DartMlxArrayHandle input);
+
+@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle)>()
+external DartMlxArrayHandle dart_mlx_tanh(DartMlxArrayHandle input);

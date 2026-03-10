@@ -26,7 +26,7 @@ extern "C" int dart_mlx_split_sections(
     size_t* outputs_len_out) {
   auto outputs = mlx_vector_array_new();
   auto status = mlx_split_sections(
-      &outputs, input->value, indices, indices_len, axis, default_cpu_stream());
+      &outputs, input->value, indices, indices_len, axis, default_device_stream());
   if (status != 0) {
     return status;
   }

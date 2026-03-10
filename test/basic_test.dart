@@ -147,4 +147,37 @@ void main() {
     }
   });
 
+  test('supports tanh, variance, and addmm helpers', () {
+    final input = MlxArray.fromFloat32List([1, -1, 2, -2], shape: [2, 2]);
+    final bias = MlxArray.fromFloat32List([1, 1, 1, 1], shape: [2, 2]);
+    final lhs = MlxArray.fromFloat32List([1, 2, 3, 4], shape: [2, 2]);
+    final rhs = MlxArray.fromFloat32List([5, 6, 7, 8], shape: [2, 2]);
+
+    final tanhOut = input.tanh();
+    final varAll = input.variance();
+    final varAxis = input.variance(axis: 1, keepDims: true);
+    final addmmOut = bias.addmm(lhs, rhs);
+
+    try {
+      expect(tanhOut.shape, <int>[2, 2]);
+      expect(
+        tanhOut.toList().cast<double>(),
+        everyElement(inInclusiveRange(-1.0, 1.0)),
+      );
+      expect(varAll.shape, isEmpty);
+      expect(varAll.toList().single, isA<double>());
+      expect(varAxis.shape, <int>[2, 1]);
+      expect(addmmOut.toList(), <Object>[20.0, 23.0, 44.0, 51.0]);
+    } finally {
+      addmmOut.close();
+      varAxis.close();
+      varAll.close();
+      tanhOut.close();
+      rhs.close();
+      lhs.close();
+      bias.close();
+      input.close();
+    }
+  });
+
 }

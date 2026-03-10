@@ -115,7 +115,7 @@ extern "C" int dart_mlx_cuda_kernel_apply(
   auto input_vec = build_array_vector(inputs, input_len);
   auto outputs = mlx_vector_array_new();
   auto status = mlx_fast_cuda_kernel_apply(
-      &outputs, kernel->value, input_vec, config->value, default_cpu_stream());
+      &outputs, kernel->value, input_vec, config->value, default_gpu_stream());
   mlx_vector_array_free(input_vec);
   if (status != 0) {
     return status;
@@ -240,7 +240,7 @@ extern "C" int dart_mlx_metal_kernel_apply(
   auto input_vec = build_array_vector(inputs, input_len);
   auto outputs = mlx_vector_array_new();
   auto status = mlx_fast_metal_kernel_apply(
-      &outputs, kernel->value, input_vec, config->value, default_cpu_stream());
+      &outputs, kernel->value, input_vec, config->value, default_gpu_stream());
   mlx_vector_array_free(input_vec);
   if (status != 0) {
     return status;

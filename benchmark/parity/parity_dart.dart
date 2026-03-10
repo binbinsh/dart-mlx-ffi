@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 

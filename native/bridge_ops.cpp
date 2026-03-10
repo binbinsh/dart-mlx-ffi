@@ -30,6 +30,26 @@ extern "C" DartMlxArrayHandle* dart_mlx_matmul(
   return binary_array_op(lhs, rhs, mlx_matmul);
 }
 
+extern "C" DartMlxArrayHandle* dart_mlx_addmm(
+    const DartMlxArrayHandle* c,
+    const DartMlxArrayHandle* a,
+    const DartMlxArrayHandle* b,
+    float alpha,
+    float beta) {
+  mlx_array out = mlx_array_new();
+  if (mlx_addmm(
+          &out,
+          c->value,
+          a->value,
+          b->value,
+          alpha,
+          beta,
+          default_cpu_stream()) != 0) {
+    return nullptr;
+  }
+  return wrap_array(out);
+}
+
 extern "C" DartMlxArrayHandle* dart_mlx_equal(
     const DartMlxArrayHandle* lhs,
     const DartMlxArrayHandle* rhs) {
@@ -77,12 +97,16 @@ extern "C" DartMlxArrayHandle* dart_mlx_cos(const DartMlxArrayHandle* input) {
   return unary_array_op(input, mlx_cos);
 }
 
+extern "C" DartMlxArrayHandle* dart_mlx_tanh(const DartMlxArrayHandle* input) {
+  return unary_array_op(input, mlx_tanh);
+}
+
 extern "C" DartMlxArrayHandle* dart_mlx_zeros(
     const int* shape,
     int dim,
     int dtype) {
   mlx_array out = mlx_array_new();
-  if (mlx_zeros(&out, shape, dim, as_dtype(dtype), default_cpu_stream()) != 0) {
+  if (mlx_zeros(&out, shape, dim, as_dtype(dtype), default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -93,7 +117,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_ones(
     int dim,
     int dtype) {
   mlx_array out = mlx_array_new();
-  if (mlx_ones(&out, shape, dim, as_dtype(dtype), default_cpu_stream()) != 0) {
+  if (mlx_ones(&out, shape, dim, as_dtype(dtype), default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -172,7 +196,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_sum(
     const DartMlxArrayHandle* input,
     bool keepdims) {
   mlx_array out = mlx_array_new();
-  if (mlx_sum(&out, input->value, keepdims, default_cpu_stream()) != 0) {
+  if (mlx_sum(&out, input->value, keepdims, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -184,7 +208,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_sum_axis(
     bool keepdims) {
   mlx_array out = mlx_array_new();
   if (mlx_sum_axis(
-          &out, input->value, axis, keepdims, default_cpu_stream()) != 0) {
+          &out, input->value, axis, keepdims, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -207,6 +231,50 @@ extern "C" DartMlxArrayHandle* dart_mlx_mean_axis(
   mlx_array out = mlx_array_new();
   if (mlx_mean_axis(
           &out, input->value, axis, keepdims, default_cpu_stream()) != 0) {
+    return nullptr;
+  }
+  return wrap_array(out);
+}
+
+extern "C" DartMlxArrayHandle* dart_mlx_var(
+    const DartMlxArrayHandle* input,
+    bool keepdims,
+    int ddof) {
+  mlx_array out = mlx_array_new();
+  if (mlx_var(&out, input->value, keepdims, ddof, default_cpu_stream()) != 0) {
+    return nullptr;
+  }
+  return wrap_array(out);
+}
+
+extern "C" DartMlxArrayHandle* dart_mlx_var_axis(
+    const DartMlxArrayHandle* input,
+    int axis,
+    bool keepdims,
+    int ddof) {
+  mlx_array out = mlx_array_new();
+  if (mlx_var_axis(
+          &out, input->value, axis, keepdims, ddof, default_cpu_stream()) != 0) {
+    return nullptr;
+  }
+  return wrap_array(out);
+}
+
+extern "C" DartMlxArrayHandle* dart_mlx_var_axes(
+    const DartMlxArrayHandle* input,
+    const int* axes,
+    int axes_len,
+    bool keepdims,
+    int ddof) {
+  mlx_array out = mlx_array_new();
+  if (mlx_var_axes(
+          &out,
+          input->value,
+          axes,
+          axes_len,
+          keepdims,
+          ddof,
+          default_cpu_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
