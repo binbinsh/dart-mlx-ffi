@@ -38,6 +38,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Benchmark outputs
+/benchmark/out/
+
 # Native build outputs
 **/build/
 **/CMakeCache.txt
