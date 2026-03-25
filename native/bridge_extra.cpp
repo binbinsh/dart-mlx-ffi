@@ -13,19 +13,19 @@ int scatter_status(
   switch (op) {
     case 1:
       return mlx_scatter_add(
-          out, input, indices, updates, axes, axes_len, default_cpu_stream());
+          out, input, indices, updates, axes, axes_len, default_device_stream());
     case 2:
       return mlx_scatter_max(
-          out, input, indices, updates, axes, axes_len, default_cpu_stream());
+          out, input, indices, updates, axes, axes_len, default_device_stream());
     case 3:
       return mlx_scatter_min(
-          out, input, indices, updates, axes, axes_len, default_cpu_stream());
+          out, input, indices, updates, axes, axes_len, default_device_stream());
     case 4:
       return mlx_scatter_prod(
-          out, input, indices, updates, axes, axes_len, default_cpu_stream());
+          out, input, indices, updates, axes, axes_len, default_device_stream());
     default:
       return mlx_scatter(
-          out, input, indices, updates, axes, axes_len, default_cpu_stream());
+          out, input, indices, updates, axes, axes_len, default_device_stream());
   }
 }
 
@@ -39,19 +39,19 @@ int scatter_single_status(
   switch (op) {
     case 1:
       return mlx_scatter_add_single(
-          out, input, indices, updates, axis, default_cpu_stream());
+          out, input, indices, updates, axis, default_device_stream());
     case 2:
       return mlx_scatter_max_single(
-          out, input, indices, updates, axis, default_cpu_stream());
+          out, input, indices, updates, axis, default_device_stream());
     case 3:
       return mlx_scatter_min_single(
-          out, input, indices, updates, axis, default_cpu_stream());
+          out, input, indices, updates, axis, default_device_stream());
     case 4:
       return mlx_scatter_prod_single(
-          out, input, indices, updates, axis, default_cpu_stream());
+          out, input, indices, updates, axis, default_device_stream());
     default:
       return mlx_scatter_single(
-          out, input, indices, updates, axis, default_cpu_stream());
+          out, input, indices, updates, axis, default_device_stream());
   }
 }
 
@@ -61,7 +61,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_diag(
     const DartMlxArrayHandle* input,
     int k) {
   auto out = mlx_array_new();
-  if (mlx_diag(&out, input->value, k, default_cpu_stream()) != 0) {
+  if (mlx_diag(&out, input->value, k, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -74,7 +74,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_diagonal(
     int axis2) {
   auto out = mlx_array_new();
   if (mlx_diagonal(
-          &out, input->value, offset, axis1, axis2, default_cpu_stream()) != 0) {
+          &out, input->value, offset, axis1, axis2, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -84,7 +84,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_kron(
     const DartMlxArrayHandle* a,
     const DartMlxArrayHandle* b) {
   auto out = mlx_array_new();
-  if (mlx_kron(&out, a->value, b->value, default_cpu_stream()) != 0) {
+  if (mlx_kron(&out, a->value, b->value, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -100,7 +100,7 @@ extern "C" int dart_mlx_meshgrid(
   auto input_vec = build_array_vector(inputs, inputs_len);
   auto outputs = mlx_vector_array_new();
   auto status =
-      mlx_meshgrid(&outputs, input_vec, sparse, indexing, default_cpu_stream());
+      mlx_meshgrid(&outputs, input_vec, sparse, indexing, default_device_stream());
   mlx_vector_array_free(input_vec);
   if (status != 0) {
     return status;
@@ -117,8 +117,8 @@ extern "C" DartMlxArrayHandle* dart_mlx_partition(
     bool has_axis) {
   auto out = mlx_array_new();
   auto status = has_axis
-      ? mlx_partition_axis(&out, input->value, kth, axis, default_cpu_stream())
-      : mlx_partition(&out, input->value, kth, default_cpu_stream());
+      ? mlx_partition_axis(&out, input->value, kth, axis, default_device_stream())
+      : mlx_partition(&out, input->value, kth, default_device_stream());
   if (status != 0) {
     return nullptr;
   }

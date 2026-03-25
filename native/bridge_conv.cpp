@@ -44,7 +44,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_conv2d(
           dilation0,
           dilation1,
           groups,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -78,7 +78,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_conv3d(
           dilation1,
           dilation2,
           groups,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -116,7 +116,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_conv_general(
           input_dilation_len,
           groups,
           flip,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -140,7 +140,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_conv_transpose1d(
           dilation,
           output_padding,
           groups,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -172,7 +172,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_conv_transpose2d(
           output_padding0,
           output_padding1,
           groups,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -212,7 +212,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_conv_transpose3d(
           output_padding1,
           output_padding2,
           groups,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);

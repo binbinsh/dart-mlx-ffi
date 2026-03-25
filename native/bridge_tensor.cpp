@@ -235,7 +235,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_tile(
     size_t reps_len) {
   mlx_array out = mlx_array_new();
   if (mlx_tile(
-          &out, input->value, reps, reps_len, default_cpu_stream()) != 0) {
+          &out, input->value, reps, reps_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -263,7 +263,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_pad(
           high_pads_len,
           pad_value == nullptr ? mlx_array() : pad_value->value,
           mode,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -281,7 +281,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_pad_symmetric(
           pad_width,
           pad_value == nullptr ? mlx_array() : pad_value->value,
           mode,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -294,7 +294,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_unflatten(
     size_t shape_len) {
   mlx_array out = mlx_array_new();
   if (mlx_unflatten(
-          &out, input->value, axis, shape, shape_len, default_cpu_stream()) != 0) {
+          &out, input->value, axis, shape, shape_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -391,7 +391,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_gather(
       axes_len,
       slice_sizes,
       slice_sizes_len,
-      default_cpu_stream());
+      default_device_stream());
   mlx_vector_array_free(index_vec);
   if (status != 0) {
     return nullptr;
@@ -413,7 +413,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_gather_single(
           axis,
           slice_sizes,
           slice_sizes_len,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -433,7 +433,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_gather_mm(
           lhs_indices == nullptr ? mlx_array() : lhs_indices->value,
           rhs_indices == nullptr ? mlx_array() : rhs_indices->value,
           sorted_indices,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -479,7 +479,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_slice_dynamic(
           axes_len,
           slice_size,
           slice_size_len,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -505,7 +505,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_slice_update(
           stop_len,
           strides,
           strides_len,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -525,7 +525,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_slice_update_dynamic(
           start->value,
           axes,
           axes_len,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -538,7 +538,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_einsum(
   auto operand_vec = build_array_vector(operands, operands_len);
   mlx_array out = mlx_array_new();
   auto status =
-      mlx_einsum(&out, subscripts, operand_vec, default_cpu_stream());
+      mlx_einsum(&out, subscripts, operand_vec, default_device_stream());
   mlx_vector_array_free(operand_vec);
   if (status != 0) {
     return nullptr;
@@ -562,7 +562,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_tensordot(
           axes_a_len,
           axes_b,
           axes_b_len,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -574,7 +574,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_tensordot_axis(
     int axis) {
   mlx_array out = mlx_array_new();
   if (mlx_tensordot_axis(
-          &out, a->value, b->value, axis, default_cpu_stream()) != 0) {
+          &out, a->value, b->value, axis, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -600,7 +600,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_bernoulli(
       shape,
       shape_len,
       key == nullptr ? mlx_array() : key->value,
-      default_cpu_stream());
+      default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -614,7 +614,7 @@ extern "C" int dart_mlx_random_split(
   mlx_array out_first = mlx_array_new();
   mlx_array out_second = mlx_array_new();
   if (mlx_random_split(
-          &out_first, &out_second, key->value, default_cpu_stream()) != 0) {
+          &out_first, &out_second, key->value, default_device_stream()) != 0) {
     return 1;
   }
   *first = wrap_array(out_first);
@@ -642,7 +642,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_categorical(
           shape,
           shape_len,
           native_key,
-          default_cpu_stream());
+          default_device_stream());
       break;
     case 2:
       status = mlx_random_categorical_num_samples(
@@ -651,11 +651,11 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_categorical(
           axis,
           num_samples,
           native_key,
-          default_cpu_stream());
+          default_device_stream());
       break;
     default:
       status = mlx_random_categorical(
-          &out, logits->value, axis, native_key, default_cpu_stream());
+          &out, logits->value, axis, native_key, default_device_stream());
       break;
   }
   if (status != 0) {
@@ -674,7 +674,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_permutation(
       input->value,
       axis,
       key == nullptr ? mlx_array() : key->value,
-      default_cpu_stream());
+      default_device_stream());
   if (status != 0) {
     return nullptr;
   }
@@ -686,7 +686,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_permutation_arange(
     const DartMlxArrayHandle* key) {
   mlx_array out = mlx_array_new();
   auto status = mlx_random_permutation_arange(
-      &out, x, key == nullptr ? mlx_array() : key->value, default_cpu_stream());
+      &out, x, key == nullptr ? mlx_array() : key->value, default_device_stream());
   if (status != 0) {
     return nullptr;
   }

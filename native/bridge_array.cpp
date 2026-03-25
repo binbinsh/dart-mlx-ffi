@@ -148,6 +148,12 @@ extern "C" int dart_mlx_array_copy_uint32(
   });
 }
 
+extern "C" int dart_mlx_array_item_uint32(
+    const DartMlxArrayHandle* handle,
+    uint32_t* out) {
+  return mlx_array_item_uint32(out, handle->value);
+}
+
 extern "C" int dart_mlx_array_copy_int64(
     const DartMlxArrayHandle* handle,
     int64_t* out,
@@ -160,6 +166,12 @@ extern "C" int dart_mlx_array_copy_int64(
     std::memcpy(out, data, sizeof(int64_t) * len);
     return 0;
   });
+}
+
+extern "C" int dart_mlx_array_item_int32(
+    const DartMlxArrayHandle* handle,
+    int32_t* out) {
+  return mlx_array_item_int32(out, handle->value);
 }
 
 extern "C" int dart_mlx_array_copy_uint64(
@@ -176,6 +188,12 @@ extern "C" int dart_mlx_array_copy_uint64(
   });
 }
 
+extern "C" int dart_mlx_array_item_uint64(
+    const DartMlxArrayHandle* handle,
+    uint64_t* out) {
+  return mlx_array_item_uint64(out, handle->value);
+}
+
 extern "C" int dart_mlx_array_copy_float32(
     const DartMlxArrayHandle* handle,
     float* out,
@@ -188,6 +206,12 @@ extern "C" int dart_mlx_array_copy_float32(
     std::memcpy(out, data, sizeof(float) * len);
     return 0;
   });
+}
+
+extern "C" int dart_mlx_array_item_int64(
+    const DartMlxArrayHandle* handle,
+    int64_t* out) {
+  return mlx_array_item_int64(out, handle->value);
 }
 
 extern "C" int dart_mlx_array_copy_float64(
@@ -213,4 +237,3 @@ extern "C" char* dart_mlx_array_tostring_copy(const DartMlxArrayHandle* handle) 
   mlx_string_free(value);
   return copy;
 }
-

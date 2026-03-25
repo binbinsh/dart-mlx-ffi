@@ -11,11 +11,23 @@ import time
 
 try:
     from .mlx_audio_models import TTS_TEXT, pick_voice, _configure_espeak
-    from ..common import add_vendor_to_path, cleanup_mlx, preview, resolve_model_path
+    from ..common import (
+        add_vendor_to_path,
+        cleanup_mlx,
+        parse_last_json,
+        preview,
+        resolve_model_path,
+    )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from mlx_audio_models import TTS_TEXT, pick_voice, _configure_espeak
-    from common import add_vendor_to_path, cleanup_mlx, preview, resolve_model_path
+    from common import (
+        add_vendor_to_path,
+        cleanup_mlx,
+        parse_last_json,
+        preview,
+        resolve_model_path,
+    )
 
 add_vendor_to_path("mlx-audio")
 
@@ -93,7 +105,7 @@ def main() -> None:
                 stderr=stderr_file,
                 text=True,
             )
-        payload = json.loads(stdout_path.read_text(encoding="utf-8"))
+        payload = parse_last_json(stdout_path.read_text(encoding="utf-8"))
         dart_tensors = mx.load(str(values_path))
         dart_values = [float(v) for v in dart_tensors["audio"].reshape([-1]).tolist()]
         py_values = [float(v) for v in py_audio.reshape([-1]).tolist()]

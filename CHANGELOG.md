@@ -1,5 +1,16 @@
 # Changelog
 
+### 26.2026.6
+
+- Moved Dart model implementations out of `benchmark/` and into `lib/src/models/`, including `parakeet_tdt`, `qwen2_5`, `kitten_tts`, shared helpers, and synthetic benchmark code.
+- Added `lib/models.dart` as the unified public export surface for Dart model implementations.
+- Added experimental private ANE bridge surfaces, Core ML helpers, and project-local tooling under `private_ane/`.
+- Renamed benchmark sweep scripts away from `recent_*` naming and introduced `publish_model_list.json` plus `parakeet_tdt_sweep.py`.
+- Added `TDT v3` to the publish benchmark list and regenerated `benchmark/out/publish_report.json` with `14` rows.
+- Fixed multiple `dart-mlx-ffi` native bridge ops to run on `default_device_stream()` where appropriate, including `addmm` and `conv2d`, improving Dart MLX parity and speed.
+- Fixed stale benchmark tooling/docs after the model-layout move, including the generic benchmark runner plus ignored local `tmp/` and `output/` artifacts.
+- Updated `README.md`, `models/README.md`, and `AGENTS.md` to reflect the new model layout, benchmark layout, and version format.
+
 ### 26.310.2051
 
 - Removed the external `documentation:` link so pub.dev can show the generated API reference directly.

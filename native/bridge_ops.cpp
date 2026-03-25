@@ -44,7 +44,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_addmm(
           b->value,
           alpha,
           beta,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -66,7 +66,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_where(
           condition->value,
           lhs->value,
           rhs->value,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -218,7 +218,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_mean(
     const DartMlxArrayHandle* input,
     bool keepdims) {
   mlx_array out = mlx_array_new();
-  if (mlx_mean(&out, input->value, keepdims, default_cpu_stream()) != 0) {
+  if (mlx_mean(&out, input->value, keepdims, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -230,7 +230,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_mean_axis(
     bool keepdims) {
   mlx_array out = mlx_array_new();
   if (mlx_mean_axis(
-          &out, input->value, axis, keepdims, default_cpu_stream()) != 0) {
+          &out, input->value, axis, keepdims, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -241,7 +241,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_var(
     bool keepdims,
     int ddof) {
   mlx_array out = mlx_array_new();
-  if (mlx_var(&out, input->value, keepdims, ddof, default_cpu_stream()) != 0) {
+  if (mlx_var(&out, input->value, keepdims, ddof, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -254,7 +254,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_var_axis(
     int ddof) {
   mlx_array out = mlx_array_new();
   if (mlx_var_axis(
-          &out, input->value, axis, keepdims, ddof, default_cpu_stream()) != 0) {
+          &out, input->value, axis, keepdims, ddof, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -274,7 +274,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_var_axes(
           axes_len,
           keepdims,
           ddof,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -321,7 +321,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_normal(
           loc,
           scale,
           mlx_array(),
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -335,7 +335,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_fft(
   const auto target_n = resolved_n(input, axis, n);
   const auto target_axis = normalized_axis(input, axis);
   if (mlx_fft_fft(
-          &out, input->value, target_n, target_axis, default_cpu_stream()) !=
+          &out, input->value, target_n, target_axis, default_device_stream()) !=
       0) {
     return nullptr;
   }
@@ -350,7 +350,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_ifft(
   const auto target_n = resolved_n(input, axis, n);
   const auto target_axis = normalized_axis(input, axis);
   if (mlx_fft_ifft(
-          &out, input->value, target_n, target_axis, default_cpu_stream()) !=
+          &out, input->value, target_n, target_axis, default_device_stream()) !=
       0) {
     return nullptr;
   }
@@ -365,7 +365,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_rfft(
   const auto target_n = resolved_n(input, axis, n);
   const auto target_axis = normalized_axis(input, axis);
   if (mlx_fft_rfft(
-          &out, input->value, target_n, target_axis, default_cpu_stream()) !=
+          &out, input->value, target_n, target_axis, default_device_stream()) !=
       0) {
     return nullptr;
   }
@@ -380,7 +380,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_irfft(
   const auto target_n = resolved_n(input, axis, n);
   const auto target_axis = normalized_axis(input, axis);
   if (mlx_fft_irfft(
-          &out, input->value, target_n, target_axis, default_cpu_stream()) !=
+          &out, input->value, target_n, target_axis, default_device_stream()) !=
       0) {
     return nullptr;
   }

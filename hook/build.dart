@@ -36,8 +36,6 @@ void main(List<String> arguments) async {
     final packageRootPath = packageRoot.toFilePath();
     final outputDirectory = input.outputDirectory;
     final outputDirectoryPath = outputDirectory.toFilePath();
-    final buildDirectory = outputDirectory.resolve('cmake/');
-    final buildDirectoryPath = buildDirectory.toFilePath();
     final libraryName = code.targetOS.libraryFileName(
       input.packageName,
       DynamicLoadingBundled(),
@@ -47,6 +45,20 @@ void main(List<String> arguments) async {
         ? _iosSdkName(code.iOS.targetSdk)
         : 'macosx';
     final metalEnabled = await _resolveMetalSupport(logger, code, sdkName);
+    final privateAneEnabled = _envFlag(
+      'DART_MLX_ENABLE_PRIVATE_ANE',
+      defaultValue: true,
+    );
+    final buildDirectory = outputDirectory.resolve(
+      privateAneEnabled ? 'cmake_private_ane_on/' : 'cmake_private_ane_off/',
+    );
+    final buildDirectoryPath = buildDirectory.toFilePath();
+    if (!privateAneEnabled) {
+      logger.warning(
+        'Private ANE bridge is disabled via DART_MLX_ENABLE_PRIVATE_ANE=0. '
+        'Building stub-only private ANE bindings.',
+      );
+    }
 
     await Directory.fromUri(buildDirectory).create(recursive: true);
 
@@ -68,6 +80,7 @@ void main(List<String> arguments) async {
       '-DCMAKE_OSX_ARCHITECTURES=${_architectureName(code.targetArchitecture)}',
       '-DCMAKE_OSX_DEPLOYMENT_TARGET=${_deploymentTarget(code)}',
       '-DMLX_BUILD_METAL=${metalEnabled ? 'ON' : 'OFF'}',
+      '-DDART_MLX_ENABLE_PRIVATE_ANE=${privateAneEnabled ? 'ON' : 'OFF'}',
       if (code.targetOS == OS.iOS) ...[
         '-DCMAKE_SYSTEM_NAME=iOS',
         '-DCMAKE_OSX_SYSROOT=$sdkName',
@@ -100,7 +113,9 @@ void main(List<String> arguments) async {
     );
 
     if (!File.fromUri(libraryFile).existsSync()) {
-      throw StateError('Expected native library was not produced: $libraryFile');
+      throw StateError(
+        'Expected native library was not produced: $libraryFile',
+      );
     }
 
     output.assets.code.add(
@@ -140,7 +155,12 @@ Future<void> _runProcess(
   final exitCode = await process.exitCode;
   await Future.wait([stdoutFuture, stderrFuture]);
   if (exitCode != 0) {
-    throw ProcessException(executable, arguments, 'Exit code $exitCode', exitCode);
+    throw ProcessException(
+      executable,
+      arguments,
+      'Exit code $exitCode',
+      exitCode,
+    );
   }
 }
 
@@ -175,7 +195,11 @@ Future<bool> _resolveMetalSupport(
 
 Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
   final dependencies = <Uri>{};
-  for (final relativePath in const ['native', 'third_party', 'hook/build.dart']) {
+  for (final relativePath in const [
+    'native',
+    'third_party',
+    'hook/build.dart',
+  ]) {
     final uri = packageRoot.resolve(relativePath);
     final type = FileSystemEntity.typeSync(uri.toFilePath());
     if (type == FileSystemEntityType.notFound) {
@@ -230,4 +254,25 @@ String? _deriveCppCompiler(String? cCompiler) {
     }
   }
   return cCompiler;
+}
+
+bool _envFlag(String key, {required bool defaultValue}) {
+  final raw = Platform.environment[key];
+  if (raw == null || raw.isEmpty) {
+    return defaultValue;
+  }
+  switch (raw.toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    case '0':
+    case 'false':
+    case 'no':
+    case 'off':
+      return false;
+    default:
+      return defaultValue;
+  }
 }

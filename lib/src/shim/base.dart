@@ -11,44 +11,48 @@ typedef DartMlxCustomJvpHandle = ffi.Pointer<ffi.Void>;
 typedef DartMlxImportedHandle = ffi.Pointer<ffi.Void>;
 typedef DartMlxExporterHandle = ffi.Pointer<ffi.Void>;
 
-typedef DartMlxClosureCallback = ffi.Int Function(
-  ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
-  ffi.Pointer<ffi.Size>,
-  ffi.Pointer<DartMlxArrayHandle>,
-  ffi.Size,
-);
+typedef DartMlxClosureCallback =
+    ffi.Int Function(
+      ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
+      ffi.Pointer<ffi.Size>,
+      ffi.Pointer<DartMlxArrayHandle>,
+      ffi.Size,
+    );
 
-typedef DartMlxKwCallback = ffi.Int Function(
-  ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
-  ffi.Pointer<ffi.Size>,
-  ffi.Pointer<DartMlxArrayHandle>,
-  ffi.Size,
-  ffi.Pointer<ffi.Pointer<ffi.Pointer<ffi.Char>>>,
-  ffi.Pointer<ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>>,
-  ffi.Pointer<ffi.Size>,
-);
+typedef DartMlxKwCallback =
+    ffi.Int Function(
+      ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
+      ffi.Pointer<ffi.Size>,
+      ffi.Pointer<DartMlxArrayHandle>,
+      ffi.Size,
+      ffi.Pointer<ffi.Pointer<ffi.Pointer<ffi.Char>>>,
+      ffi.Pointer<ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>>,
+      ffi.Pointer<ffi.Size>,
+    );
 
-typedef DartMlxCustomCallback = ffi.Int Function(
-  ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
-  ffi.Pointer<ffi.Size>,
-  ffi.Pointer<DartMlxArrayHandle>,
-  ffi.Size,
-  ffi.Pointer<DartMlxArrayHandle>,
-  ffi.Size,
-  ffi.Pointer<DartMlxArrayHandle>,
-  ffi.Size,
-);
+typedef DartMlxCustomCallback =
+    ffi.Int Function(
+      ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
+      ffi.Pointer<ffi.Size>,
+      ffi.Pointer<DartMlxArrayHandle>,
+      ffi.Size,
+      ffi.Pointer<DartMlxArrayHandle>,
+      ffi.Size,
+      ffi.Pointer<DartMlxArrayHandle>,
+      ffi.Size,
+    );
 
-typedef DartMlxCustomJvpCallback = ffi.Int Function(
-  ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
-  ffi.Pointer<ffi.Size>,
-  ffi.Pointer<DartMlxArrayHandle>,
-  ffi.Size,
-  ffi.Pointer<DartMlxArrayHandle>,
-  ffi.Size,
-  ffi.Pointer<ffi.Int>,
-  ffi.Size,
-);
+typedef DartMlxCustomJvpCallback =
+    ffi.Int Function(
+      ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>>,
+      ffi.Pointer<ffi.Size>,
+      ffi.Pointer<DartMlxArrayHandle>,
+      ffi.Size,
+      ffi.Pointer<DartMlxArrayHandle>,
+      ffi.Size,
+      ffi.Pointer<ffi.Int>,
+      ffi.Size,
+    );
 
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>()
 external ffi.Pointer<ffi.Char> dart_mlx_version_copy();
@@ -58,6 +62,9 @@ external void dart_mlx_string_free_copy(ffi.Pointer<ffi.Char> value);
 
 @ffi.Native<DartMlxDeviceHandle Function()>()
 external DartMlxDeviceHandle dart_mlx_default_device();
+
+@ffi.Native<DartMlxDeviceHandle Function(ffi.Int, ffi.Int)>()
+external DartMlxDeviceHandle dart_mlx_device_new_type(int type, int index);
 
 @ffi.Native<ffi.Int Function(DartMlxDeviceHandle)>()
 external int dart_mlx_device_is_available(DartMlxDeviceHandle handle);
@@ -90,9 +97,7 @@ external DartMlxClosureHandle dart_mlx_function_from_callback(
 );
 
 @ffi.Native<
-  DartMlxKwHandle Function(
-    ffi.Pointer<ffi.NativeFunction<DartMlxKwCallback>>,
-  )
+  DartMlxKwHandle Function(ffi.Pointer<ffi.NativeFunction<DartMlxKwCallback>>)
 >()
 external DartMlxKwHandle dart_mlx_kw_function_from_callback(
   ffi.Pointer<ffi.NativeFunction<DartMlxKwCallback>> callback,
@@ -151,7 +156,9 @@ external DartMlxCustomJvpHandle dart_mlx_custom_jvp_from_callback(
 @ffi.Native<ffi.Void Function(DartMlxCustomJvpHandle)>()
 external void dart_mlx_custom_jvp_free(DartMlxCustomJvpHandle handle);
 
-@ffi.Native<DartMlxClosureHandle Function(DartMlxClosureHandle, DartMlxCustomHandle)>()
+@ffi.Native<
+  DartMlxClosureHandle Function(DartMlxClosureHandle, DartMlxCustomHandle)
+>()
 external DartMlxClosureHandle dart_mlx_function_custom_vjp(
   DartMlxClosureHandle function,
   DartMlxCustomHandle custom,
@@ -210,7 +217,13 @@ external int dart_mlx_export_function(
   bool shapeless,
 );
 
-@ffi.Native<DartMlxExporterHandle Function(ffi.Pointer<ffi.Char>, DartMlxClosureHandle, ffi.Bool)>()
+@ffi.Native<
+  DartMlxExporterHandle Function(
+    ffi.Pointer<ffi.Char>,
+    DartMlxClosureHandle,
+    ffi.Bool,
+  )
+>()
 external DartMlxExporterHandle dart_mlx_function_exporter_new(
   ffi.Pointer<ffi.Char> file,
   DartMlxClosureHandle function,
@@ -262,6 +275,19 @@ external int dart_mlx_imported_function_apply(
   int inputLen,
   ffi.Pointer<ffi.Pointer<DartMlxArrayHandle>> outputsOut,
   ffi.Pointer<ffi.Size> outputsLenOut,
+);
+
+@ffi.Native<
+  DartMlxArrayHandle Function(
+    DartMlxImportedHandle,
+    ffi.Pointer<DartMlxArrayHandle>,
+    ffi.Size,
+  )
+>()
+external DartMlxArrayHandle dart_mlx_imported_function_apply_one(
+  DartMlxImportedHandle function,
+  ffi.Pointer<DartMlxArrayHandle> inputs,
+  int inputLen,
 );
 
 @ffi.Native<

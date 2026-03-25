@@ -30,16 +30,26 @@ final class MlxModule {
   /// Metal runtime submodule.
   MlxMetalModule get metal => const MlxMetalModule._();
 
+  /// Official Core ML helpers.
+  MlxCoreMlModule get coreml => const MlxCoreMlModule._();
+
+  /// Private Apple Neural Engine helpers.
+  MlxAnePrivateModule get anePrivate => const MlxAnePrivateModule._();
+
   /// Memory/runtime submodule.
   MlxMemoryModule get memory => const MlxMemoryModule._();
 
   /// Creates a zero-filled array.
-  MlxArray zeros(List<int> shape, {MlxDType dtype = raw.mlx_dtype_.MLX_FLOAT32}) =>
-      MlxArray.zeros(shape, dtype: dtype);
+  MlxArray zeros(
+    List<int> shape, {
+    MlxDType dtype = raw.mlx_dtype_.MLX_FLOAT32,
+  }) => MlxArray.zeros(shape, dtype: dtype);
 
   /// Creates a one-filled array.
-  MlxArray ones(List<int> shape, {MlxDType dtype = raw.mlx_dtype_.MLX_FLOAT32}) =>
-      MlxArray.ones(shape, dtype: dtype);
+  MlxArray ones(
+    List<int> shape, {
+    MlxDType dtype = raw.mlx_dtype_.MLX_FLOAT32,
+  }) => MlxArray.ones(shape, dtype: dtype);
 
   /// Creates a scalar-filled array.
   MlxArray full(
@@ -81,7 +91,8 @@ final class MlxModule {
   }) => MlxOps.addmm(c, a, b, alpha: alpha, beta: beta);
 
   /// Casts an array to a different dtype.
-  MlxArray astype(MlxArray input, MlxDType dtype) => MlxOps.astype(input, dtype);
+  MlxArray astype(MlxArray input, MlxDType dtype) =>
+      MlxOps.astype(input, dtype);
 
   /// Absolute value.
   MlxArray abs(MlxArray input) => MlxOps.abs(input);
@@ -138,8 +149,11 @@ final class MlxModule {
       MlxTensor.take(input, indices, axis: axis);
 
   /// Takes values along a specific axis.
-  MlxArray takeAlongAxis(MlxArray input, MlxArray indices, {required int axis}) =>
-      MlxTensor.takeAlongAxis(input, indices, axis: axis);
+  MlxArray takeAlongAxis(
+    MlxArray input,
+    MlxArray indices, {
+    required int axis,
+  }) => MlxTensor.takeAlongAxis(input, indices, axis: axis);
 
   /// General gather over multiple index tensors.
   MlxArray gather(
@@ -147,12 +161,7 @@ final class MlxModule {
     List<MlxArray> indices, {
     required List<int> axes,
     required List<int> sliceSizes,
-  }) => MlxTensor.gather(
-    input,
-    indices,
-    axes: axes,
-    sliceSizes: sliceSizes,
-  );
+  }) => MlxTensor.gather(input, indices, axes: axes, sliceSizes: sliceSizes);
 
   /// Single-index gather helper.
   MlxArray gatherSingle(
@@ -187,8 +196,11 @@ final class MlxModule {
       MlxTensor.broadcastArrays(inputs);
 
   /// Splits an array at explicit section boundaries.
-  List<MlxArray> splitSections(MlxArray input, List<int> indices, {int axis = 0}) =>
-      MlxTensor.splitSections(input, indices, axis: axis);
+  List<MlxArray> splitSections(
+    MlxArray input,
+    List<int> indices, {
+    int axis = 0,
+  }) => MlxTensor.splitSections(input, indices, axis: axis);
 
   /// Segmented matrix multiply.
   MlxArray segmentedMm(MlxArray a, MlxArray b, MlxArray segments) =>
@@ -253,12 +265,7 @@ final class MlxModule {
     MlxArray update, {
     required MlxArray start,
     required List<int> axes,
-  }) => MlxTensor.sliceUpdateDynamic(
-    source,
-    update,
-    start: start,
-    axes: axes,
-  );
+  }) => MlxTensor.sliceUpdateDynamic(source, update, start: start, axes: axes);
 
   /// Einstein summation.
   MlxArray einsum(String subscripts, List<MlxArray> operands) =>
@@ -271,13 +278,7 @@ final class MlxModule {
     int? axis,
     List<int>? axesA,
     List<int>? axesB,
-  }) => MlxTensor.tensordot(
-    a,
-    b,
-    axis: axis,
-    axesA: axesA,
-    axesB: axesB,
-  );
+  }) => MlxTensor.tensordot(a, b, axis: axis, axesA: axesA, axesB: axesB);
 
   MlxArray diag(MlxArray input, {int k = 0}) => MlxExtra.diag(input, k: k);
 
@@ -411,12 +412,7 @@ final class MlxModule {
     int padWidth, {
     MlxArray? padValue,
     String mode = 'constant',
-  }) => MlxTensor.padSymmetric(
-    input,
-    padWidth,
-    padValue: padValue,
-    mode: mode,
-  );
+  }) => MlxTensor.padSymmetric(input, padWidth, padValue: padValue, mode: mode);
 
   /// Unflattens an axis into a shape.
   MlxArray unflatten(
@@ -578,7 +574,8 @@ final class MlxModule {
       MlxOps.broadcastTo(input, shape);
 
   /// Expands a dimension at [axis].
-  MlxArray expandDims(MlxArray input, int axis) => MlxOps.expandDims(input, axis);
+  MlxArray expandDims(MlxArray input, int axis) =>
+      MlxOps.expandDims(input, axis);
 
   /// Removes singleton dimensions.
   MlxArray squeeze(MlxArray input) => MlxOps.squeeze(input);
@@ -642,11 +639,8 @@ final class MlxRandomModule {
   }) => MlxRandom.normal(shape, loc: loc, scale: scale, dtype: dtype);
 
   /// Samples Bernoulli values.
-  MlxArray bernoulli(
-    MlxArray probability, {
-    List<int>? shape,
-    MlxArray? key,
-  }) => MlxRandom.bernoulli(probability, shape: shape, key: key);
+  MlxArray bernoulli(MlxArray probability, {List<int>? shape, MlxArray? key}) =>
+      MlxRandom.bernoulli(probability, shape: shape, key: key);
 
   /// Samples categorical indices.
   MlxArray categorical(
@@ -664,11 +658,8 @@ final class MlxRandomModule {
   );
 
   /// Permutes an input along [axis].
-  MlxArray permutation(
-    MlxArray input, {
-    int axis = 0,
-    MlxArray? key,
-  }) => MlxRandom.permutation(input, axis: axis, key: key);
+  MlxArray permutation(MlxArray input, {int axis = 0, MlxArray? key}) =>
+      MlxRandom.permutation(input, axis: axis, key: key);
 
   /// Returns a permutation of `0..n-1`.
   MlxArray permutationArange(int n, {MlxArray? key}) =>
@@ -688,13 +679,8 @@ final class MlxRandomModule {
     double loc = 0,
     double scale = 1,
     MlxArray? key,
-  }) => MlxRandom.laplace(
-    shape,
-    dtype: dtype,
-    loc: loc,
-    scale: scale,
-    key: key,
-  );
+  }) =>
+      MlxRandom.laplace(shape, dtype: dtype, loc: loc, scale: scale, key: key);
 
   /// Samples a multivariate normal random array.
   MlxArray multivariateNormal(

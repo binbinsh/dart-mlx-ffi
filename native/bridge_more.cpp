@@ -48,7 +48,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_hadamard_transform(
     float scale) {
   auto out = mlx_array_new();
   mlx_optional_float opt_scale = {.value = scale, .has_value = has_scale};
-  if (mlx_hadamard_transform(&out, input->value, opt_scale, default_cpu_stream()) != 0) {
+  if (mlx_hadamard_transform(&out, input->value, opt_scale, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -119,7 +119,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_round(
     const DartMlxArrayHandle* input,
     int decimals) {
   auto out = mlx_array_new();
-  if (mlx_round(&out, input->value, decimals, default_cpu_stream()) != 0) {
+  if (mlx_round(&out, input->value, decimals, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -188,7 +188,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_from_fp8(
     const DartMlxArrayHandle* input,
     int dtype) {
   auto out = mlx_array_new();
-  if (mlx_from_fp8(&out, input->value, as_dtype(dtype), default_cpu_stream()) != 0) {
+  if (mlx_from_fp8(&out, input->value, as_dtype(dtype), default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -201,7 +201,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_put_along_axis(
     int axis) {
   auto out = mlx_array_new();
   if (mlx_put_along_axis(
-          &out, input->value, indices->value, values->value, axis, default_cpu_stream()) != 0) {
+          &out, input->value, indices->value, values->value, axis, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -214,7 +214,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_scatter_add_axis(
     int axis) {
   auto out = mlx_array_new();
   if (mlx_scatter_add_axis(
-          &out, input->value, indices->value, values->value, axis, default_cpu_stream()) != 0) {
+          &out, input->value, indices->value, values->value, axis, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
