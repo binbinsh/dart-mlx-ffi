@@ -1,6 +1,6 @@
 # Changelog
 
-### 26.2026.6
+### 26.325.7
 
 - Moved Dart model implementations out of `benchmark/` and into `lib/src/models/`, including `parakeet_tdt`, `qwen2_5`, `kitten_tts`, shared helpers, and synthetic benchmark code.
 - Added `lib/models.dart` as the unified public export surface for Dart model implementations.

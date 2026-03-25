@@ -1,6 +1,6 @@
 name: dart_mlx_ffi
 description: Production-ready Dart FFI bindings for Apple MLX on macOS
-version: 26.2026.6
+version: 26.325.7
 homepage: https://github.com/binbinsh/dart-mlx-ffi
 repository: https://github.com/binbinsh/dart-mlx-ffi
 issue_tracker: https://github.com/binbinsh/dart-mlx-ffi/issues

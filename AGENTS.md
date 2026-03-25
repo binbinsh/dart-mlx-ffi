@@ -2,14 +2,14 @@
 
 ## Versioning
 
-- This package uses the version format `major.yyyy.commit-count`.
-- The canonical release form is `26.2026.6` where:
-  - `26` is the major version
-  - `2026` is the calendar year
-  - `6` is the git commit count with no zero padding
+- This package uses the version format `YY.MDD.commit_count`.
+- The canonical release form is `26.325.7` where:
+  - `26` is the 2-digit calendar year
+  - `325` is `month + day` with no unnecessary leading zeroes
+  - `7` is the git commit count with no zero padding
 - Update [`pubspec.yaml`](pubspec.yaml) and [`CHANGELOG.md`](CHANGELOG.md) together.
 - Git tags must match the pubspec version and use the form `v<version>`.
-- Example tag: `v26.2026.6`.
+- Example tag: `v26.325.7`.
 
 ## File Size
 
@@ -42,5 +42,5 @@
   - `dart pub publish`
 - GitHub Actions auto-publish can be enabled after the package exists on pub.dev.
   - In pub.dev package admin, enable publishing from GitHub Actions for this repository.
-  - The release tag must match the package version format: `v<major.yyyy.commit-count>`.
-  - Example: `v26.2026.6`
+  - The release tag must match the package version format: `v<YY.MDD.commit_count>`.
+  - Example: `v26.325.7`
