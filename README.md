@@ -30,17 +30,13 @@ xcodebuild -downloadComponent MetalToolchain
 dart pub add dart_mlx_ffi
 ```
 
-## Private ANE
-
-Private-ANE-specific work lives under [`private_ane/`](private_ane/). It is experimental, uses private Apple APIs, and should not be treated as a stable or generally usable part of the project.
-
 ## Model Workflows
 
-There are now three distinct locations in this repository:
+There are three main model-workflow areas in this repository:
 
 - [`lib/src/models/`](lib/src/models/) contains the main stable Dart model implementations
-- [`private_ane/`](private_ane/) contains experimental private-ANE implementations and tooling
 - [`models/`](models/) contains reusable non-runtime export and artifact tooling
+- [`benchmark/`](benchmark/) contains publish-time parity runners, benchmark orchestration, and report-generation scripts
 
 Current stable Dart model implementations under [`lib/src/models/`](lib/src/models/) include:
 
@@ -48,6 +44,13 @@ Current stable Dart model implementations under [`lib/src/models/`](lib/src/mode
 - `qwen2_5`
 - `kitten_tts`
 - `shared` helpers
+
+Current publish-time model parity coverage under [`benchmark/`](benchmark/) includes:
+
+- `text`: `JOSIE-1.1-4B-Instruct-4bit`, `GLM-4.7-Flash-abliterated-mxfp8`, `tiny-aya-fire-4bit`, `Huihui-Qwen3.5-27B-abliterated-6bit`, `IQuest-Coder-V1-7B-Thinking-mlx_8bit`, `DASD-4B-Thinking-bfloat16`, `Qwen3.5-9B-MLX-4bit`, `Qwen3.5-35B-A3B-4bit`
+- `vlm`: `MiniCPM-o-4_5-4bit`, `Gemma-SEA-LION-v4-4B-VL-mlx-3bit`, `Qwen3.5-0.8B-4bit`
+- `tts`: `Ming-omni-tts-0.5B-4bit`, `kitten-tts-nano-0.8-6bit`
+- `asr`: `parakeet-tdt-0.6b-v3`
 
 Top-level [`models/`](models/) is reserved for reusable non-runtime tooling such as:
 
@@ -289,7 +292,7 @@ Useful focused runs:
 # full-waveform KittenTTS comparison
 uv run python benchmark/kitten_tts/mlx_audio_compare.py --warmup 3 --iters 10
 
-# real-weight KittenTTS conv_post probe against private ANE
+# real-weight KittenTTS conv_post probe
 uv run python benchmark/kitten_tts/conv_post_probe.py
 
 # deterministic Ming Omni TTS subgraph comparison
@@ -339,3 +342,13 @@ uv sync
 
 - This package targets Apple platforms only.
 - The raw layer remains the escape hatch for the full MLX C surface.
+
+## Private ANE
+
+Private-ANE-specific work lives under [`private_ane/`](private_ane/). It is experimental, uses private Apple APIs, and is not part of the stable package surface described above.
+
+If you need that path, start with:
+
+- [`private_ane/README.md`](private_ane/README.md)
+- [`private_ane/models/`](private_ane/models/)
+- [`private_ane/shared/`](private_ane/shared/)
