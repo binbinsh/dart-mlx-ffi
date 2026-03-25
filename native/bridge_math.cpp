@@ -8,7 +8,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_fft2(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_fft2(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -22,7 +22,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_fftn(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_fftn(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -36,7 +36,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_ifft2(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_ifft2(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -50,7 +50,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_ifftn(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_ifftn(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -64,7 +64,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_rfft2(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_rfft2(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -78,7 +78,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_rfftn(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_rfftn(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -92,7 +92,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_irfft2(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_irfft2(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -106,7 +106,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_irfftn(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_irfftn(
-          &out, input->value, n, n_len, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, n, n_len, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -118,7 +118,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_fftshift(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_fftshift(
-          &out, input->value, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -130,7 +130,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_fft_ifftshift(
     size_t axes_len) {
   mlx_array out = mlx_array_new();
   if (mlx_fft_ifftshift(
-          &out, input->value, axes, axes_len, default_cpu_stream()) != 0) {
+          &out, input->value, axes, axes_len, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);

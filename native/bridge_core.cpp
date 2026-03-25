@@ -22,6 +22,11 @@ extern "C" DartMlxDeviceHandle* dart_mlx_default_device() {
   return wrap_device(value);
 }
 
+extern "C" DartMlxDeviceHandle* dart_mlx_device_new_type(int type, int index) {
+  return wrap_device(
+      mlx_device_new_type(static_cast<mlx_device_type>(type), index));
+}
+
 extern "C" int dart_mlx_device_is_available(const DartMlxDeviceHandle* handle) {
   bool available = false;
   if (mlx_device_is_available(&available, handle->value) != 0) {

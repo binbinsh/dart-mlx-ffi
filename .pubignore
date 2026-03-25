@@ -9,6 +9,8 @@ example/linux/
 example/web/
 example/windows/
 benchmark/out/
+output/
+tmp/
 
 third_party/fmt/doc/
 third_party/fmt/support/

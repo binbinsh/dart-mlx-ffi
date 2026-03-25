@@ -6,7 +6,7 @@ library;
 
 import 'package:test/test.dart';
 
-import '../benchmark/kitten_tts/mlx_audio/models/kitten_tts/preprocess.dart';
+import 'package:dart_mlx_ffi/models.dart';
 
 void main() {
   test('tokenizes phoneme text with punctuation preserved', () {

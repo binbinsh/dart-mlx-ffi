@@ -13,6 +13,17 @@ final class MlxDevice {
     );
   }
 
+  /// Creates a device handle for a specific backend and index.
+  factory MlxDevice.type(raw.mlx_device_type_ type, {int index = 0}) {
+    _clearError();
+    return MlxDevice._(
+      _checkHandle(
+        'dart_mlx_device_new_type',
+        shim.dart_mlx_device_new_type(type.value, index),
+      ),
+    );
+  }
+
   static final Finalizer<ffi.Pointer<ffi.Void>> _finalizer =
       Finalizer<ffi.Pointer<ffi.Void>>(shim.dart_mlx_device_free);
 
@@ -101,7 +112,10 @@ final class MlxDevice {
   static void setDefault(MlxDevice device) {
     device._ensureOpen();
     _clearError();
-    _checkStatus('dart_mlx_set_default_device', shim.dart_mlx_set_default_device(device._handle));
+    _checkStatus(
+      'dart_mlx_set_default_device',
+      shim.dart_mlx_set_default_device(device._handle),
+    );
   }
 
   /// Snapshot of backend-specific device information.

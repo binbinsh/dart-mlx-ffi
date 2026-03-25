@@ -7,7 +7,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_linspace(
     int dtype) {
   auto out = mlx_array_new();
   if (mlx_linspace(
-          &out, start, stop, num, as_dtype(dtype), default_cpu_stream()) != 0) {
+          &out, start, stop, num, as_dtype(dtype), default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -27,7 +27,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_isclose(
     bool equal_nan) {
   auto out = mlx_array_new();
   if (mlx_isclose(
-          &out, a->value, b->value, rtol, atol, equal_nan, default_cpu_stream()) !=
+          &out, a->value, b->value, rtol, atol, equal_nan, default_device_stream()) !=
       0) {
     return nullptr;
   }
@@ -79,14 +79,14 @@ extern "C" DartMlxArrayHandle* dart_mlx_roll(
   switch (mode) {
     case 1:
       status = mlx_roll_axis(
-          &out, input->value, shift, shift_len, axis, default_cpu_stream());
+          &out, input->value, shift, shift_len, axis, default_device_stream());
       break;
     case 2:
       status = mlx_roll_axes(
-          &out, input->value, shift, shift_len, axes, axes_len, default_cpu_stream());
+          &out, input->value, shift, shift_len, axes, axes_len, default_device_stream());
       break;
     default:
-      status = mlx_roll(&out, input->value, shift, shift_len, default_cpu_stream());
+      status = mlx_roll(&out, input->value, shift, shift_len, default_device_stream());
       break;
   }
   if (status != 0) {
@@ -102,7 +102,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_median(
     bool keepdims) {
   auto out = mlx_array_new();
   if (mlx_median(
-          &out, input->value, axes, axes_len, keepdims, default_cpu_stream()) != 0) {
+          &out, input->value, axes, axes_len, keepdims, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -114,7 +114,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_masked_scatter(
     const DartMlxArrayHandle* values) {
   auto out = mlx_array_new();
   if (mlx_masked_scatter(
-          &out, input->value, mask->value, values->value, default_cpu_stream()) != 0) {
+          &out, input->value, mask->value, values->value, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -131,7 +131,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_nan_to_num(
   mlx_optional_float opt_pos = {.value = pos_inf, .has_value = has_pos_inf};
   mlx_optional_float opt_neg = {.value = neg_inf, .has_value = has_neg_inf};
   if (mlx_nan_to_num(
-          &out, input->value, nan, opt_pos, opt_neg, default_cpu_stream()) != 0) {
+          &out, input->value, nan, opt_pos, opt_neg, default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -143,7 +143,7 @@ extern "C" int dart_mlx_divmod(
     DartMlxArrayHandle*** outputs_out,
     size_t* outputs_len_out) {
   auto outputs = mlx_vector_array_new();
-  auto status = mlx_divmod(&outputs, a->value, b->value, default_cpu_stream());
+  auto status = mlx_divmod(&outputs, a->value, b->value, default_device_stream());
   if (status != 0) {
     return status;
   }

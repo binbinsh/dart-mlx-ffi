@@ -67,10 +67,7 @@ final class MlxArray {
   }
 
   /// Creates a bool array from a Dart list and an explicit shape.
-  factory MlxArray.fromBoolList(
-    List<bool> values, {
-    required List<int> shape,
-  }) {
+  factory MlxArray.fromBoolList(List<bool> values, {required List<int> shape}) {
     final data = calloc<ffi.Uint8>(values.length);
     for (var index = 0; index < values.length; index++) {
       data[index] = values[index] ? 1 : 0;
@@ -84,10 +81,10 @@ final class MlxArray {
             shape.length,
           ) ??
           shim.dart_mlx_array_from_bool(
-        data.cast(),
-        shapePointer,
-        shape.length,
-      );
+            data.cast(),
+            shapePointer,
+            shape.length,
+          );
       if (handle == ffi.nullptr) {
         calloc.free(data);
       }
@@ -96,10 +93,7 @@ final class MlxArray {
   }
 
   /// Creates an `int32` array from a Dart list and an explicit shape.
-  factory MlxArray.fromInt32List(
-    List<int> values, {
-    required List<int> shape,
-  }) {
+  factory MlxArray.fromInt32List(List<int> values, {required List<int> shape}) {
     final data = calloc<ffi.Int32>(values.length);
     for (var index = 0; index < values.length; index++) {
       data[index] = values[index];
@@ -113,10 +107,10 @@ final class MlxArray {
             shape.length,
           ) ??
           shim.dart_mlx_array_from_int32(
-        data.cast(),
-        shapePointer,
-        shape.length,
-      );
+            data.cast(),
+            shapePointer,
+            shape.length,
+          );
       if (handle == ffi.nullptr) {
         calloc.free(data);
       }
@@ -130,8 +124,12 @@ final class MlxArray {
     required List<int> shape,
   }) {
     final data = calloc<ffi.Float>(values.length);
-    for (var index = 0; index < values.length; index++) {
-      data[index] = values[index];
+    if (values is Float32List) {
+      data.asTypedList(values.length).setAll(0, values);
+    } else {
+      for (var index = 0; index < values.length; index++) {
+        data[index] = values[index];
+      }
     }
     return _withShape(shape, (shapePointer) {
       _clearError();
@@ -142,10 +140,10 @@ final class MlxArray {
             shape.length,
           ) ??
           shim.dart_mlx_array_from_float32(
-        data.cast(),
-        shapePointer,
-        shape.length,
-      );
+            data.cast(),
+            shapePointer,
+            shape.length,
+          );
       if (handle == ffi.nullptr) {
         calloc.free(data);
       }
@@ -171,10 +169,10 @@ final class MlxArray {
             shape.length,
           ) ??
           shim.dart_mlx_array_from_float64(
-        data.cast(),
-        shapePointer,
-        shape.length,
-      );
+            data.cast(),
+            shapePointer,
+            shape.length,
+          );
       if (handle == ffi.nullptr) {
         calloc.free(data);
       }
@@ -183,10 +181,7 @@ final class MlxArray {
   }
 
   /// Creates an `int64` array from a Dart list and an explicit shape.
-  factory MlxArray.fromInt64List(
-    List<int> values, {
-    required List<int> shape,
-  }) {
+  factory MlxArray.fromInt64List(List<int> values, {required List<int> shape}) {
     final data = calloc<ffi.Int64>(values.length);
     for (var index = 0; index < values.length; index++) {
       data[index] = values[index];
@@ -312,6 +307,39 @@ final class MlxArray {
     };
   }
 
+  /// Copies the array contents as contiguous `float32` values.
+  ///
+  /// If needed, the array is cast to `float32` first.
+  Float32List toFloat32List() {
+    _ensureOpen();
+    if (dtype == raw.mlx_dtype_.MLX_FLOAT32) {
+      return _copyFloat32TypedData();
+    }
+    final cast = astype(raw.mlx_dtype_.MLX_FLOAT32);
+    try {
+      return cast._copyFloat32TypedData();
+    } finally {
+      cast.close();
+    }
+  }
+
+  /// Reads a scalar integer without materializing the array into a full list.
+  int toScalarInt() {
+    _ensureOpen();
+    if (size != 1) {
+      throw StateError('toScalarInt() requires a scalar or size-1 array.');
+    }
+    return switch (dtype) {
+      raw.mlx_dtype_.MLX_UINT32 => _readScalarUint32(),
+      raw.mlx_dtype_.MLX_UINT64 => _readScalarUint64(),
+      raw.mlx_dtype_.MLX_INT32 => _readScalarInt32(),
+      raw.mlx_dtype_.MLX_INT64 => _readScalarInt64(),
+      _ => throw UnsupportedError(
+        'toScalarInt() currently supports uint32/uint64/int32/int64 arrays.',
+      ),
+    };
+  }
+
   /// Returns a reshaped view-like array with the requested shape.
   MlxArray reshape(List<int> newShape) {
     _ensureOpen();
@@ -377,12 +405,7 @@ final class MlxArray {
     int padWidth, {
     MlxArray? padValue,
     String mode = 'constant',
-  }) => MlxTensor.padSymmetric(
-    this,
-    padWidth,
-    padValue: padValue,
-    mode: mode,
-  );
+  }) => MlxTensor.padSymmetric(this, padWidth, padValue: padValue, mode: mode);
 
   /// Unflattens [axis] into [shape].
   MlxArray unflatten({required int axis, required List<int> shape}) =>
@@ -455,12 +478,8 @@ final class MlxArray {
     MlxArray indices, {
     required int axis,
     required List<int> sliceSizes,
-  }) => MlxTensor.gatherSingle(
-    this,
-    indices,
-    axis: axis,
-    sliceSizes: sliceSizes,
-  );
+  }) =>
+      MlxTensor.gatherSingle(this, indices, axis: axis, sliceSizes: sliceSizes);
 
   /// Slices this array with explicit start/stop/stride vectors.
   MlxArray slice({
@@ -500,12 +519,7 @@ final class MlxArray {
     MlxArray update, {
     required MlxArray start,
     required List<int> axes,
-  }) => MlxTensor.sliceUpdateDynamic(
-    this,
-    update,
-    start: start,
-    axes: axes,
-  );
+  }) => MlxTensor.sliceUpdateDynamic(this, update, start: start, axes: axes);
 
   /// Computes a tensor contraction with [other].
   MlxArray tensordot(
@@ -513,24 +527,15 @@ final class MlxArray {
     int? axis,
     List<int>? axesA,
     List<int>? axesB,
-  }) => MlxTensor.tensordot(
-    this,
-    other,
-    axis: axis,
-    axesA: axesA,
-    axesB: axesB,
-  );
+  }) =>
+      MlxTensor.tensordot(this, other, axis: axis, axesA: axesA, axesB: axesB);
 
   /// Matrix multiplication.
   MlxArray matmul(MlxArray other) => MlxOps.matmul(this, other);
 
   /// Matrix multiply with additive bias: `alpha * (a @ b) + beta * c`.
-  MlxArray addmm(
-    MlxArray a,
-    MlxArray b, {
-    double alpha = 1,
-    double beta = 1,
-  }) => MlxOps.addmm(this, a, b, alpha: alpha, beta: beta);
+  MlxArray addmm(MlxArray a, MlxArray b, {double alpha = 1, double beta = 1}) =>
+      MlxOps.addmm(this, a, b, alpha: alpha, beta: beta);
 
   /// Casts this array to a different dtype.
   MlxArray astype(MlxDType dtype) => MlxOps.astype(this, dtype);
@@ -548,7 +553,8 @@ final class MlxArray {
   MlxArray squeeze() => MlxOps.squeeze(this);
 
   /// Clips values to `[min, max]` when provided.
-  MlxArray clip({double? min, double? max}) => MlxOps.clip(this, min: min, max: max);
+  MlxArray clip({double? min, double? max}) =>
+      MlxOps.clip(this, min: min, max: max);
 
   /// Elementwise minimum.
   MlxArray minimum(MlxArray other) => MlxOps.minimum(this, other);
@@ -683,6 +689,11 @@ final class MlxArray {
   }
 
   List<Object> _copyFloat32Data() {
+    final values = _copyFloat32TypedData();
+    return List<Object>.generate(values.length, (index) => values[index]);
+  }
+
+  Float32List _copyFloat32TypedData() {
     final out = calloc<ffi.Float>(size);
     try {
       _clearError();
@@ -690,7 +701,7 @@ final class MlxArray {
         'dart_mlx_array_copy_float32',
         shim.dart_mlx_array_copy_float32(_handle, out, size),
       );
-      return List<Object>.generate(size, (index) => out[index]);
+      return Float32List.fromList(out.asTypedList(size));
     } finally {
       calloc.free(out);
     }
@@ -709,6 +720,63 @@ final class MlxArray {
       calloc.free(out);
     }
   }
+
+  int _readScalarUint32() {
+    final out = calloc<ffi.Uint32>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_item_uint32',
+        shim.dart_mlx_array_item_uint32(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  int _readScalarUint64() {
+    final out = calloc<ffi.Uint64>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_item_uint64',
+        shim.dart_mlx_array_item_uint64(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  int _readScalarInt32() {
+    final out = calloc<ffi.Int32>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_item_int32',
+        shim.dart_mlx_array_item_int32(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  int _readScalarInt64() {
+    final out = calloc<ffi.Int64>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_item_int64',
+        shim.dart_mlx_array_item_int64(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
 }
 
 /// Managed wrapper for the current MLX default device.

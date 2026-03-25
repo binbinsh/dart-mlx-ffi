@@ -58,6 +58,24 @@ final class MlxImportedFunction {
     }
   }
 
+  /// Invokes the imported function when exactly one MLX output is expected.
+  MlxArray callOne(List<MlxArray> inputs) {
+    _ensureOpen();
+    return _withArrayHandles(inputs, (inputHandles, inputLen) {
+      _clearError();
+      return MlxArray._(
+        _checkHandle(
+          'dart_mlx_imported_function_apply_one',
+          shim.dart_mlx_imported_function_apply_one(
+            _handle,
+            inputHandles.cast(),
+            inputLen,
+          ),
+        ),
+      );
+    });
+  }
+
   /// Releases imported function resources.
   void close() {
     if (_closed) {

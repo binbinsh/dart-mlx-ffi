@@ -145,6 +145,11 @@ void main(List<String> args) {
     preview.close();
     audioFlat.close();
     stdout.writeln(jsonEncode(payload));
+    exit(0);
+  } catch (error, stackTrace) {
+    stderr.writeln(error);
+    stderr.writeln(stackTrace);
+    exit(1);
   } finally {
     predDurFn.close();
     fullAlignedFn.close();

@@ -12,7 +12,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_gumbel(
           shape_len,
           as_dtype(dtype),
           key == nullptr ? mlx_array() : key->value,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -34,7 +34,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_laplace(
           loc,
           scale,
           key == nullptr ? mlx_array() : key->value,
-          default_cpu_stream()) != 0) {
+          default_device_stream()) != 0) {
     return nullptr;
   }
   return wrap_array(out);
@@ -80,7 +80,7 @@ extern "C" DartMlxArrayHandle* dart_mlx_random_randint(
       shape_len,
       as_dtype(dtype),
       key == nullptr ? mlx_array() : key->value,
-      default_cpu_stream());
+      default_device_stream());
   mlx_array_free(low_arr);
   mlx_array_free(high_arr);
   if (status != 0) {

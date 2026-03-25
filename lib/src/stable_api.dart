@@ -3,6 +3,7 @@ library;
 
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -12,6 +13,15 @@ import 'raw/raw.dart' as raw;
 import 'shim_bindings.dart' as shim;
 
 part 'stable/core.dart';
+part 'stable/ane.dart';
+part 'stable/ane_module.dart';
+part 'stable/ane_io.dart';
+part 'stable/ane_chain.dart';
+part 'stable/coreml_ane.dart';
+part 'stable/ane_decode.dart';
+part 'stable/ane_interop.dart';
+part 'stable/ane_loop.dart';
+part 'stable/ane_run.dart';
 part 'stable/array.dart';
 part 'stable/dev.dart';
 part 'stable/sys.dart';

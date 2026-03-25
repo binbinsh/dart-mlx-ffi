@@ -3,8 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
-
-import 'qwen_run.dart';
+import 'package:dart_mlx_ffi/models.dart';
 
 void main(List<String> args) {
   final manifestPath = readStringArg(

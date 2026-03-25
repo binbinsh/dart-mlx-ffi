@@ -8,7 +8,7 @@
 - Full raw binding surface through `package:dart_mlx_ffi/raw.dart`
 - macOS packaging with native MLX build hooks included
 - Verified parity against Python MLX on deterministic operator suites
-- Verified model parity on 13 MLX checkpoints and subgraphs for publish-time validation
+- Verified model parity on 14 MLX checkpoints and subgraphs for publish-time validation
 
 ## Platform
 
@@ -28,6 +28,135 @@ xcodebuild -downloadComponent MetalToolchain
 
 ```sh
 dart pub add dart_mlx_ffi
+```
+
+## Private ANE
+
+Private-ANE-specific work lives under [`private_ane/`](private_ane/). It is experimental, uses private Apple APIs, and should not be treated as a stable or generally usable part of the project.
+
+## Model Workflows
+
+There are now three distinct locations in this repository:
+
+- [`lib/src/models/`](lib/src/models/) contains the main stable Dart model implementations
+- [`private_ane/`](private_ane/) contains experimental private-ANE implementations and tooling
+- [`models/`](models/) contains reusable non-runtime export and artifact tooling
+
+Current stable Dart model implementations under [`lib/src/models/`](lib/src/models/) include:
+
+- `parakeet_tdt`
+- `qwen2_5`
+- `kitten_tts`
+- `shared` helpers
+
+Top-level [`models/`](models/) is reserved for reusable non-runtime tooling such as:
+
+- [`models/common/`](models/common/) generic import / execution helpers
+- [`models/text_lm/`](models/text_lm/) `mlx-lm` text export helpers
+
+## Exporting Text Model Bundles
+
+The repository includes a Python helper for turning an `mlx-lm` text snapshot
+into a shapeless `.mlxfn` artifact plus matching sample inputs:
+
+- [`models/text_lm/export_bundle.py`](models/text_lm/export_bundle.py)
+
+This is useful when you want to:
+
+- download a model from Hugging Face as a normal MLX snapshot
+- export a reusable next-token forward function once
+- run the exported artifact from Dart with `MlxExport.importFunction(...)`
+
+### Prepare Python Tooling
+
+```sh
+uv sync
+```
+
+### Export A Local Snapshot
+
+```sh
+uv run python models/text_lm/export_bundle.py \
+  --snapshot-dir /path/to/mlx-snapshot \
+  --output-dir /path/to/out-bundle
+```
+
+Outputs:
+
+- `/path/to/out-bundle/function.mlxfn`
+- `/path/to/out-bundle/inputs.safetensors`
+
+The export is shapeless, so the imported function accepts variable-length
+`input_ids` tensors.
+
+By default, the helper uses a neutral sample prompt only to create example
+`input_ids` for export. It does not lock you into any runtime chat template or
+task-specific prompt format.
+
+If you want the example input to match a specific prompt style, pass custom
+text directly:
+
+```sh
+uv run python models/text_lm/export_bundle.py \
+  --snapshot-dir /path/to/mlx-snapshot \
+  --output-dir /path/to/out-bundle \
+  --sample-prompt "Summarize why MLX matters."
+```
+
+Or load the sample prompt from a file:
+
+```sh
+uv run python models/text_lm/export_bundle.py \
+  --snapshot-dir /path/to/mlx-snapshot \
+  --output-dir /path/to/out-bundle \
+  --sample-prompt-file /path/to/prompt.txt
+```
+
+### Example: TranslateGemma
+
+If you already have `mlx-community/translategemma-4b-it-4bit` downloaded as a
+local MLX snapshot, export it like this:
+
+```sh
+uv run python models/text_lm/export_bundle.py \
+  --snapshot-dir /path/to/translategemma-4b-it-4bit \
+  --output-dir /tmp/translategemma-bundle \
+  --sample-prompt-file /path/to/translategemma_prompt.txt
+```
+
+### Run The Exported Bundle In Dart
+
+```dart
+import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
+
+final imported = MlxExport.importFunction('/tmp/translategemma-bundle/function.mlxfn');
+final inputIds = MlxArray.fromInt32List([2, 106, 1234], shape: [1, 3]);
+
+try {
+  final outputs = imported.call([inputIds]);
+  try {
+    final logits = outputs.first;
+    MlxRuntime.evalAll([logits]);
+    print(logits.shape);
+  } finally {
+    for (final output in outputs) {
+      output.close();
+    }
+  }
+} finally {
+  inputIds.close();
+  imported.close();
+}
+```
+
+### Compare Against Python
+
+The repository also includes a generic imported-function runner:
+
+```sh
+dart run models/common/import_run.dart \
+  /tmp/translategemma-bundle/function.mlxfn \
+  /tmp/translategemma-bundle/inputs.safetensors
 ```
 
 ## Quick Start
@@ -98,31 +227,35 @@ Method:
 - Text and VLM checkpoints compare the last-token `logits[:16]`.
 - `Ming-omni-tts-0.5B-4bit` compares a deterministic `forward_with_cfg` diffusion subgraph instead of full waveform generation.
 - `kitten-tts-nano-0.8-6bit` compares the full waveform for one fixed text and voice.
+- `parakeet-tdt-0.6b-v3` compares the first-step `token_logits[:16] + duration_logits` on a fixed mel extracted from `000000.flac`.
 
 Results:
 
 | Model | Kind | Python avg ms | Dart avg ms | Max abs diff |
 | --- | --- | ---: | ---: | ---: |
-| `JOSIE-1.1-4B-Instruct-4bit` | `text` | `33.5777` | `38.2766` | `0` |
-| `GLM-4.7-Flash-abliterated-mxfp8` | `text` | `78.2033` | `77.7014` | `0` |
-| `tiny-aya-fire-4bit` | `text` | `25.6706` | `26.2876` | `0` |
-| `Huihui-Qwen3.5-27B-abliterated-6bit` | `text` | `176.6442` | `182.2428` | `0` |
-| `IQuest-Coder-V1-7B-Thinking-mlx_8bit` | `text` | `46.7368` | `47.1135` | `0` |
-| `DASD-4B-Thinking-bfloat16` | `text` | `43.8261` | `43.6674` | `0` |
-| `Qwen3.5-9B-MLX-4bit` | `text` | `59.8508` | `61.8239` | `0` |
-| `Qwen3.5-35B-A3B-4bit` | `text` | `34.7274` | `34.2320` | `0` |
-| `MiniCPM-o-4_5-4bit` | `vlm` | `135.0798` | `135.5181` | `0` |
-| `Gemma-SEA-LION-v4-4B-VL-mlx-3bit` | `vlm` | `22.2738` | `22.2928` | `0` |
-| `Qwen3.5-0.8B-4bit` | `vlm` | `5.2338` | `5.5181` | `0` |
-| `Ming-omni-tts-0.5B-4bit` | `tts` | `4.5822` | `4.5606` | `0` |
-| `kitten-tts-nano-0.8-6bit` | `tts` | `75.3437` | `79.6089` | `3.394e-06` |
+| `JOSIE-1.1-4B-Instruct-4bit` | `text` | `45.2020` | `44.1369` | `0` |
+| `GLM-4.7-Flash-abliterated-mxfp8` | `text` | `92.5673` | `82.0703` | `0` |
+| `tiny-aya-fire-4bit` | `text` | `27.3209` | `27.5509` | `0` |
+| `Huihui-Qwen3.5-27B-abliterated-6bit` | `text` | `189.2214` | `193.7680` | `0` |
+| `IQuest-Coder-V1-7B-Thinking-mlx_8bit` | `text` | `49.8725` | `50.2037` | `0` |
+| `DASD-4B-Thinking-bfloat16` | `text` | `45.9885` | `45.4372` | `0` |
+| `Qwen3.5-9B-MLX-4bit` | `text` | `63.6051` | `65.1154` | `0` |
+| `Qwen3.5-35B-A3B-4bit` | `text` | `36.5219` | `36.3253` | `0` |
+| `MiniCPM-o-4_5-4bit` | `vlm` | `140.6685` | `141.9633` | `0` |
+| `Gemma-SEA-LION-v4-4B-VL-mlx-3bit` | `vlm` | `25.4516` | `30.4278` | `0` |
+| `Qwen3.5-0.8B-4bit` | `vlm` | `5.4574` | `5.1285` | `0` |
+| `Ming-omni-tts-0.5B-4bit` | `tts` | `5.1497` | `4.9890` | `0` |
+| `kitten-tts-nano-0.8-6bit` | `tts` | `75.4205` | `77.4532` | `8.941e-08` |
+| `parakeet-tdt-0.6b-v3` | `asr` | `31.6649` | `30.9405` | `7.629e-06` |
 
 Summary:
 
-- `12 / 13` model checks were exact at the chosen comparison tensor.
-- `kitten-tts-nano-0.8-6bit` matched shape and fixed-input waveform closely, with residual float32-scale drift on the full waveform path (`max_abs_diff = 3.393739462e-06`).
+- `12 / 14` model checks were exact at the chosen comparison tensor.
+- `parakeet-tdt-0.6b-v3` matched transcript text and stayed within float32-scale residual drift on the compared first-step logits (`max_abs_diff = 7.62939453125e-06`).
+- `kitten-tts-nano-0.8-6bit` matched shape and fixed-input waveform closely, with residual float32-scale drift on the full waveform path (`max_abs_diff = 1.1920928955078125e-07`).
 - For large text and multimodal checkpoints, Dart imported-function execution is generally in the same performance class as Python MLX once startup costs are excluded.
-- `Ming-omni-tts-0.5B-4bit` is notably warmup-sensitive, so the published row above uses extended warmup instead of the repository-wide default `warmup=3`. With deeper warmup (`20+`), the imported MLX subgraph settles near Python's imported-function timing (`~4.6 ms` on the benchmark machine).
+- `Ming-omni-tts-0.5B-4bit` is now back in the same performance class as the Python reference after the imported-function fast path and benchmark-policy fixes.
+- `MiniCPM-o-4_5-4bit` is now back in the same performance class as the Python reference after clearing MLX cache pressure between the Python and Dart phases of the benchmark.
 
 ### What `Max abs diff` Means
 
@@ -131,18 +264,19 @@ Summary:
 Examples:
 
 - `0` means the compared tensor matched exactly at the chosen dtype
-- `3.393739462e-06` means the worst element differed by about `0.00000339`
+- `7.62939453125e-06` means the worst element differed by about `0.00000763`
 - for text and VLM rows, the compared tensor is the final-token `logits[:16]`
+- for `parakeet-tdt-0.6b-v3`, the compared tensor is the first-step `token_logits[:16] + duration_logits`
 - for `Ming-omni-tts-0.5B-4bit`, the compared tensor is the deterministic `forward_with_cfg` subgraph output
 - for `kitten-tts-nano-0.8-6bit`, the compared tensor is the full waveform
 
-### Reproduce The 13-Model Report
+### Reproduce The 14-Model Report
 
 Generate the publish-time report with `warmup=3` and `iters=10`:
 
 ```sh
 uv sync
-uv run python benchmark/publish_report.py
+uv run --no-project --with mlx-lm --with pillow --with mlx-vlm --with mlx-audio --with parakeet-mlx python benchmark/publish_report.py
 ```
 
 The aggregated results are written to:
@@ -155,18 +289,28 @@ Useful focused runs:
 # full-waveform KittenTTS comparison
 uv run python benchmark/kitten_tts/mlx_audio_compare.py --warmup 3 --iters 10
 
+# real-weight KittenTTS conv_post probe against private ANE
+uv run python benchmark/kitten_tts/conv_post_probe.py
+
 # deterministic Ming Omni TTS subgraph comparison
 uv run python - <<'PY'
-from benchmark.recent_tts_sweep import python_forward, export_model, dart_forward, slug
+from benchmark.tts_export_sweep import python_forward, export_model, dart_forward, slug
 from pathlib import Path
 model_id='mlx-community/Ming-omni-tts-0.5B-4bit'
-root = Path('benchmark/out/recent_tts') / slug(model_id)
+root = Path('benchmark/out/publish') / slug(model_id)
 export_path, input_path, input_names = export_model(model_id, root)
 print(dart_forward(export_path, input_path, input_names))
 PY
 
+# fixed-mel Parakeet TDT comparison
+uv run --no-project --with parakeet-mlx --with numpy python - <<'PY'
+from benchmark.parakeet_tdt_sweep import asr_bench
+import json
+print(json.dumps(asr_bench('mlx-community/parakeet-tdt-0.6b-v3', warmup=1, iters=1), indent=2))
+PY
+
 # generic imported-function runner for exported text or VLM artifacts
-dart run benchmark/generic_import_run.dart <export_path> <input_safetensors_path> [input_names_json]
+dart run models/common/import_run.dart <export_path> <input_safetensors_path> [input_names_json]
 ```
 
 ## Development

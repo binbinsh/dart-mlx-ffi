@@ -1,7 +1,6 @@
 // ignore_for_file: unused_import
 
 @TestOn('mac-os')
-
 library;
 
 import 'dart:convert';
@@ -10,7 +9,7 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
-import '../benchmark/qwen3_5/mlx_vlm/models/qwen3_5/qwen3_5.dart';
+import '../private_ane/models/qwen3_5_0_8b/dart/qwen3_5.dart';
 
 void main() {
   test('loads and runs a synthetic dense qwen3.5 snapshot', () {
@@ -55,7 +54,10 @@ void main() {
         ),
         'model.norm.weight': _f32([1, 1, 1, 1], [4]),
         'model.layers.0.input_layernorm.weight': _f32([1, 1, 1, 1], [4]),
-        'model.layers.0.post_attention_layernorm.weight': _f32([1, 1, 1, 1], [4]),
+        'model.layers.0.post_attention_layernorm.weight': _f32(
+          [1, 1, 1, 1],
+          [4],
+        ),
         'model.layers.0.self_attn.q_proj.weight': _f32(
           List<double>.generate(8 * 4, (i) => ((i % 7) - 3) / 10),
           [8, 4],
@@ -111,6 +113,25 @@ void main() {
         } finally {
           out.close();
         }
+
+        final full = runner
+            .runFullLogits(<int>[1, 2, 3])
+            .astype(MlxDType.MLX_FLOAT32);
+        try {
+          expect(full.shape, <int>[1, 16]);
+          final values = full.toList().cast<double>();
+          expect(values, hasLength(16));
+          expect(values.every((v) => v.isFinite), isTrue);
+        } finally {
+          full.close();
+        }
+
+        final next = runner.nextTokenId(<int>[1, 2, 3]);
+        expect(next, inInclusiveRange(0, 15));
+
+        final generated = runner.generateGreedy(<int>[1, 2, 3], 2);
+        expect(generated, hasLength(5));
+        expect(generated.take(3), <int>[1, 2, 3]);
       } finally {
         runner.close();
       }

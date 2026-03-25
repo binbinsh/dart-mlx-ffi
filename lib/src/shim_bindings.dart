@@ -7,6 +7,9 @@ import 'dart:ffi' as ffi;
 
 part 'shim/base.dart';
 part 'shim/array.dart';
+part 'shim/ane.dart';
+part 'shim/ane_interop.dart';
+part 'shim/coreml_ane.dart';
 part 'shim/conv.dart';
 part 'shim/extra.dart';
 part 'shim/io2.dart';

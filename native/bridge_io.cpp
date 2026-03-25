@@ -401,6 +401,31 @@ extern "C" int dart_mlx_imported_function_apply(
   return status;
 }
 
+extern "C" DartMlxArrayHandle* dart_mlx_imported_function_apply_one(
+    const DartMlxImportedHandle* function,
+    DartMlxArrayHandle** inputs,
+    size_t input_len) {
+  auto args = build_array_vector(inputs, input_len);
+  auto results = mlx_vector_array_new();
+  auto status = mlx_imported_function_apply(&results, function->value, args);
+  mlx_vector_array_free(args);
+  if (status != 0) {
+    mlx_vector_array_free(results);
+    return nullptr;
+  }
+  if (mlx_vector_array_size(results) != 1) {
+    mlx_vector_array_free(results);
+    return nullptr;
+  }
+  auto value = mlx_array_new();
+  status = mlx_vector_array_get(&value, results, 0);
+  mlx_vector_array_free(results);
+  if (status != 0) {
+    return nullptr;
+  }
+  return wrap_array_copy(value);
+}
+
 extern "C" int dart_mlx_imported_function_apply_kwargs(
     const DartMlxImportedHandle* function,
     DartMlxArrayHandle** inputs,

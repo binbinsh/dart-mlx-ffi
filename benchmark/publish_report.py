@@ -3,33 +3,43 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
-import tempfile
 import time
 
 try:
-    from .common import add_vendor_to_path, cleanup_mlx, resolve_model_path
-    from .recent_text_sweep import slug
-    from .recent_vlm_sweep import export_model as export_vlm_model
-    from .recent_vlm_sweep import extract_logits as vlm_extract_logits
-    from .recent_vlm_sweep import prepare_model_inputs as prepare_vlm_inputs
-    from .recent_vlm_sweep import dart_forward as vlm_dart_forward
-    from .recent_tts_sweep import export_model as export_ming_tts_model
-    from .recent_tts_sweep import python_forward as ming_python_forward
-    from .recent_tts_sweep import dart_forward as ming_dart_forward
+    from .common import (
+        add_vendor_to_path,
+        benchmark_dart_export,
+        cleanup_mlx,
+        compare_lists,
+        resolve_model_path,
+        slug,
+    )
+    from .parakeet_tdt_sweep import asr_bench
+    from .vlm_export_sweep import export_model as export_vlm_model
+    from .vlm_export_sweep import extract_logits as vlm_extract_logits
+    from .vlm_export_sweep import prepare_model_inputs as prepare_vlm_inputs
+    from .tts_export_sweep import export_model as export_ming_tts_model
+    from .tts_export_sweep import python_forward as ming_python_forward
+    from .tts_export_sweep import dart_forward as ming_dart_forward
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from common import add_vendor_to_path, cleanup_mlx, resolve_model_path
-    from recent_text_sweep import slug
-    from recent_vlm_sweep import export_model as export_vlm_model
-    from recent_vlm_sweep import extract_logits as vlm_extract_logits
-    from recent_vlm_sweep import prepare_model_inputs as prepare_vlm_inputs
-    from recent_vlm_sweep import dart_forward as vlm_dart_forward
-    from recent_tts_sweep import export_model as export_ming_tts_model
-    from recent_tts_sweep import python_forward as ming_python_forward
-    from recent_tts_sweep import dart_forward as ming_dart_forward
+    from common import (
+        add_vendor_to_path,
+        benchmark_dart_export,
+        cleanup_mlx,
+        compare_lists,
+        resolve_model_path,
+        slug,
+    )
+    from parakeet_tdt_sweep import asr_bench
+    from vlm_export_sweep import export_model as export_vlm_model
+    from vlm_export_sweep import extract_logits as vlm_extract_logits
+    from vlm_export_sweep import prepare_model_inputs as prepare_vlm_inputs
+    from tts_export_sweep import export_model as export_ming_tts_model
+    from tts_export_sweep import python_forward as ming_python_forward
+    from tts_export_sweep import dart_forward as ming_dart_forward
 
 import mlx.core as mx
 from mlx_lm import load as load_lm
@@ -37,34 +47,6 @@ from mlx_lm import load as load_lm
 ROOT = Path(__file__).resolve().parents[1]
 TEXT_PROMPT = "Explain why MLX is useful for local inference on Apple Silicon."
 VLM_PROMPT = "Describe this image briefly."
-
-
-def run_script_capture(cmd: list[str], *, env: dict[str, str]) -> str:
-    temp_dir = Path(tempfile.mkdtemp())
-    stdout_path = temp_dir / "runner.stdout"
-    subprocess.run(
-        ["script", "-q", str(stdout_path), *cmd],
-        cwd=ROOT,
-        env=env,
-        check=True,
-        text=True,
-    )
-    return stdout_path.read_text(encoding="utf-8")
-
-
-def parse_last_json(raw: str) -> dict[str, object]:
-    matches = re.findall(r"\{.*?\}", raw, flags=re.DOTALL)
-    if not matches:
-        raise RuntimeError(f"No JSON payload found in output:\n{raw}")
-    return json.loads(matches[-1])
-
-
-def compare_lists(a: list[float], b: list[float]) -> tuple[float, float]:
-    diffs = [abs(x - y) for x, y in zip(a, b)]
-    return (
-        max(diffs) if diffs else 0.0,
-        (sum(diffs) / len(diffs)) if diffs else 0.0,
-    )
 
 
 def _text_load_kwargs(model_id: str) -> dict[str, object]:
@@ -112,21 +94,16 @@ def text_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, 
         export_path.unlink()
     mx.export_function(str(export_path), export_forward, tokens2)
     mx.save_safetensors(str(input_path), {"input_ids": tokens2})
-    temp_dir = Path(tempfile.mkdtemp())
-    values_path = temp_dir / "out.safetensors"
-    env = dict(os.environ)
-    env["GENERIC_VALUES_PATH"] = str(values_path)
-    env["GENERIC_WARMUP"] = str(warmup)
-    env["GENERIC_ITERS"] = str(iters)
-    raw = run_script_capture(
-        ["dart", "run", "benchmark/generic_import_run.dart", str(export_path), str(input_path)],
-        env=env,
+    del model, tokenizer, tokens, last
+    del model2, _tokenizer2, tokens2
+    cleanup_mlx(mx)
+    dart_values, dart_ms = benchmark_dart_export(
+        export_path=export_path,
+        input_path=input_path,
+        mx_module=mx,
+        warmup=warmup,
+        iters=iters,
     )
-    payload = parse_last_json(raw)
-    dart_values = [
-        float(v)
-        for v in mx.load(str(values_path))["output"].reshape([-1]).astype(mx.float32).tolist()
-    ]
     max_diff, mean_diff = compare_lists(py_values, dart_values)
     cleanup_mlx(mx)
     return {
@@ -135,7 +112,7 @@ def text_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, 
         "input_desc": f"{len(token_ids)} text tokens",
         "comparison": "last-token logits[:16]",
         "python_ms": py_ms,
-        "dart_ms": float(payload["per_iter_ms"]),
+        "dart_ms": dart_ms,
         "max_abs_diff": max_diff,
         "mean_abs_diff": mean_diff,
     }
@@ -176,29 +153,17 @@ def vlm_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, o
         last = forward()
     py_ms = (time.perf_counter() - started) * 1000.0 / iters
     py_values = [float(v) for v in last.reshape([-1]).tolist()]
+    del model, processor, inputs, call_inputs, input_ids, attention_mask, pixel_values, kwargs, last
+    cleanup_mlx(mx)
 
-    temp_dir = Path(tempfile.mkdtemp())
-    values_path = temp_dir / "out.safetensors"
-    env = dict(os.environ)
-    env["GENERIC_VALUES_PATH"] = str(values_path)
-    env["GENERIC_WARMUP"] = str(warmup)
-    env["GENERIC_ITERS"] = str(iters)
-    raw = run_script_capture(
-        [
-            "dart",
-            "run",
-            "benchmark/generic_import_run.dart",
-            str(export_path),
-            str(input_path),
-            json.dumps(input_names),
-        ],
-        env=env,
+    dart_values, dart_ms = benchmark_dart_export(
+        export_path=export_path,
+        input_path=input_path,
+        input_names=input_names,
+        mx_module=mx,
+        warmup=warmup,
+        iters=iters,
     )
-    payload = parse_last_json(raw)
-    dart_values = [
-        float(v)
-        for v in mx.load(str(values_path))["output"].reshape([-1]).astype(mx.float32).tolist()
-    ]
     max_diff, mean_diff = compare_lists(py_values, dart_values)
     cleanup_mlx(mx)
     return {
@@ -207,7 +172,7 @@ def vlm_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, o
         "input_desc": "1 synthetic image + text prompt",
         "comparison": "last-token logits[:16]",
         "python_ms": py_ms,
-        "dart_ms": float(payload["per_iter_ms"]),
+        "dart_ms": dart_ms,
         "max_abs_diff": max_diff,
         "mean_abs_diff": mean_diff,
     }
@@ -240,8 +205,16 @@ def ming_tts_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[s
         last = forward()
     py_ms = (time.perf_counter() - started) * 1000.0 / iters
     py_values = [float(v) for v in last.reshape([-1]).tolist()]
+    del model, inputs, last
+    cleanup_mlx(mx)
 
-    dart_values, dart_ms = ming_dart_forward(export_path, input_path, input_names)
+    dart_values, dart_ms = ming_dart_forward(
+        export_path,
+        input_path,
+        input_names,
+        warmup=warmup,
+        iters=iters,
+    )
     max_diff, mean_diff = compare_lists(py_values, dart_values)
     cleanup_mlx(mx)
     return {
@@ -289,13 +262,14 @@ def kitten_bench(*, warmup: int = 3, iters: int = 10) -> dict[str, object]:
 def main() -> None:
     out = ROOT / "benchmark" / "out" / "publish_report.json"
     partial = ROOT / "benchmark" / "out" / "publish_report.partial.json"
+    resume = os.environ.get("PUBLISH_RESUME") == "1"
     done = {}
-    if partial.exists():
+    if resume and partial.exists():
         for item in json.loads(partial.read_text(encoding="utf-8")):
             done[item["model_id"]] = item
     report = list(done.values())
-    recent_models = json.loads((ROOT / "benchmark" / "recent_unique_models.json").read_text())
-    for item in recent_models:
+    model_specs = json.loads((ROOT / "benchmark" / "publish_model_list.json").read_text())
+    for item in model_specs:
         mid = item["model_id"]
         if mid in done:
             continue
@@ -306,17 +280,22 @@ def main() -> None:
             report.append(vlm_bench(mid))
         elif kind == "tts":
             report.append(ming_tts_bench(mid))
+        elif kind == "asr":
+            report.append(asr_bench(mid))
         partial.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     for mid in [
         "mlx-community/Qwen3.5-9B-MLX-4bit",
         "mlx-community/Qwen3.5-35B-A3B-4bit",
         "mlx-community/kitten-tts-nano-0.8-6bit",
+        "mlx-community/parakeet-tdt-0.6b-v3",
     ]:
         if mid in done or any(item["model_id"] == mid for item in report):
             continue
         if mid == "mlx-community/kitten-tts-nano-0.8-6bit":
             report.append(kitten_bench())
+        elif mid == "mlx-community/parakeet-tdt-0.6b-v3":
+            report.append(asr_bench(mid))
         else:
             report.append(text_bench(mid))
         partial.write_text(json.dumps(report, indent=2), encoding="utf-8")
