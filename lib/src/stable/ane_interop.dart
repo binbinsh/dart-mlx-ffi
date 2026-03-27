@@ -88,6 +88,9 @@ final class MlxAneInteropKernel {
 
   final shim.DartMlxAneInteropHandle _handle;
   final int outputElementCount;
+  ffi.Pointer<ffi.Float>? _inputScratch;
+  int _inputScratchCount = 0;
+  ffi.Pointer<ffi.Float>? _outputScratch;
   bool _closed = false;
 
   bool get isClosed => _closed;
@@ -122,6 +125,38 @@ final class MlxAneInteropKernel {
     }
   }
 
+  Float32List runRawFloat32(Float32List input) {
+    _ensureOpen();
+    final nativeInput = _ensureInputScratch(input.length);
+    final output = _ensureOutputScratch();
+    try {
+      nativeInput.asTypedList(input.length).setAll(0, input);
+      _clearAnePrivateError();
+      _checkAnePrivateStatus(
+        'aneInterop writeInputRaw',
+        shim.dart_mlx_ane_interop_write_input_raw_f32(
+          _handle,
+          nativeInput,
+          input.length,
+        ),
+      );
+      _checkAnePrivateStatus(
+        'aneInterop eval',
+        shim.dart_mlx_ane_interop_eval(_handle),
+      );
+      _checkAnePrivateStatus(
+        'aneInterop readOutputRaw',
+        shim.dart_mlx_ane_interop_read_output_raw_f32(
+          _handle,
+          output,
+          outputElementCount,
+        ),
+      );
+      return Float32List.fromList(output.asTypedList(outputElementCount));
+    } finally {
+    }
+  }
+
   int lastHardwareExecutionTimeNs() {
     _ensureOpen();
     _clearAnePrivateError();
@@ -135,6 +170,15 @@ final class MlxAneInteropKernel {
   void close() {
     if (_closed) return;
     _closed = true;
+    if (_inputScratch != null) {
+      calloc.free(_inputScratch!);
+      _inputScratch = null;
+      _inputScratchCount = 0;
+    }
+    if (_outputScratch != null) {
+      calloc.free(_outputScratch!);
+      _outputScratch = null;
+    }
     _finalizer.detach(this);
     shim.dart_mlx_ane_interop_free(_handle);
   }
@@ -143,6 +187,24 @@ final class MlxAneInteropKernel {
     if (_closed) {
       throw StateError('MlxAneInteropKernel has been closed.');
     }
+  }
+
+  ffi.Pointer<ffi.Float> _ensureInputScratch(int count) {
+    if (_inputScratch == null || _inputScratchCount < count) {
+      if (_inputScratch != null) {
+        calloc.free(_inputScratch!);
+      }
+      _inputScratch = calloc<ffi.Float>(count);
+      _inputScratchCount = count;
+    }
+    return _inputScratch!;
+  }
+
+  ffi.Pointer<ffi.Float> _ensureOutputScratch() {
+    if (_outputScratch == null) {
+      _outputScratch = calloc<ffi.Float>(outputElementCount);
+    }
+    return _outputScratch!;
   }
 }
 

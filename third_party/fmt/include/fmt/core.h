@@ -222,14 +222,15 @@
 #endif
 
 #ifndef FMT_CONSTEVAL
-#  if ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) && \
-       (!defined(__apple_build_version__) ||                     \
-        __apple_build_version__ >= 14000029L) &&                 \
-       FMT_CPLUSPLUS >= 202002L) ||                              \
-      (defined(__cpp_consteval) &&                               \
-       (!FMT_MSC_VERSION || FMT_MSC_VERSION >= 1929))
-// consteval is broken in MSVC before VS2019 version 16.10 and Apple clang
-// before 14.
+#  if defined(__apple_build_version__)
+// Apple clang still trips vendored fmt's consteval path in this workspace's
+// C++20 MLX build, so keep compile-time format checks on the non-consteval path.
+#    define FMT_CONSTEVAL
+#  elif ((FMT_GCC_VERSION >= 1000 || FMT_CLANG_VERSION >= 1101) && \
+         FMT_CPLUSPLUS >= 202002L) ||                              \
+        (defined(__cpp_consteval) &&                               \
+         (!FMT_MSC_VERSION || FMT_MSC_VERSION >= 1929))
+// consteval is broken in MSVC before VS2019 version 16.10.
 #    define FMT_CONSTEVAL consteval
 #    define FMT_HAS_CONSTEVAL
 #  else

@@ -57,6 +57,15 @@ external int dart_mlx_ane_interop_write_input_f32(
 );
 
 @ffi.Native<
+  ffi.Int Function(DartMlxAneInteropHandle, ffi.Pointer<ffi.Float>, ffi.Size)
+>()
+external int dart_mlx_ane_interop_write_input_raw_f32(
+  DartMlxAneInteropHandle handle,
+  ffi.Pointer<ffi.Float> values,
+  int count,
+);
+
+@ffi.Native<
   ffi.Pointer<ffi.Float> Function(
     DartMlxAneInteropHandle,
     ffi.Pointer<ffi.Size>,
@@ -65,6 +74,26 @@ external int dart_mlx_ane_interop_write_input_f32(
 external ffi.Pointer<ffi.Float> dart_mlx_ane_interop_read_output_f32_copy(
   DartMlxAneInteropHandle handle,
   ffi.Pointer<ffi.Size> countOut,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Float> Function(
+    DartMlxAneInteropHandle,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external ffi.Pointer<ffi.Float> dart_mlx_ane_interop_read_output_raw_f32_copy(
+  DartMlxAneInteropHandle handle,
+  ffi.Pointer<ffi.Size> countOut,
+);
+
+@ffi.Native<
+  ffi.Int Function(DartMlxAneInteropHandle, ffi.Pointer<ffi.Float>, ffi.Size)
+>()
+external int dart_mlx_ane_interop_read_output_raw_f32(
+  DartMlxAneInteropHandle handle,
+  ffi.Pointer<ffi.Float> out,
+  int count,
 );
 
 @ffi.Native<ffi.Int64 Function(DartMlxAneInteropHandle)>()

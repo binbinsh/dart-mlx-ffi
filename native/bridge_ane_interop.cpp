@@ -197,6 +197,49 @@ extern "C" int dart_mlx_ane_interop_write_input_f32(
 #endif
 }
 
+extern "C" int dart_mlx_ane_interop_write_input_raw_f32(
+    DartMlxAneInteropHandle* handle,
+    const float* values,
+    size_t count) {
+  dart_mlx_ane_private_clear_error();
+#ifdef DART_MLX_ENABLE_PRIVATE_ANE_BRIDGE
+  if (handle == nullptr || handle->value == nullptr) {
+    set_error("ANEInterop handle is closed.");
+    return -1;
+  }
+  const auto expected =
+      static_cast<size_t>(handle->input_channels * handle->input_spatial);
+  if (count != expected) {
+    set_error("ANEInterop raw input element count mismatch.");
+    return -1;
+  }
+  auto surface = ane_interop_get_input(handle->value, 0);
+  if (!surface) {
+    set_error("ANEInterop input surface is null.");
+    return -1;
+  }
+  if (IOSurfaceLock(surface, 0, NULL) != kIOReturnSuccess) {
+    set_error("ANEInterop input surface lock failed.");
+    return -1;
+  }
+  auto* base = static_cast<float*>(IOSurfaceGetBaseAddress(surface));
+  if (base == nullptr) {
+    IOSurfaceUnlock(surface, 0, NULL);
+    set_error("ANEInterop input base address is null.");
+    return -1;
+  }
+  std::memcpy(base, values, count * sizeof(float));
+  IOSurfaceUnlock(surface, 0, NULL);
+  return 0;
+#else
+  (void)handle;
+  (void)values;
+  (void)count;
+  set_error("Private ANE bridge was excluded at build time.");
+  return -1;
+#endif
+}
+
 extern "C" float* dart_mlx_ane_interop_read_output_f32_copy(
     DartMlxAneInteropHandle* handle,
     size_t* count_out) {
@@ -237,6 +280,95 @@ extern "C" float* dart_mlx_ane_interop_read_output_f32_copy(
   (void)count_out;
   set_error("Private ANE bridge was excluded at build time.");
   return nullptr;
+#endif
+}
+
+extern "C" float* dart_mlx_ane_interop_read_output_raw_f32_copy(
+    DartMlxAneInteropHandle* handle,
+    size_t* count_out) {
+  dart_mlx_ane_private_clear_error();
+#ifdef DART_MLX_ENABLE_PRIVATE_ANE_BRIDGE
+  if (handle == nullptr || handle->value == nullptr || count_out == nullptr) {
+    set_error("ANEInterop raw output read arguments are invalid.");
+    return nullptr;
+  }
+  const auto count =
+      static_cast<size_t>(handle->output_channels * handle->output_spatial);
+  auto* out = static_cast<float*>(std::malloc(count * sizeof(float)));
+  if (out == nullptr) {
+    set_error("ANEInterop raw output allocation failed.");
+    return nullptr;
+  }
+  auto surface = ane_interop_get_output(handle->value, 0);
+  if (!surface) {
+    std::free(out);
+    set_error("ANEInterop output surface is null.");
+    return nullptr;
+  }
+  if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL) != kIOReturnSuccess) {
+    std::free(out);
+    set_error("ANEInterop output surface lock failed.");
+    return nullptr;
+  }
+  auto* base = static_cast<const float*>(IOSurfaceGetBaseAddress(surface));
+  if (base == nullptr) {
+    IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+    std::free(out);
+    set_error("ANEInterop output base address is null.");
+    return nullptr;
+  }
+  std::memcpy(out, base, count * sizeof(float));
+  IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+  *count_out = count;
+  return out;
+#else
+  (void)handle;
+  (void)count_out;
+  set_error("Private ANE bridge was excluded at build time.");
+  return nullptr;
+#endif
+}
+
+extern "C" int dart_mlx_ane_interop_read_output_raw_f32(
+    DartMlxAneInteropHandle* handle,
+    float* out,
+    size_t count) {
+  dart_mlx_ane_private_clear_error();
+#ifdef DART_MLX_ENABLE_PRIVATE_ANE_BRIDGE
+  if (handle == nullptr || handle->value == nullptr || out == nullptr) {
+    set_error("ANEInterop raw output read arguments are invalid.");
+    return -1;
+  }
+  const auto expected =
+      static_cast<size_t>(handle->output_channels * handle->output_spatial);
+  if (count != expected) {
+    set_error("ANEInterop raw output element count mismatch.");
+    return -1;
+  }
+  auto surface = ane_interop_get_output(handle->value, 0);
+  if (!surface) {
+    set_error("ANEInterop output surface is null.");
+    return -1;
+  }
+  if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL) != kIOReturnSuccess) {
+    set_error("ANEInterop output surface lock failed.");
+    return -1;
+  }
+  auto* base = static_cast<const float*>(IOSurfaceGetBaseAddress(surface));
+  if (base == nullptr) {
+    IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+    set_error("ANEInterop output base address is null.");
+    return -1;
+  }
+  std::memcpy(out, base, count * sizeof(float));
+  IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+  return 0;
+#else
+  (void)handle;
+  (void)out;
+  (void)count;
+  set_error("Private ANE bridge was excluded at build time.");
+  return -1;
 #endif
 }
 
