@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../private_ane/models/qwen3_5_0_8b/dart/qwen3_5.dart';
+import 'package:dart_mlx_ffi/src/models/qwen3_5/qwen3_5.dart';
 
 void main(List<String> args) {
   final options = _parseArgs(args);
@@ -11,7 +11,7 @@ void main(List<String> args) {
     stderr.writeln(
       'Usage: dart run tool/qwen35_full_infer.dart '
       '--snapshot-dir <dir> --token-ids-file <json> '
-      '[--private-ane-artifacts-dir <dir>] [--max-new-tokens N] [--json]',
+      '[--max-new-tokens N] [--json]',
     );
     exitCode = 64;
     return;
@@ -28,25 +28,26 @@ void main(List<String> args) {
   final emitJson = options.containsKey('json');
 
   final loadWatch = Stopwatch()..start();
-  final runner = Qwen3_5Runner.load(
-    snapshotDir,
-    privateAneArtifactsDir: options['private-ane-artifacts-dir'],
-  );
+  final runner = Qwen3_5Runner.load(snapshotDir);
   loadWatch.stop();
   try {
     final runWatch = Stopwatch()..start();
-    final generated = runner.generateGreedy(
+    final timed = runner.debugTimedCachedGeneration(
       promptTokenIds,
       maxNewTokens,
       eosTokenId: eosTokenId,
     );
     runWatch.stop();
+    final generated = List<int>.from(
+      (timed['generated_token_ids'] as List).cast<num>(),
+    );
+    final promptMs = (timed['prompt_ms'] as num).toDouble();
+    final decodeMs = (timed['decode_ms'] as num).toDouble();
 
     final promptLength = promptTokenIds.length;
     final newTokenIds = generated.sublist(promptLength);
     final report = <String, Object?>{
       'snapshot_dir': snapshotDir,
-      'private_ane_artifacts_dir': options['private-ane-artifacts-dir'],
       'prompt_token_ids': promptTokenIds,
       'generated_token_ids': generated,
       'new_token_ids': newTokenIds,
@@ -55,6 +56,8 @@ void main(List<String> args) {
       'max_new_tokens': maxNewTokens,
       'load_ms': loadWatch.elapsedMicroseconds / 1000.0,
       'generate_ms': runWatch.elapsedMicroseconds / 1000.0,
+      'prompt_ms': promptMs,
+      'decode_ms': decodeMs,
       'per_new_token_ms': newTokenIds.isEmpty
           ? 0.0
           : runWatch.elapsedMicroseconds / 1000.0 / newTokenIds.length,

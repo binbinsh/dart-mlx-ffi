@@ -2,14 +2,18 @@
 
 part of '../shim_bindings.dart';
 
-@ffi.Native<DartMlxArrayHandle Function(ffi.Pointer<ffi.Int>, ffi.Int, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(ffi.Pointer<ffi.Int>, ffi.Int, ffi.Int)
+>()
 external DartMlxArrayHandle dart_mlx_zeros(
   ffi.Pointer<ffi.Int> shape,
   int dim,
   int dtype,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(ffi.Pointer<ffi.Int>, ffi.Int, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(ffi.Pointer<ffi.Int>, ffi.Int, ffi.Int)
+>()
 external DartMlxArrayHandle dart_mlx_ones(
   ffi.Pointer<ffi.Int> shape,
   int dim,
@@ -17,7 +21,12 @@ external DartMlxArrayHandle dart_mlx_ones(
 );
 
 @ffi.Native<
-  DartMlxArrayHandle Function(ffi.Pointer<ffi.Int>, ffi.Int, ffi.Double, ffi.Int)
+  DartMlxArrayHandle Function(
+    ffi.Pointer<ffi.Int>,
+    ffi.Int,
+    ffi.Double,
+    ffi.Int,
+  )
 >()
 external DartMlxArrayHandle dart_mlx_full(
   ffi.Pointer<ffi.Int> shape,
@@ -26,7 +35,9 @@ external DartMlxArrayHandle dart_mlx_full(
   int dtype,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(ffi.Double, ffi.Double, ffi.Double, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(ffi.Double, ffi.Double, ffi.Double, ffi.Int)
+>()
 external DartMlxArrayHandle dart_mlx_arange(
   double start,
   double stop,
@@ -40,7 +51,9 @@ external DartMlxArrayHandle dart_mlx_astype(
   int dtype,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Pointer<ffi.Int>, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Pointer<ffi.Int>, ffi.Int)
+>()
 external DartMlxArrayHandle dart_mlx_reshape(
   DartMlxArrayHandle input,
   ffi.Pointer<ffi.Int> shape,
@@ -56,7 +69,9 @@ external DartMlxArrayHandle dart_mlx_sum(
   bool keepdims,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_sum_axis(
   DartMlxArrayHandle input,
   int axis,
@@ -69,21 +84,27 @@ external DartMlxArrayHandle dart_mlx_mean(
   bool keepdims,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_mean_axis(
   DartMlxArrayHandle input,
   int axis,
   bool keepdims,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Bool, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Bool, ffi.Int)
+>()
 external DartMlxArrayHandle dart_mlx_var(
   DartMlxArrayHandle input,
   bool keepdims,
   int ddof,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Int)
+>()
 external DartMlxArrayHandle dart_mlx_var_axis(
   DartMlxArrayHandle input,
   int axis,
@@ -139,7 +160,9 @@ external DartMlxArrayHandle dart_mlx_fft_irfft(
 @ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle)>()
 external DartMlxArrayHandle dart_mlx_linalg_inv(DartMlxArrayHandle input);
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle)
+>()
 external DartMlxArrayHandle dart_mlx_linalg_solve(
   DartMlxArrayHandle a,
   DartMlxArrayHandle b,
@@ -186,7 +209,9 @@ external DartMlxArrayHandle dart_mlx_fast_layer_norm(
   double eps,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle, ffi.Float)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle, ffi.Float)
+>()
 external DartMlxArrayHandle dart_mlx_fast_rms_norm(
   DartMlxArrayHandle input,
   DartMlxArrayHandle weight,
@@ -329,21 +354,35 @@ external int dart_mlx_async_eval_many(
   int len,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(ffi.Pointer<DartMlxArrayHandle>, ffi.Size, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(
+    ffi.Pointer<DartMlxArrayHandle>,
+    ffi.Size,
+    ffi.Int,
+  )
+>()
 external DartMlxArrayHandle dart_mlx_concatenate(
   ffi.Pointer<DartMlxArrayHandle> arrays,
   int len,
   int axis,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(ffi.Pointer<DartMlxArrayHandle>, ffi.Size, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(
+    ffi.Pointer<DartMlxArrayHandle>,
+    ffi.Size,
+    ffi.Int,
+  )
+>()
 external DartMlxArrayHandle dart_mlx_stack(
   ffi.Pointer<DartMlxArrayHandle> arrays,
   int len,
   int axis,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Pointer<ffi.Int>, ffi.Int)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Pointer<ffi.Int>, ffi.Int)
+>()
 external DartMlxArrayHandle dart_mlx_broadcast_to(
   DartMlxArrayHandle input,
   ffi.Pointer<ffi.Int> shape,
@@ -376,19 +415,25 @@ external DartMlxArrayHandle dart_mlx_clip_scalar(
   double maxValue,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle)
+>()
 external DartMlxArrayHandle dart_mlx_minimum(
   DartMlxArrayHandle lhs,
   DartMlxArrayHandle rhs,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, DartMlxArrayHandle)
+>()
 external DartMlxArrayHandle dart_mlx_maximum(
   DartMlxArrayHandle lhs,
   DartMlxArrayHandle rhs,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_argmax(
   DartMlxArrayHandle input,
   int axis,
@@ -396,7 +441,9 @@ external DartMlxArrayHandle dart_mlx_argmax(
   bool keepdims,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_argmin(
   DartMlxArrayHandle input,
   int axis,
@@ -404,21 +451,27 @@ external DartMlxArrayHandle dart_mlx_argmin(
   bool keepdims,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_sort(
   DartMlxArrayHandle input,
   int axis,
   bool hasAxis,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_argsort(
   DartMlxArrayHandle input,
   int axis,
   bool hasAxis,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_logsumexp(
   DartMlxArrayHandle input,
   int axis,
@@ -426,7 +479,9 @@ external DartMlxArrayHandle dart_mlx_logsumexp(
   bool keepDims,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Bool, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_softmax(
   DartMlxArrayHandle input,
   int axis,
@@ -434,7 +489,9 @@ external DartMlxArrayHandle dart_mlx_softmax(
   bool precise,
 );
 
-@ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Int, ffi.Bool)>()
+@ffi.Native<
+  DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Int, ffi.Bool)
+>()
 external DartMlxArrayHandle dart_mlx_topk(
   DartMlxArrayHandle input,
   int k,
@@ -534,7 +591,14 @@ external DartMlxCudaConfigHandle dart_mlx_cuda_config_new();
 @ffi.Native<ffi.Void Function(DartMlxCudaConfigHandle)>()
 external void dart_mlx_cuda_config_free(DartMlxCudaConfigHandle handle);
 
-@ffi.Native<ffi.Int Function(DartMlxCudaConfigHandle, ffi.Pointer<ffi.Int>, ffi.Size, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(
+    DartMlxCudaConfigHandle,
+    ffi.Pointer<ffi.Int>,
+    ffi.Size,
+    ffi.Int,
+  )
+>()
 external int dart_mlx_cuda_config_add_output_arg(
   DartMlxCudaConfigHandle handle,
   ffi.Pointer<ffi.Int> shape,
@@ -542,7 +606,9 @@ external int dart_mlx_cuda_config_add_output_arg(
   int dtype,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxCudaConfigHandle, ffi.Int, ffi.Int, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxCudaConfigHandle, ffi.Int, ffi.Int, ffi.Int)
+>()
 external int dart_mlx_cuda_config_set_grid(
   DartMlxCudaConfigHandle handle,
   int x,
@@ -550,7 +616,9 @@ external int dart_mlx_cuda_config_set_grid(
   int z,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxCudaConfigHandle, ffi.Int, ffi.Int, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxCudaConfigHandle, ffi.Int, ffi.Int, ffi.Int)
+>()
 external int dart_mlx_cuda_config_set_thread_group(
   DartMlxCudaConfigHandle handle,
   int x,
@@ -570,21 +638,27 @@ external int dart_mlx_cuda_config_set_verbose(
   bool value,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxCudaConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxCudaConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)
+>()
 external int dart_mlx_cuda_config_add_template_dtype(
   DartMlxCudaConfigHandle handle,
   ffi.Pointer<ffi.Char> name,
   int dtype,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxCudaConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxCudaConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)
+>()
 external int dart_mlx_cuda_config_add_template_int(
   DartMlxCudaConfigHandle handle,
   ffi.Pointer<ffi.Char> name,
   int value,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxCudaConfigHandle, ffi.Pointer<ffi.Char>, ffi.Bool)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxCudaConfigHandle, ffi.Pointer<ffi.Char>, ffi.Bool)
+>()
 external int dart_mlx_cuda_config_add_template_bool(
   DartMlxCudaConfigHandle handle,
   ffi.Pointer<ffi.Char> name,
@@ -644,7 +718,14 @@ external DartMlxMetalConfigHandle dart_mlx_metal_config_new();
 @ffi.Native<ffi.Void Function(DartMlxMetalConfigHandle)>()
 external void dart_mlx_metal_config_free(DartMlxMetalConfigHandle handle);
 
-@ffi.Native<ffi.Int Function(DartMlxMetalConfigHandle, ffi.Pointer<ffi.Int>, ffi.Size, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(
+    DartMlxMetalConfigHandle,
+    ffi.Pointer<ffi.Int>,
+    ffi.Size,
+    ffi.Int,
+  )
+>()
 external int dart_mlx_metal_config_add_output_arg(
   DartMlxMetalConfigHandle handle,
   ffi.Pointer<ffi.Int> shape,
@@ -652,7 +733,9 @@ external int dart_mlx_metal_config_add_output_arg(
   int dtype,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxMetalConfigHandle, ffi.Int, ffi.Int, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxMetalConfigHandle, ffi.Int, ffi.Int, ffi.Int)
+>()
 external int dart_mlx_metal_config_set_grid(
   DartMlxMetalConfigHandle handle,
   int x,
@@ -660,7 +743,9 @@ external int dart_mlx_metal_config_set_grid(
   int z,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxMetalConfigHandle, ffi.Int, ffi.Int, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxMetalConfigHandle, ffi.Int, ffi.Int, ffi.Int)
+>()
 external int dart_mlx_metal_config_set_thread_group(
   DartMlxMetalConfigHandle handle,
   int x,
@@ -680,21 +765,27 @@ external int dart_mlx_metal_config_set_verbose(
   bool value,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxMetalConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxMetalConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)
+>()
 external int dart_mlx_metal_config_add_template_dtype(
   DartMlxMetalConfigHandle handle,
   ffi.Pointer<ffi.Char> name,
   int dtype,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxMetalConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxMetalConfigHandle, ffi.Pointer<ffi.Char>, ffi.Int)
+>()
 external int dart_mlx_metal_config_add_template_int(
   DartMlxMetalConfigHandle handle,
   ffi.Pointer<ffi.Char> name,
   int value,
 );
 
-@ffi.Native<ffi.Int Function(DartMlxMetalConfigHandle, ffi.Pointer<ffi.Char>, ffi.Bool)>()
+@ffi.Native<
+  ffi.Int Function(DartMlxMetalConfigHandle, ffi.Pointer<ffi.Char>, ffi.Bool)
+>()
 external int dart_mlx_metal_config_add_template_bool(
   DartMlxMetalConfigHandle handle,
   ffi.Pointer<ffi.Char> name,

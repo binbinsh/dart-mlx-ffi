@@ -42,6 +42,7 @@ Current stable Dart model implementations under [`lib/src/models/`](lib/src/mode
 
 - `parakeet_tdt`
 - `qwen2_5`
+- `qwen3_5`
 - `kitten_tts`
 - `shared` helpers
 

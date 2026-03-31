@@ -180,11 +180,11 @@ extern "C" int dart_mlx_set_default_stream(const DartMlxStreamHandle* handle) {
 }
 
 extern "C" bool dart_mlx_distributed_is_available() {
-  return mlx_distributed_is_available();
+  return mlx_distributed_is_available(nullptr);
 }
 
 extern "C" DartMlxGroupHandle* dart_mlx_distributed_init(bool strict) {
-  return wrap_group(mlx_distributed_init(strict));
+  return wrap_group(mlx_distributed_init(strict, nullptr));
 }
 
 extern "C" void dart_mlx_distributed_group_free(DartMlxGroupHandle* handle) {
