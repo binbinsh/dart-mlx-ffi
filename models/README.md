@@ -16,7 +16,8 @@ Dart model implementations do not live here anymore. They now live under:
 The current layout is:
 
 - [`common/`](common/) for generic helpers shared by multiple model families
-- [`text_lm/`](text_lm/) for text-generation / `mlx-lm` export helpers
+- [`text_lm/`](text_lm/) for text-generation export helpers, including
+  Hugging Face -> Unsloth MLX conversion wrappers
 
 `benchmark/` still contains report-generation scripts, Python MLX reference
 runners, and benchmark orchestration.

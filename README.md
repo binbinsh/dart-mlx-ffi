@@ -56,7 +56,60 @@ Current publish-time model parity coverage under [`benchmark/`](benchmark/) incl
 Top-level [`models/`](models/) is reserved for reusable non-runtime tooling such as:
 
 - [`models/common/`](models/common/) generic import / execution helpers
-- [`models/text_lm/`](models/text_lm/) `mlx-lm` text export helpers
+- [`models/text_lm/`](models/text_lm/) text export helpers and Hugging Face ->
+  Unsloth MLX conversion wrappers
+
+## Convert Hugging Face Models To Unsloth MLX
+
+The repository now includes a complete wrapper script for converting a
+standard Hugging Face SafeTensors checkpoint into an Unsloth-optimized MLX
+snapshot:
+
+- [`models/text_lm/convert_unsloth_mlx.py`](models/text_lm/convert_unsloth_mlx.py)
+
+The wrapper:
+
+- accepts either a local model directory or a Hugging Face model id
+- resolves a local or Hub-hosted `imatrix` GGUF file
+- invokes the upstream Unsloth-aware MLX converter
+- verifies the output snapshot and writes a conversion manifest
+
+Model-family support follows the upstream converter. In practice, this means
+standard Hugging Face SafeTensors checkpoints plus any explicit model types
+that `@mlx-node/cli convert` already supports.
+
+It uses the upstream CLI implementation from `@mlx-node/cli`, which currently
+exposes:
+
+- `mlx convert --q-recipe unsloth`
+- `--imatrix-path`
+
+### Prerequisites
+
+```sh
+uv sync
+```
+
+You also need `node` / `npx` available in `PATH`. The wrapper will use an
+installed `mlx` binary when present, otherwise it falls back to:
+
+```sh
+npx --yes @mlx-node/cli
+```
+
+### Example
+
+```sh
+uv run python models/text_lm/convert_unsloth_mlx.py \
+  --input Qwen/Qwen3.5-9B \
+  --output-dir /tmp/qwen3.5-9b-unsloth-mlx \
+  --model-type qwen3_5 \
+  --imatrix-repo unsloth/Qwen3.5-9B-GGUF \
+  --imatrix-file imatrix_unsloth.gguf
+```
+
+This produces a quantized MLX snapshot in `/tmp/qwen3.5-9b-unsloth-mlx` plus
+`conversion_manifest.json`.
 
 ## Exporting Text Model Bundles
 
