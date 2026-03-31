@@ -36,10 +36,9 @@ macro(mlx_build_metallib)
   add_custom_command(
     OUTPUT ${MTLLIB_BUILD_TARGET}
     COMMAND
-      xcrun -sdk ${MLX_METAL_SDK} metal
+      xcrun -sdk macosx metal
       "$<LIST:TRANSFORM,${MTLLIB_INCLUDE_DIRS},PREPEND,-I>"
-      ${MTLLIB_COMPILE_OPTIONS} ${MLX_METAL_MIN_FLAG} ${MTLLIB_SOURCES} -o
-      ${MTLLIB_BUILD_TARGET}
+      ${MTLLIB_COMPILE_OPTIONS} ${MTLLIB_SOURCES} -o ${MTLLIB_BUILD_TARGET}
     DEPENDS ${MTLLIB_DEPS} ${MTLLIB_SOURCES}
     COMMAND_EXPAND_LISTS
     COMMENT "Building ${MTLLIB_TITLE}.metallib"

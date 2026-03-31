@@ -183,11 +183,8 @@ final class MlxFastModule {
   }) => MlxFast.layerNorm(input, weight: weight, bias: bias, eps: eps);
 
   /// Fast RMS normalization.
-  MlxArray rmsNorm(
-    MlxArray input, {
-    MlxArray? weight,
-    double eps = 1e-5,
-  }) => MlxFast.rmsNorm(input, weight: weight, eps: eps);
+  MlxArray rmsNorm(MlxArray input, {MlxArray? weight, double eps = 1e-5}) =>
+      MlxFast.rmsNorm(input, weight: weight, eps: eps);
 
   /// Fast rotary positional embedding.
   MlxArray rope(
