@@ -171,6 +171,7 @@ extension on Qwen3_5Runner {
     final convState =
         cachedConvState ??
         _linearConvPrefix(layer.convWeight.shape[0], mixedQkv.dtype);
+    final mixedDType = mixedQkv.dtype;
     final convInput = mx.concatenate([convState, mixedQkv], axis: 1);
     if (cachedConvState != null) {
       cachedConvState.close();
@@ -183,11 +184,28 @@ extension on Qwen3_5Runner {
       );
       cache.replaceConvState(nextConvState);
     }
-    final convOut = mx.conv1d(
-      convInput,
-      layer.convWeight,
+    final convInputForOp = convInput.dtype == MlxDType.MLX_BFLOAT16
+        ? convInput.astype(MlxDType.MLX_FLOAT16)
+        : convInput;
+    final convWeightForOp = layer.convWeight.dtype == MlxDType.MLX_BFLOAT16
+        ? layer.convWeight.astype(MlxDType.MLX_FLOAT16)
+        : layer.convWeight;
+    var convOut = mx.conv1d(
+      convInputForOp,
+      convWeightForOp,
       groups: layer.convWeight.shape[0],
     );
+    if (convInputForOp != convInput) {
+      convInputForOp.close();
+    }
+    if (convWeightForOp != layer.convWeight) {
+      convWeightForOp.close();
+    }
+    if (convOut.dtype != mixedDType) {
+      final converted = convOut.astype(mixedDType);
+      convOut.close();
+      convOut = converted;
+    }
     convInput.close();
     final siluConv = _silu(convOut);
     convOut.close();
@@ -355,23 +373,6 @@ extension on Qwen3_5Runner {
     final down = layer.downProj.apply(fused, config: config);
     fused.close();
     return down.reshape([1, seqLen, config.hiddenSize]);
-  }
-
-  MlxArray _sliceStep(MlxArray input, int index, List<int> shape) {
-    if (input.shape.length == 4) {
-      return input
-          .slice(
-            start: [0, index, 0, 0],
-            stop: [1, index + 1, input.shape[2], input.shape[3]],
-          )
-          .reshape(shape);
-    }
-    if (input.shape.length == 3) {
-      return input
-          .slice(start: [0, index, 0], stop: [1, index + 1, input.shape[2]])
-          .reshape(shape);
-    }
-    throw StateError('Unsupported slice rank: ${input.shape.length}');
   }
 
   MlxArray _silu(MlxArray input) {

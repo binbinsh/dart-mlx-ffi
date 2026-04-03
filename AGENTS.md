@@ -29,6 +29,16 @@
 - Prefer `uv sync` to create/update the local environment and `uv run` to execute Python tooling.
 - Prefer `uv add` and `uv remove` over `pip install` or ad-hoc virtualenvs.
 
+## MLX Workflow
+
+- For MLX snapshot preparation and benchmark inputs, use the repository's canonical conversion wrapper:
+  - [`models/text_lm/convert_unsloth_mlx.py`](models/text_lm/convert_unsloth_mlx.py)
+- Treat that wrapper as the default path for:
+  - benchmark runs
+  - parity checks
+  - reproducible local evaluation
+- Do not introduce alternative MLX conversion flows or ad-hoc manual converter invocations unless there is an explicit reason and that reason is documented in the change.
+
 ## Publishing
 
 - Refresh the publish benchmark report before releasing:

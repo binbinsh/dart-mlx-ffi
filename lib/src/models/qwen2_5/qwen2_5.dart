@@ -5,6 +5,16 @@ import 'dart:math' as math;
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 import '../shared/tensor_map.dart';
 
+typedef Qwen25TimedGeneration = ({
+  List<int> tokenIds,
+  List<int> generatedTokenIds,
+  double promptMs,
+  double firstTokenMs,
+  double decodeMs,
+  double totalMs,
+  bool stoppedByStopToken,
+});
+
 final class QwenConfig {
   QwenConfig({
     required this.hiddenSize,
@@ -103,9 +113,9 @@ final class QwenRunner {
   );
 
   factory QwenRunner.load(String snapshotPath) {
-    final configJson = jsonDecode(
-      File('$snapshotPath/config.json').readAsStringSync(),
-    ) as Map<String, Object?>;
+    final configJson =
+        jsonDecode(File('$snapshotPath/config.json').readAsStringSync())
+            as Map<String, Object?>;
     final config = QwenConfig.fromJson(configJson);
     final tensors = loadTensorMap(snapshotPath);
     final layers = List<LayerWeights>.generate(config.numHiddenLayers, (index) {
@@ -132,7 +142,14 @@ final class QwenRunner {
       List<int>.generate(16, (index) => index),
       shape: [16],
     );
-    return QwenRunner._(config, tensors, layers, embed, finalNorm, logitIndices);
+    return QwenRunner._(
+      config,
+      tensors,
+      layers,
+      embed,
+      finalNorm,
+      logitIndices,
+    );
   }
 
   final QwenConfig config;
@@ -148,6 +165,14 @@ final class QwenRunner {
     final hidden = embedRows(ids);
     ids.close();
     return runHidden(hidden, seqLen);
+  }
+
+  MlxArray runFullLogits(List<int> tokenIds) {
+    final seqLen = tokenIds.length;
+    final ids = MlxArray.fromInt32List(tokenIds, shape: [1, seqLen]);
+    final hidden = embedRows(ids);
+    ids.close();
+    return runHiddenFull(hidden, seqLen);
   }
 
   MlxArray buildGraph(MlxArray ids) {
@@ -280,6 +305,49 @@ final class QwenRunner {
     }
   }
 
+  MlxArray runHiddenFull(MlxArray hidden, int seqLen) {
+    try {
+      for (final layer in layers) {
+        final norm1 = mx.fast.rmsNorm(
+          hidden,
+          weight: layer.inputNorm,
+          eps: config.rmsNormEps,
+        );
+        final attn = attention(layer, norm1, seqLen);
+        final h = mx.add(hidden, attn);
+        attn.close();
+        norm1.close();
+        hidden.close();
+
+        final norm2 = mx.fast.rmsNorm(
+          h,
+          weight: layer.postNorm,
+          eps: config.rmsNormEps,
+        );
+        final mlpOut = mlp(layer, norm2, seqLen);
+        norm2.close();
+        final next = mx.add(h, mlpOut);
+        mlpOut.close();
+        h.close();
+        hidden = next;
+      }
+
+      final norm = mx.fast.rmsNorm(
+        hidden,
+        weight: finalNorm,
+        eps: config.rmsNormEps,
+      );
+      hidden.close();
+      final output = lmHeadFull(norm, seqLen);
+      norm.close();
+      MlxRuntime.evalAll([output]);
+      return output;
+    } catch (_) {
+      hidden.close();
+      rethrow;
+    }
+  }
+
   MlxArray embedRows(MlxArray ids) {
     final shape = ids.shape;
     final rowsW = embed.weights.take(ids, axis: 0);
@@ -377,8 +445,10 @@ final class QwenRunner {
     kRope.close();
     v4.close();
 
-    final merged =
-        attn.transposeAxes([0, 2, 1, 3]).reshape([seqLen, config.hiddenSize]);
+    final merged = attn.transposeAxes([0, 2, 1, 3]).reshape([
+      seqLen,
+      config.hiddenSize,
+    ]);
     attn.close();
     final projected = linear2d(
       merged,
@@ -441,8 +511,10 @@ final class QwenRunner {
       scale: 1 / math.sqrt(config.headDim),
       maskMode: 'causal',
     );
-    final merged =
-        attn.transposeAxes([0, 2, 1, 3]).reshape([seqLen, config.hiddenSize]);
+    final merged = attn.transposeAxes([0, 2, 1, 3]).reshape([
+      seqLen,
+      config.hiddenSize,
+    ]);
     final projected = linear2dGraph(
       merged,
       layer.oProj,
@@ -573,6 +645,22 @@ final class QwenRunner {
     return slice;
   }
 
+  MlxArray lmHeadFull(MlxArray hidden3d, int seqLen) {
+    final logits = mx.quant.matmul(
+      hidden3d,
+      embed.matrix,
+      transpose: true,
+      groupSize: config.groupSize,
+      bits: config.bits,
+      mode: 'affine',
+    );
+    final slice = logits
+        .slice(start: [0, seqLen - 1, 0], stop: [1, seqLen, config.vocabSize])
+        .reshape([1, config.vocabSize]);
+    logits.close();
+    return slice;
+  }
+
   MlxArray lmHeadPrefixGraph(MlxArray hidden3d, int seqLen) {
     final logits = mx.quant.matmul(
       hidden3d,
@@ -599,6 +687,104 @@ final class QwenRunner {
     } finally {
       slice.close();
     }
+  }
+
+  int nextTokenId(List<int> tokenIds) {
+    final logits = runFullLogits(tokenIds);
+    try {
+      final argmax = logits.argmax(axis: 1);
+      try {
+        return argmax.toScalarInt();
+      } finally {
+        argmax.close();
+      }
+    } finally {
+      logits.close();
+    }
+  }
+
+  List<int> generateGreedy(
+    List<int> promptIds,
+    int maxNewTokens, {
+    List<int> stopTokenIds = const <int>[],
+  }) {
+    return timedGenerateGreedy(
+      promptIds,
+      maxNewTokens,
+      stopTokenIds: stopTokenIds,
+    ).tokenIds;
+  }
+
+  Qwen25TimedGeneration timedGenerateGreedy(
+    List<int> promptIds,
+    int maxNewTokens, {
+    List<int> stopTokenIds = const <int>[],
+  }) {
+    if (maxNewTokens < 0) {
+      throw ArgumentError.value(
+        maxNewTokens,
+        'maxNewTokens',
+        'Must be non-negative.',
+      );
+    }
+    if (maxNewTokens == 0) {
+      return (
+        tokenIds: List<int>.unmodifiable(promptIds),
+        generatedTokenIds: const <int>[],
+        promptMs: 0,
+        firstTokenMs: 0,
+        decodeMs: 0,
+        totalMs: 0,
+        stoppedByStopToken: false,
+      );
+    }
+
+    final stopSet = stopTokenIds.toSet();
+    final tokens = List<int>.from(promptIds);
+    final totalWatch = Stopwatch()..start();
+    final promptWatch = Stopwatch()..start();
+    var logits = runFullLogits(promptIds);
+    promptWatch.stop();
+    var firstTokenMs = 0.0;
+    var stoppedByStopToken = false;
+    final decodeWatch = Stopwatch()..start();
+    try {
+      for (var index = 0; index < maxNewTokens; index++) {
+        final sampleWatch = Stopwatch()..start();
+        final argmax = logits.argmax(axis: 1);
+        final next = argmax.toScalarInt();
+        argmax.close();
+        sampleWatch.stop();
+        if (index == 0) {
+          firstTokenMs = sampleWatch.elapsedMicroseconds / 1000.0;
+        }
+        tokens.add(next);
+        if (stopSet.contains(next)) {
+          stoppedByStopToken = true;
+          break;
+        }
+        if (index + 1 >= maxNewTokens) {
+          break;
+        }
+        logits.close();
+        logits = runFullLogits(tokens);
+      }
+    } finally {
+      decodeWatch.stop();
+      logits.close();
+    }
+    totalWatch.stop();
+    return (
+      tokenIds: List<int>.unmodifiable(tokens),
+      generatedTokenIds: List<int>.unmodifiable(
+        tokens.sublist(promptIds.length),
+      ),
+      promptMs: promptWatch.elapsedMicroseconds / 1000.0,
+      firstTokenMs: firstTokenMs,
+      decodeMs: decodeWatch.elapsedMicroseconds / 1000.0,
+      totalMs: totalWatch.elapsedMicroseconds / 1000.0,
+      stoppedByStopToken: stoppedByStopToken,
+    );
   }
 
   void close() {

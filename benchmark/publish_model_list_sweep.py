@@ -11,6 +11,7 @@ try:
     from .parakeet_tdt_sweep import asr_bench
     from .text_export_sweep import benchmark_python as benchmark_text_python
     from .text_export_sweep import export_model as export_text_model
+    from .publish_report import unsloth_mlx_text_bench
     from .vlm_export_sweep import export_model as export_vlm_model
     from .vlm_export_sweep import python_forward as benchmark_vlm_python
     from .tts_export_sweep import export_model as export_tts_model
@@ -21,6 +22,7 @@ except ImportError:
     from parakeet_tdt_sweep import asr_bench
     from text_export_sweep import benchmark_python as benchmark_text_python
     from text_export_sweep import export_model as export_text_model
+    from publish_report import unsloth_mlx_text_bench
     from vlm_export_sweep import export_model as export_vlm_model
     from vlm_export_sweep import python_forward as benchmark_vlm_python
     from tts_export_sweep import export_model as export_tts_model
@@ -105,7 +107,9 @@ def main() -> None:
         model_id = item["model_id"]
         kind = item["kind"]
         root = Path("benchmark/out/model_list") / slug(model_id)
-        if kind == "text":
+        if item.get("runner") == "unsloth_mlx":
+            extra = unsloth_mlx_text_bench(model_id, warmup=1, iters=1)
+        elif kind == "text":
             extra = run_text(model_id, root)
         elif kind == "vlm":
             extra = run_vlm(model_id, root)

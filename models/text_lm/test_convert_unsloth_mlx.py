@@ -81,11 +81,28 @@ class ConvertUnslothMlxTest(unittest.TestCase):
             dtype="bfloat16",
             q_bits=3,
             q_group_size=64,
+            quantize=True,
         )
         self.assertEqual(command[:5], ["npx", "--yes", "@mlx-node/cli", "convert", "--input"])
         self.assertIn("unsloth", command)
         self.assertIn("--imatrix-path", command)
         self.assertIn("qwen3_5", command)
+
+    def test_build_convert_command_supports_non_quantized(self):
+        command = mod.build_convert_command(
+            cli_prefix=["mlx"],
+            input_path=Path("/tmp/model"),
+            output_dir=Path("/tmp/out"),
+            imatrix_path=None,
+            model_type="qwen3_5",
+            dtype="bfloat16",
+            q_bits=None,
+            q_group_size=None,
+            quantize=False,
+        )
+        self.assertNotIn("--quantize", command)
+        self.assertNotIn("--imatrix-path", command)
+        self.assertIn("--dtype", command)
 
     def test_verify_output_dir_requires_quantization(self):
         with tempfile.TemporaryDirectory() as td:
@@ -93,7 +110,26 @@ class ConvertUnslothMlxTest(unittest.TestCase):
             (out / "config.json").write_text("{}", encoding="utf-8")
             (out / "model.safetensors").write_bytes(b"x")
             with self.assertRaises(ValueError):
-                mod.verify_output_dir(out)
+                mod.verify_output_dir(out, quantized=True)
+
+    def test_verify_output_dir_allows_non_quantized(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            (out / "config.json").write_text("{}", encoding="utf-8")
+            (out / "model.safetensors").write_bytes(b"x")
+            mod.verify_output_dir(out, quantized=False)
+
+    def test_copy_sidecar_files(self):
+        with tempfile.TemporaryDirectory() as src_td, tempfile.TemporaryDirectory() as out_td:
+            src = Path(src_td)
+            out = Path(out_td)
+            (src / "tokenizer.json").write_text("{}", encoding="utf-8")
+            (src / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+            (src / "chat_template.jinja").write_text("{{ prompt }}", encoding="utf-8")
+            mod.copy_sidecar_files(src, out)
+            self.assertTrue((out / "tokenizer.json").exists())
+            self.assertTrue((out / "tokenizer_config.json").exists())
+            self.assertTrue((out / "chat_template.jinja").exists())
 
 
 if __name__ == "__main__":
