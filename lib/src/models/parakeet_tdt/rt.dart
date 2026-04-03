@@ -39,14 +39,22 @@ class ParakeetTdtPredictResult {
   final ParakeetTdtPredictState state;
 }
 
+class ParakeetTdtTranscriptionResult {
+  const ParakeetTdtTranscriptionResult({
+    required this.text,
+    required this.tokens,
+    required this.timeSteps,
+  });
+
+  final String text;
+  final List<ParakeetTdtToken> tokens;
+  final int timeSteps;
+}
+
 typedef ParakeetRuntimeTrace = void Function(String stage, String message);
 
 class ParakeetTdtRuntime {
-  ParakeetTdtRuntime(
-    this.bundle, {
-    this.maxEncoderLayers,
-    this.onTrace,
-  })
+  ParakeetTdtRuntime(this.bundle, {this.maxEncoderLayers, this.onTrace})
     : _embedding = ParakeetEmbedding.load(
         bundle.tensors,
         'decoder.prediction.embed',
@@ -147,8 +155,7 @@ class ParakeetTdtRuntime {
           cellLayers: nextCell,
         ),
       );
-    } finally {
-    }
+    } finally {}
   }
 
   ({MlxArray tokenLogits, MlxArray durationLogits}) jointStep({
@@ -169,30 +176,47 @@ class ParakeetTdtRuntime {
     summed.close();
     activated.close();
 
-    final tokenLogits = logits.slice(
-      start: <int>[0, 0],
-      stop: <int>[1, bundle.manifest.blankTokenId + 1],
-    ).squeeze();
-    final durationLogits = logits.slice(
-      start: <int>[0, bundle.manifest.blankTokenId + 1],
-      stop: <int>[
-        1,
-        bundle.manifest.blankTokenId + 1 + bundle.manifest.durations.length,
-      ],
-    ).squeeze();
+    final tokenLogits = logits
+        .slice(
+          start: <int>[0, 0],
+          stop: <int>[1, bundle.manifest.blankTokenId + 1],
+        )
+        .squeeze();
+    final durationLogits = logits
+        .slice(
+          start: <int>[0, bundle.manifest.blankTokenId + 1],
+          stop: <int>[
+            1,
+            bundle.manifest.blankTokenId + 1 + bundle.manifest.durations.length,
+          ],
+        )
+        .squeeze();
     logits.close();
     return (tokenLogits: tokenLogits, durationLogits: durationLogits);
   }
 
   String transcribeMel(MlxArray mel, {List<int>? lengths}) {
+    return transcribeMelDetailed(mel, lengths: lengths).text;
+  }
+
+  ParakeetTdtTranscriptionResult transcribeMelDetailed(
+    MlxArray mel, {
+    List<int>? lengths,
+    List<ParakeetTdtToken> prefixTokens = const <ParakeetTdtToken>[],
+  }) {
     onTrace?.call('encoder', 'start lengths=${lengths ?? <int>[mel.shape[1]]}');
     final encoded = _encoder(mel, lengths ?? <int>[mel.shape[1]]);
-    var predictState = zeroPredictState();
-    final tokens = <ParakeetTdtToken>[];
-    var state = const ParakeetTdtDecodeState();
+    final resume = _resumeFromPrefixTokens(prefixTokens);
+    var predictState = resume.predictState;
+    final tokens = <ParakeetTdtToken>[...prefixTokens];
+    var state = resume.decodeState;
+    var timeSteps = 0;
     try {
-      final timeSteps = encoded.lengths.first;
-      onTrace?.call('encoder', 'done timeSteps=$timeSteps shape=${encoded.features.shape}');
+      timeSteps = encoded.lengths.first;
+      onTrace?.call(
+        'encoder',
+        'done timeSteps=$timeSteps shape=${encoded.features.shape}',
+      );
       for (var frame = 0; frame < timeSteps;) {
         onTrace?.call('decode', 'frame=$frame token=${state.lastTokenId}');
         final encoderFrame = encoded.features.slice(
@@ -247,11 +271,15 @@ class ParakeetTdtRuntime {
       encoded.features.close();
       predictState.close();
     }
-    return tokens
-        .map((item) => item.text.replaceAll('▁', ' '))
-        .join()
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    return ParakeetTdtTranscriptionResult(
+      text: tokens
+          .map((item) => item.text.replaceAll('▁', ' '))
+          .join()
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim(),
+      tokens: List<ParakeetTdtToken>.unmodifiable(tokens),
+      timeSteps: timeSteps,
+    );
   }
 
   MlxArray _predictInputFor(int? tokenId) {
@@ -265,5 +293,66 @@ class ParakeetTdtRuntime {
       );
       return _embedding(tokenArray);
     });
+  }
+
+  ({ParakeetTdtPredictState predictState, ParakeetTdtDecodeState decodeState})
+  _resumeFromPrefixTokens(List<ParakeetTdtToken> prefixTokens) {
+    var predictState = zeroPredictState();
+    if (prefixTokens.isEmpty) {
+      return (
+        predictState: predictState,
+        decodeState: const ParakeetTdtDecodeState(),
+      );
+    }
+
+    final initial = predictorStep(tokenId: null, state: predictState);
+    predictState.close();
+    predictState = initial.state;
+    initial.output.close();
+
+    for (var index = 1; index < prefixTokens.length; index += 1) {
+      final replay = predictorStep(
+        tokenId: prefixTokens[index - 1].id,
+        state: predictState,
+      );
+      predictState.close();
+      predictState = replay.state;
+      replay.output.close();
+    }
+
+    return (
+      predictState: predictState,
+      decodeState: _decodeStateForPrefixTokens(prefixTokens),
+    );
+  }
+
+  ParakeetTdtDecodeState _decodeStateForPrefixTokens(
+    List<ParakeetTdtToken> prefixTokens,
+  ) {
+    var state = const ParakeetTdtDecodeState();
+    for (final token in prefixTokens) {
+      final tokenStartFrame = _frameIndexForSeconds(token.startSeconds);
+      if (tokenStartFrame > state.frameIndex) {
+        state = state.copyWith(frameIndex: tokenStartFrame, emittedSymbols: 0);
+      }
+      final rawAdvance = _frameIndexForSeconds(token.durationSeconds);
+      final hitMaxSymbols =
+          rawAdvance == 0 &&
+          state.emittedSymbols + 1 >= bundle.manifest.maxSymbols;
+      final advanceFrames = hitMaxSymbols ? 1 : rawAdvance;
+      state = state.copyWith(
+        lastTokenId: token.id,
+        emittedSymbols: advanceFrames != 0 ? 0 : state.emittedSymbols + 1,
+        frameIndex: state.frameIndex + advanceFrames,
+      );
+    }
+    return state;
+  }
+
+  int _frameIndexForSeconds(double seconds) {
+    if (seconds <= 0) {
+      return 0;
+    }
+    return (seconds / bundle.manifest.frameStepSeconds).round();
   }
 }
