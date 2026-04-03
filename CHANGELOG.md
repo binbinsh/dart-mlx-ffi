@@ -1,5 +1,18 @@
 # Changelog
 
+### 26.404.11
+
+- Replaced `mlx-community/Kimi-K2-Instruct-4bit` in the publish-time text matrix with the official `unsloth/gemma-4-E2B-it-UD-MLX-4bit` MLX snapshot and verified `Python MLX` vs `Dart MLX` parity at `0` max abs diff.
+- Added a dedicated `unsloth_mlx` publish benchmark runner so release reports can use official MLX snapshots that require patched `mlx-lm` model definitions, including `Gemma 4`.
+- Regenerated the 10-model publish report and refreshed `README.md` / `models/text_lm/README.md` to document the current benchmark matrix, timings, and `HF_HUB_DISABLE_XET=1` reproduce path for large Hub downloads.
+
+### 26.331.11
+
+- Returned the package scope to MLX-only Apple-platform runtime support and removed the experimental GGUF / `llama.cpp` layer from the public API surface.
+- Kept `pubspec.yaml` platform metadata aligned with the actual supported targets so pub.dev shows both `iOS` and `macOS`.
+- Kept the MLX-side model runners, export/import workflow, and publish-time benchmark coverage for text, VLM, TTS, and ASR checkpoints.
+- Refreshed package metadata, build hooks, and documentation to describe an MLX-only package again.
+
 ### 26.325.7
 
 - Moved Dart model implementations out of `benchmark/` and into `lib/src/models/`, including `parakeet_tdt`, `qwen2_5`, `kitten_tts`, shared helpers, and synthetic benchmark code.

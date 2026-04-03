@@ -47,6 +47,9 @@ from mlx_lm import load as load_lm
 ROOT = Path(__file__).resolve().parents[1]
 TEXT_PROMPT = "Explain why MLX is useful for local inference on Apple Silicon."
 VLM_PROMPT = "Describe this image briefly."
+UNSLOTH_GEMMA4_VENV = (
+    ROOT / "output" / "gemma-4-e2b-it" / "unsloth-mlx-venv"
+)
 
 
 def _text_load_kwargs(model_id: str) -> dict[str, object]:
@@ -112,6 +115,128 @@ def text_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, 
         "input_desc": f"{len(token_ids)} text tokens",
         "comparison": "last-token logits[:16]",
         "python_ms": py_ms,
+        "dart_ms": dart_ms,
+        "max_abs_diff": max_diff,
+        "mean_abs_diff": mean_diff,
+    }
+
+
+def unsloth_mlx_text_bench(
+    model_id: str,
+    *,
+    warmup: int = 3,
+    iters: int = 10,
+) -> dict[str, object]:
+    python_bin = UNSLOTH_GEMMA4_VENV / "bin" / "python"
+    if not python_bin.exists():
+        raise RuntimeError(
+            "Missing Unsloth Gemma4 MLX environment. "
+            f"Expected: {python_bin}"
+        )
+
+    export_dir = ROOT / "benchmark" / "out" / "publish" / slug(model_id)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    report_path = export_dir / "python_report.json"
+    script = """
+from pathlib import Path
+import json
+import time
+
+import mlx.core as mx
+from mlx_lm import load
+
+MODEL_ID = {model_id!r}
+PROMPT = {prompt!r}
+EXPORT_DIR = Path({export_dir!r})
+
+
+def extract_logits(output):
+    if hasattr(output, "logits"):
+        return output.logits
+    if isinstance(output, tuple):
+        return output[0]
+    return output
+
+
+model, tokenizer = load(MODEL_ID, lazy=False)
+token_ids = tokenizer.encode(PROMPT)[:24]
+tokens = mx.array([token_ids], dtype=mx.int32)
+
+for _ in range({warmup}):
+    logits = extract_logits(model(tokens))[:, -1, :16].astype(mx.float32)
+    mx.eval(logits)
+    mx.synchronize()
+
+started = time.perf_counter()
+last = None
+for _ in range({iters}):
+    last = extract_logits(model(tokens))[:, -1, :16].astype(mx.float32)
+    mx.eval(last)
+    mx.synchronize()
+py_ms = (time.perf_counter() - started) * 1000.0 / {iters}
+py_values = [float(v) for v in last.reshape([-1]).tolist()]
+
+export_path = EXPORT_DIR / "function.mlxfn"
+input_path = EXPORT_DIR / "inputs.safetensors"
+if export_path.exists():
+    export_path.unlink()
+if input_path.exists():
+    input_path.unlink()
+
+
+def forward(input_ids):
+    output = extract_logits(model(input_ids))
+    return output[:, -1, :16].astype(mx.float32)
+
+
+mx.export_function(str(export_path), forward, tokens)
+mx.save_safetensors(str(input_path), {{"input_ids": tokens}})
+
+payload = {{
+    "model_id": MODEL_ID,
+    "token_count": len(token_ids),
+    "python_ms": py_ms,
+    "python_values": py_values,
+    "export_path": str(export_path),
+    "input_path": str(input_path),
+}}
+Path({report_path!r}).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+print(json.dumps(payload))
+""".format(
+        model_id=model_id,
+        prompt=TEXT_PROMPT,
+        export_dir=str(export_dir),
+        report_path=str(report_path),
+        warmup=warmup,
+        iters=iters,
+    )
+    env = dict(os.environ)
+    env["HF_HUB_DISABLE_XET"] = "1"
+    completed = subprocess.run(
+        [str(python_bin), "-c", script],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    py_values = [float(v) for v in payload["python_values"]]
+    dart_values, dart_ms = benchmark_dart_export(
+        export_path=Path(payload["export_path"]),
+        input_path=Path(payload["input_path"]),
+        mx_module=mx,
+        warmup=warmup,
+        iters=iters,
+    )
+    max_diff, mean_diff = compare_lists(py_values, dart_values)
+    cleanup_mlx(mx)
+    return {
+        "model_id": model_id,
+        "kind": "text",
+        "input_desc": f"{payload['token_count']} text tokens",
+        "comparison": "last-token logits[:16]",
+        "python_ms": float(payload["python_ms"]),
         "dart_ms": dart_ms,
         "max_abs_diff": max_diff,
         "mean_abs_diff": mean_diff,
@@ -273,8 +398,13 @@ def main() -> None:
         mid = item["model_id"]
         if mid in done:
             continue
+        runner = item.get("runner")
         kind = item["kind"]
-        if kind == "text":
+        if runner == "kitten":
+            report.append(kitten_bench())
+        elif runner == "unsloth_mlx":
+            report.append(unsloth_mlx_text_bench(mid))
+        elif kind == "text":
             report.append(text_bench(mid))
         elif kind == "vlm":
             report.append(vlm_bench(mid))
@@ -282,22 +412,8 @@ def main() -> None:
             report.append(ming_tts_bench(mid))
         elif kind == "asr":
             report.append(asr_bench(mid))
-        partial.write_text(json.dumps(report, indent=2), encoding="utf-8")
-
-    for mid in [
-        "mlx-community/Qwen3.5-9B-MLX-4bit",
-        "mlx-community/Qwen3.5-35B-A3B-4bit",
-        "mlx-community/kitten-tts-nano-0.8-6bit",
-        "mlx-community/parakeet-tdt-0.6b-v3",
-    ]:
-        if mid in done or any(item["model_id"] == mid for item in report):
-            continue
-        if mid == "mlx-community/kitten-tts-nano-0.8-6bit":
-            report.append(kitten_bench())
-        elif mid == "mlx-community/parakeet-tdt-0.6b-v3":
-            report.append(asr_bench(mid))
         else:
-            report.append(text_bench(mid))
+            raise ValueError(f"Unsupported benchmark spec: {item}")
         partial.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")

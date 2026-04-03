@@ -21,8 +21,8 @@ class ConvertPlan:
     model_source: str
     input_path: Path
     output_dir: Path
-    imatrix_source: str
-    imatrix_path: Path
+    imatrix_source: str | None
+    imatrix_path: Path | None
     command: list[str]
 
 
@@ -120,6 +120,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print the resolved command and inputs without running conversion.",
     )
+    parser.add_argument(
+        "--no-quantize",
+        action="store_true",
+        help=(
+            "Skip quantization and only convert the input into an MLX snapshot "
+            "using the selected dtype and model-type mapping."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -186,11 +194,12 @@ def build_convert_command(
     cli_prefix: Sequence[str],
     input_path: Path,
     output_dir: Path,
-    imatrix_path: Path,
+    imatrix_path: Path | None,
     model_type: str | None,
     dtype: str | None,
     q_bits: int | None,
     q_group_size: int | None,
+    quantize: bool,
 ) -> list[str]:
     command = list(cli_prefix) + [
         "convert",
@@ -198,35 +207,86 @@ def build_convert_command(
         str(input_path),
         "--output",
         str(output_dir),
-        "--quantize",
-        "--q-recipe",
-        "unsloth",
-        "--imatrix-path",
-        str(imatrix_path),
     ]
     if model_type:
         command.extend(["--model-type", model_type])
     if dtype:
         command.extend(["--dtype", dtype])
-    if q_bits is not None:
-        command.extend(["--q-bits", str(q_bits)])
-    if q_group_size is not None:
-        command.extend(["--q-group-size", str(q_group_size)])
+    if quantize:
+        if imatrix_path is None:
+            raise ValueError("Quantized conversion requires an imatrix path.")
+        command.extend(
+            [
+                "--quantize",
+                "--q-recipe",
+                "unsloth",
+                "--imatrix-path",
+                str(imatrix_path),
+            ]
+        )
+        if q_bits is not None:
+            command.extend(["--q-bits", str(q_bits)])
+        if q_group_size is not None:
+            command.extend(["--q-group-size", str(q_group_size)])
     return command
 
 
-def verify_output_dir(output_dir: Path) -> None:
+def verify_output_dir(output_dir: Path, *, quantized: bool) -> None:
     config_path = output_dir / "config.json"
     if not config_path.exists():
         raise FileNotFoundError(f"Missing converted config: {config_path}")
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    if "quantization" not in config:
+    if quantized and "quantization" not in config:
         raise ValueError("Converted snapshot is missing quantization metadata.")
     tensor_files = sorted(output_dir.glob("*.safetensors"))
     if not tensor_files:
         raise FileNotFoundError(
             f"No .safetensors files found in converted snapshot: {output_dir}"
         )
+
+
+def normalize_output_config(
+    output_dir: Path,
+    *,
+    quantized: bool,
+    q_bits: int | None,
+    q_group_size: int | None,
+) -> None:
+    if quantized:
+        return
+    config_path = output_dir / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if "quantization" not in config:
+        config["quantization"] = {
+            "bits": q_bits or 4,
+            "group_size": q_group_size or 64,
+            "mode": "affine",
+        }
+        config_path.write_text(
+            json.dumps(config, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+
+def copy_sidecar_files(input_path: Path, output_dir: Path) -> None:
+    if not input_path.is_dir():
+        return
+    for name in (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+        "special_tokens_map.json",
+        "generation_config.json",
+        "chat_template.jinja",
+        "preprocessor_config.json",
+        "video_preprocessor_config.json",
+        "image_processor_config.json",
+    ):
+        src = input_path / name
+        dst = output_dir / name
+        if src.exists() and not dst.exists():
+            shutil.copy2(src, dst)
 
 
 def write_manifest(plan: ConvertPlan) -> Path:
@@ -255,7 +315,12 @@ def make_plan(args: argparse.Namespace) -> ConvertPlan:
         revision=args.revision,
         token=args.token,
     )
-    imatrix_path, imatrix_source = resolve_imatrix_path(args)
+    quantize = not args.no_quantize
+    if quantize:
+        imatrix_path, imatrix_source = resolve_imatrix_path(args)
+    else:
+        imatrix_path = None
+        imatrix_source = None
     output_dir = Path(args.output_dir).expanduser().resolve()
     command = build_convert_command(
         cli_prefix=cli_prefix,
@@ -266,6 +331,7 @@ def make_plan(args: argparse.Namespace) -> ConvertPlan:
         dtype=args.dtype,
         q_bits=args.q_bits,
         q_group_size=args.q_group_size,
+        quantize=quantize,
     )
     return ConvertPlan(
         model_source=model_source,
@@ -277,10 +343,23 @@ def make_plan(args: argparse.Namespace) -> ConvertPlan:
     )
 
 
-def run_plan(plan: ConvertPlan) -> Path:
+def run_plan(
+    plan: ConvertPlan,
+    *,
+    quantized: bool,
+    q_bits: int | None,
+    q_group_size: int | None,
+) -> Path:
     plan.output_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(plan.command, check=True)
-    verify_output_dir(plan.output_dir)
+    normalize_output_config(
+        plan.output_dir,
+        quantized=quantized,
+        q_bits=q_bits,
+        q_group_size=q_group_size,
+    )
+    copy_sidecar_files(plan.input_path, plan.output_dir)
+    verify_output_dir(plan.output_dir, quantized=quantized)
     return write_manifest(plan)
 
 
@@ -292,7 +371,12 @@ def main() -> None:
     print(f"command={' '.join(shlex.quote(part) for part in plan.command)}")
     if args.dry_run:
         return
-    manifest_path = run_plan(plan)
+    manifest_path = run_plan(
+        plan,
+        quantized=not args.no_quantize,
+        q_bits=args.q_bits,
+        q_group_size=args.q_group_size,
+    )
     print(f"manifest={manifest_path}")
     print(f"output_dir={plan.output_dir}")
 

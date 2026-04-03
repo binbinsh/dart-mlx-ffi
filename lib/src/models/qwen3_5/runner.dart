@@ -65,7 +65,10 @@ final class Qwen3_5Runner {
         linearAttention: !config.isLinearLayer(index)
             ? null
             : _LinearAttentionWeights(
-                convWeight: tensors['${prefix}linear_attn.conv1d.weight']!,
+                convWeight: _loadLinearConvWeight(
+                  tensors['${prefix}linear_attn.conv1d.weight']!,
+                  config: config,
+                ),
                 inProjQkv: _loadLinear(
                   tensors,
                   '${prefix}linear_attn.in_proj_qkv',
@@ -998,5 +1001,17 @@ final class Qwen3_5Runner {
       throw StateError('Unable to detect Qwen3.5 text tensor prefix.');
     }
     return candidates.first;
+  }
+
+  static MlxArray _loadLinearConvWeight(
+    MlxArray weight, {
+    required Qwen3_5Config config,
+  }) {
+    if (weight.shape.length == 3 &&
+        weight.shape[1] == 1 &&
+        weight.shape[2] == config.linearConvKernelDim) {
+      return weight.transposeAxes([0, 2, 1]);
+    }
+    return weight;
   }
 }

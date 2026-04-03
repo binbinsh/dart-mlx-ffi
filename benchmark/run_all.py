@@ -7,22 +7,6 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 _RUNNERS: dict[str, object] | None = None
-_EXTRA_MODELS = [
-    {
-        "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
-        "kind": "text",
-    },
-    {
-        "model_id": "mlx-community/Qwen3.5-35B-A3B-4bit",
-        "kind": "text",
-    },
-    {
-        "model_id": "mlx-community/kitten-tts-nano-0.8-6bit",
-        "kind": "tts",
-        "runner": "kitten",
-        "name": "kitten_tts_nano_08",
-    },
-]
 
 
 def _load_model_specs() -> list[dict[str, object]]:
@@ -30,7 +14,7 @@ def _load_model_specs() -> list[dict[str, object]]:
         (ROOT / "benchmark" / "publish_model_list.json").read_text(encoding="utf-8"),
     )
     merged = []
-    for item in [*specs, *_EXTRA_MODELS]:
+    for item in specs:
         spec = dict(item)
         spec.setdefault("name", str(spec["model_id"]).split("/", 1)[-1])
         merged.append(spec)
@@ -57,15 +41,28 @@ def _load_runners() -> dict[str, object]:
     benchmark_root = str(Path(__file__).resolve().parent)
     try:
         from .parakeet_tdt_sweep import asr_bench
-        from .publish_report import kitten_bench, ming_tts_bench, text_bench, vlm_bench
+        from .publish_report import (
+            kitten_bench,
+            ming_tts_bench,
+            text_bench,
+            unsloth_mlx_text_bench,
+            vlm_bench,
+        )
     except ImportError:
         if benchmark_root not in sys.path:
             sys.path.insert(0, benchmark_root)
         from parakeet_tdt_sweep import asr_bench
-        from publish_report import kitten_bench, ming_tts_bench, text_bench, vlm_bench
+        from publish_report import (
+            kitten_bench,
+            ming_tts_bench,
+            text_bench,
+            unsloth_mlx_text_bench,
+            vlm_bench,
+        )
 
     _RUNNERS = {
         "text": text_bench,
+        "unsloth_mlx": unsloth_mlx_text_bench,
         "vlm": vlm_bench,
         "tts": ming_tts_bench,
         "asr": asr_bench,
@@ -165,6 +162,8 @@ def benchmark_model(
     runners = _load_runners()
     if spec.get("runner") == "kitten":
         return runners["kitten"](warmup=warmup, iters=iters)
+    if spec.get("runner") == "unsloth_mlx":
+        return runners["unsloth_mlx"](str(spec["model_id"]), warmup=warmup, iters=iters)
 
     model_id = str(spec["model_id"])
     match spec["kind"]:
