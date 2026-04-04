@@ -46,6 +46,17 @@ final class KittenFrontRunner {
   factory KittenFrontRunner.load(String snapshotPath) {
     final config = ModelConfig.fromSnapshot(snapshotPath);
     final tensors = loadKittenTensors(snapshotPath);
+    return KittenFrontRunner.fromTensors(config: config, tensors: tensors);
+  }
+
+  /// Creates a [KittenFrontRunner] from pre-loaded config and tensors.
+  ///
+  /// Use this when sharing tensors with other model components (e.g.
+  /// [KittenDecoder]) to avoid loading weights twice.
+  factory KittenFrontRunner.fromTensors({
+    required ModelConfig config,
+    required Map<String, MlxArray> tensors,
+  }) {
     return KittenFrontRunner._(
       config: config,
       tensors: tensors,
@@ -80,7 +91,11 @@ final class KittenFrontRunner {
   final ProsodyPredictor predictor;
   final TextEncoder textEncoder;
 
-  KittenFrontResult run(MlxArray inputIds, MlxArray refS, {double speed = 1.0}) {
+  KittenFrontResult run(
+    MlxArray inputIds,
+    MlxArray refS, {
+    double speed = 1.0,
+  }) {
     if (inputIds.shape[0] != 1 || refS.shape[0] != 1) {
       throw ArgumentError('KittenFrontRunner currently expects batch size 1.');
     }
@@ -89,15 +104,19 @@ final class KittenFrontRunner {
       List<bool>.filled(inputIds.shape[1], false),
       shape: [1, inputIds.shape[1]],
     );
-    final attentionMask = MlxArray.ones(
-      [1, inputIds.shape[1]],
-      dtype: MlxDType.MLX_INT32,
-    );
+    final attentionMask = MlxArray.ones([
+      1,
+      inputIds.shape[1],
+    ], dtype: MlxDType.MLX_INT32);
 
     final bertOutput = bert(inputIds, attentionMask: attentionMask);
     attentionMask.close();
 
-    final dEn = mx.transposeAxes(bertEncoder(bertOutput.sequenceOutput), [0, 2, 1]);
+    final dEn = mx.transposeAxes(bertEncoder(bertOutput.sequenceOutput), [
+      0,
+      2,
+      1,
+    ]);
     bertOutput.sequenceOutput.close();
     bertOutput.pooledOutput.close();
 
