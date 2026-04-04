@@ -31,9 +31,7 @@ void main(List<String> arguments) async {
     final packageRootPath = packageRoot.toFilePath();
 
     if (!_supportsMlx(code.targetOS)) {
-      throw UnsupportedError(
-        'dart_mlx_ffi only supports iOS and macOS.',
-      );
+      throw UnsupportedError('dart_mlx_ffi only supports iOS and macOS.');
     }
 
     await _buildMlxAsset(
@@ -68,10 +66,11 @@ Future<void> _buildMlxAsset(
       ? _iosSdkName(code.iOS.targetSdk)
       : 'macosx';
   final metalEnabled = await _resolveMetalSupport(logger, code, sdkName);
-  final privateAneEnabled = _envFlag(
-    'DART_MLX_ENABLE_PRIVATE_ANE',
-    defaultValue: true,
-  );
+  // Private ANE bridge requires ARM (NEON intrinsics, Apple Neural Engine).
+  // Force it off when targeting x64 regardless of env flag.
+  final privateAneEnabled = code.targetArchitecture == Architecture.x64
+      ? false
+      : _envFlag('DART_MLX_ENABLE_PRIVATE_ANE', defaultValue: true);
   final buildDirectory = outputDirectory.resolve(
     privateAneEnabled
         ? 'cmake_mlx_private_ane_on/'

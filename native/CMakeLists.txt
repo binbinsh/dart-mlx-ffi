@@ -26,10 +26,15 @@ endif()
 set(ANE_BRIDGE_SRC ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_stub.cpp)
 set(ANE_EVAL_SRC)
 set(ANE_INTEROP_SRC)
+set(ANE_REAL_SRC)
 
 if(DART_MLX_ENABLE_PRIVATE_ANE)
   set(ANE_BRIDGE_SRC ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_private.cpp)
   set(ANE_EVAL_SRC ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_eval.cpp)
+  set(ANE_REAL_SRC
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_chain.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_chain_state.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_model.cpp)
   set(
     ANE_INTEROP_SRC
     ${CMAKE_CURRENT_LIST_DIR}/../third_party/espresso_ane/ane_interop.m
@@ -59,10 +64,8 @@ set(MLXC_SRC
     ${CMAKE_CURRENT_LIST_DIR}/bridge_fast.cpp
     ${CMAKE_CURRENT_LIST_DIR}/bridge_coreml.mm
     ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_data.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_chain.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_chain_state.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_model.cpp
     ${CMAKE_CURRENT_LIST_DIR}/bridge_ane_interop.cpp
+    ${ANE_REAL_SRC}
     ${ANE_BRIDGE_SRC}
     ${ANE_EVAL_SRC}
     ${ANE_INTEROP_SRC}
