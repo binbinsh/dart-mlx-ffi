@@ -1,5 +1,12 @@
 # Changelog
 
+### 26.405.15
+
+- Removed the experimental private ANE and Core ML bridge surfaces from the Dart API, native build, tests, local tooling, and vendored `espresso_ane` sources so the package scope is MLX-only again.
+- Added a Dart `PaddleOCR-VL` runner under `lib/src/models/paddle_ocr_vl/` and exported `PaddleOcrVlRunner` / `PaddleOcrVlConfig` from `lib/models.dart`.
+- Simplified the package build hook and native CMake configuration after the ANE removal, including dropping the `DART_MLX_ENABLE_PRIVATE_ANE` toggle and the now-unused `coremltools` Python dependency.
+- Patched the vendored MLX Metal build scripts to honor the active Apple SDK and deployment flags for iOS builds, and to skip `jaccl` on iOS.
+
 ### 26.404.11
 
 - Replaced `mlx-community/Kimi-K2-Instruct-4bit` in the publish-time text matrix with the official `unsloth/gemma-4-E2B-it-UD-MLX-4bit` MLX snapshot and verified `Python MLX` vs `Dart MLX` parity at `0` max abs diff.
@@ -17,7 +24,6 @@
 
 - Moved Dart model implementations out of `benchmark/` and into `lib/src/models/`, including `parakeet_tdt`, `qwen2_5`, `kitten_tts`, shared helpers, and synthetic benchmark code.
 - Added `lib/models.dart` as the unified public export surface for Dart model implementations.
-- Added experimental private ANE bridge surfaces, Core ML helpers, and project-local tooling under `private_ane/`.
 - Renamed benchmark sweep scripts away from `recent_*` naming and introduced `publish_model_list.json` plus `parakeet_tdt_sweep.py`.
 - Added `TDT v3` to the publish benchmark list and regenerated `benchmark/out/publish_report.json` with `14` rows.
 - Fixed multiple `dart-mlx-ffi` native bridge ops to run on `default_device_stream()` where appropriate, including `addmm` and `conv2d`, improving Dart MLX parity and speed.

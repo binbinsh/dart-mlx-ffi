@@ -1,6 +1,6 @@
 name: dart_mlx_ffi
 description: Production-ready Dart FFI package for Apple MLX runtimes on iOS and macOS
-version: 26.404.11
+version: 26.405.15
 homepage: https://github.com/binbinsh/dart-mlx-ffi
 repository: https://github.com/binbinsh/dart-mlx-ffi
 issue_tracker: https://github.com/binbinsh/dart-mlx-ffi/issues

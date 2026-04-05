@@ -66,23 +66,8 @@ Future<void> _buildMlxAsset(
       ? _iosSdkName(code.iOS.targetSdk)
       : 'macosx';
   final metalEnabled = await _resolveMetalSupport(logger, code, sdkName);
-  // Private ANE bridge requires ARM (NEON intrinsics, Apple Neural Engine).
-  // Force it off when targeting x64 regardless of env flag.
-  final privateAneEnabled = code.targetArchitecture == Architecture.x64
-      ? false
-      : _envFlag('DART_MLX_ENABLE_PRIVATE_ANE', defaultValue: true);
-  final buildDirectory = outputDirectory.resolve(
-    privateAneEnabled
-        ? 'cmake_mlx_private_ane_on/'
-        : 'cmake_mlx_private_ane_off/',
-  );
+  final buildDirectory = outputDirectory.resolve('cmake_mlx/');
   final buildDirectoryPath = buildDirectory.toFilePath();
-  if (!privateAneEnabled) {
-    logger.warning(
-      'Private ANE bridge is disabled via DART_MLX_ENABLE_PRIVATE_ANE=0. '
-      'Building stub-only private ANE bindings.',
-    );
-  }
 
   await Directory.fromUri(buildDirectory).create(recursive: true);
 
@@ -103,7 +88,6 @@ Future<void> _buildMlxAsset(
     '-DCMAKE_OSX_ARCHITECTURES=${_appleArchitectureName(code.targetArchitecture)}',
     '-DCMAKE_OSX_DEPLOYMENT_TARGET=${_deploymentTarget(code)}',
     '-DMLX_BUILD_METAL=${metalEnabled ? 'ON' : 'OFF'}',
-    '-DDART_MLX_ENABLE_PRIVATE_ANE=${privateAneEnabled ? 'ON' : 'OFF'}',
     if (code.targetOS == OS.iOS) ...[
       '-DCMAKE_SYSTEM_NAME=iOS',
       '-DCMAKE_OSX_SYSROOT=$sdkName',
@@ -311,24 +295,3 @@ String? _deriveCppCompiler(String? cCompiler) {
 }
 
 String _cmdQuote(String value) => '"${value.replaceAll('"', '""')}"';
-
-bool _envFlag(String key, {required bool defaultValue}) {
-  final raw = Platform.environment[key];
-  if (raw == null || raw.isEmpty) {
-    return defaultValue;
-  }
-  final normalized = raw.trim().toLowerCase();
-  if (normalized == '1' ||
-      normalized == 'true' ||
-      normalized == 'yes' ||
-      normalized == 'on') {
-    return true;
-  }
-  if (normalized == '0' ||
-      normalized == 'false' ||
-      normalized == 'no' ||
-      normalized == 'off') {
-    return false;
-  }
-  throw FormatException('Invalid boolean environment value for $key: $raw');
-}

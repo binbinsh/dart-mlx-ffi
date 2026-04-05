@@ -62,6 +62,7 @@ if(APPLE)
   if(_mlx_sysroot_name STREQUAL "")
     set(_mlx_sysroot_name "macosx")
   endif()
+  string(TOLOWER "${_mlx_sysroot_name}" _mlx_sysroot_name)
 
   if(_mlx_sysroot_name MATCHES "iphoneos")
     set(MLX_METAL_SDK "iphoneos")

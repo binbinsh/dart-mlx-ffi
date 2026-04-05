@@ -31,12 +31,15 @@ macro(mlx_build_metallib)
     set(MTLLIB_COMPILE_OPTIONS ${MTLLIB_COMPILE_OPTIONS} -gline-tables-only
                                -frecord-sources)
   endif()
+  if(NOT MLX_METAL_MIN_FLAG STREQUAL "")
+    set(MTLLIB_COMPILE_OPTIONS ${MTLLIB_COMPILE_OPTIONS} ${MLX_METAL_MIN_FLAG})
+  endif()
 
   # Prepare metallib build command
   add_custom_command(
     OUTPUT ${MTLLIB_BUILD_TARGET}
     COMMAND
-      xcrun -sdk macosx metal
+      xcrun -sdk ${MLX_METAL_SDK} metal
       "$<LIST:TRANSFORM,${MTLLIB_INCLUDE_DIRS},PREPEND,-I>"
       ${MTLLIB_COMPILE_OPTIONS} ${MTLLIB_SOURCES} -o ${MTLLIB_BUILD_TARGET}
     DEPENDS ${MTLLIB_DEPS} ${MTLLIB_SOURCES}
