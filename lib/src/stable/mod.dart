@@ -30,12 +30,6 @@ final class MlxModule {
   /// Metal runtime submodule.
   MlxMetalModule get metal => const MlxMetalModule._();
 
-  /// Official Core ML helpers.
-  MlxCoreMlModule get coreml => const MlxCoreMlModule._();
-
-  /// Private Apple Neural Engine helpers.
-  MlxAnePrivateModule get anePrivate => const MlxAnePrivateModule._();
-
   /// Memory/runtime submodule.
   MlxMemoryModule get memory => const MlxMemoryModule._();
 

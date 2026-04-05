@@ -23,10 +23,3 @@ The current layout is:
 runners, and benchmark orchestration.
 Those scripts should call into `lib/src/models/` for Dart runtime models and
 `models/` for reusable export / import tooling.
-
-Private-ANE-specific model code no longer lives in `models/`. It now lives
-under [`../private_ane/`](../private_ane/), including:
-
-- [`../private_ane/models/josie/`](../private_ane/models/josie/)
-- [`../private_ane/models/qwen3_5_0_8b/`](../private_ane/models/qwen3_5_0_8b/)
-- [`../private_ane/models/qwen3_asr/`](../private_ane/models/qwen3_asr/)

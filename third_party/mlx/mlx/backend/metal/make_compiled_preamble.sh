@@ -21,7 +21,8 @@ OUTPUT_DIR=$1
 CC=$2
 SRC_DIR=$3
 SRC_FILE=$4
-CFLAGS=$5
+METAL_SDK=${5:-macosx}
+CFLAGS=$6
 SRC_NAME=$(basename -- "${SRC_FILE}")
 JIT_INCLUDES=${SRC_DIR}/mlx/backend/metal/kernels/jit
 INPUT_FILE=${SRC_DIR}/mlx/backend/metal/kernels/${SRC_FILE}.h
@@ -31,7 +32,7 @@ OUTPUT_FILE=${OUTPUT_DIR}/${SRC_NAME}.cpp
 mkdir -p "$OUTPUT_DIR"
 
 # Use the metal compiler to get a list of headers (with depth)
-CCC="xcrun -sdk macosx metal -x metal"
+CCC="xcrun -sdk ${METAL_SDK} metal -x metal"
 HDRS=$( $CCC -I"$SRC_DIR" -I"$JIT_INCLUDES" -DMLX_METAL_JIT -E -P -CC -C -H "$INPUT_FILE" $CFLAGS -w 2>&1 1>/dev/null )
 
 # Remove any included system frameworks (for MetalPerformancePrimitive headers)
