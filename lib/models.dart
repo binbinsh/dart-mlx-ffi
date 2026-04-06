@@ -26,3 +26,4 @@ export 'src/models/synthetic/synthetic.dart'
         runSyntheticModelBenchmarks,
         printSyntheticBenchmarkReport,
         readSyntheticBenchArg;
+export 'src/models/silero_vad/silero_vad.dart';
