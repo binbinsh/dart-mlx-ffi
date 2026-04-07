@@ -7,6 +7,7 @@ part of 'paddle_ocr_vl.dart';
 // - mrope_section = [16, 24, 24] → 64 rotary dims = headDim/2
 // - 3 position streams (temporal, height, width); for text-only all equal
 // - rope_theta = 500000
+//
 // ---------------------------------------------------------------------------
 
 extension PaddleOcrVlRope on PaddleOcrVlRunner {
@@ -42,69 +43,75 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
     MlxDType dtype,
   ) {
     final invFreq = _getInvFreq(); // [halfDim]
-    final halfDim = invFreq.shape[0]; // 64
     final seqLen = positionIds.shape[2];
+    final invExpanded = invFreq
+        .reshape([1, 1, invFreq.shape[0], 1])
+        .broadcastTo([3, positionIds.shape[1], invFreq.shape[0], 1]);
+    final positionExpanded = positionIds.astype(MlxDType.MLX_FLOAT32).reshape([
+      3,
+      positionIds.shape[1],
+      1,
+      seqLen,
+    ]);
 
-    // Each mrope section applies a different position-ID stream.
-    // sections = [16, 24, 24], sum = 64 = halfDim
-    final sections = config.mropeSection;
-
-    // Build per-section frequencies and interleave.
-    final freqParts = <MlxArray>[];
-    var dimOffset = 0;
-    for (var s = 0; s < sections.length; s++) {
-      final secLen = sections[s]; // number of freq dims in this section
-      if (secLen == 0) {
-        dimOffset += secLen;
-        continue;
+    try {
+      final freqs = mx.matmul(invExpanded, positionExpanded).transposeAxes([
+        0,
+        1,
+        3,
+        2,
+      ]);
+      try {
+        final emb = mx.concatenate([freqs, freqs], axis: 3);
+        try {
+          final splitSections = <int>[
+            ...config.mropeSection,
+            ...config.mropeSection,
+          ];
+          final parts = <MlxArray>[];
+          var start = 0;
+          for (var i = 0; i < splitSections.length; i++) {
+            final end = start + splitSections[i];
+            final part = emb
+                .slice(
+                  start: [i % 3, 0, 0, start],
+                  stop: [i % 3 + 1, 1, seqLen, end],
+                )
+                .reshape([1, seqLen, end - start]);
+            parts.add(part);
+            start = end;
+          }
+          final interleaved = mx.concatenate(parts, axis: 2);
+          for (final part in parts) {
+            part.close();
+          }
+          try {
+            final cosArr = interleaved.cos().astype(dtype).reshape([
+              1,
+              1,
+              seqLen,
+              config.headDim,
+            ]);
+            final sinArr = interleaved.sin().astype(dtype).reshape([
+              1,
+              1,
+              seqLen,
+              config.headDim,
+            ]);
+            return (cos: cosArr, sin: sinArr);
+          } finally {
+            interleaved.close();
+          }
+        } finally {
+          emb.close();
+        }
+      } finally {
+        freqs.close();
       }
-
-      // Position IDs for this stream: [1, seqLen]
-      final posStream = positionIds
-          .slice(start: [s, 0, 0], stop: [s + 1, 1, seqLen])
-          .reshape([1, seqLen])
-          .astype(MlxDType.MLX_FLOAT32);
-
-      // Inverse frequencies for this section: [secLen]
-      final secFreq = invFreq
-          .slice(start: [dimOffset], stop: [dimOffset + secLen])
-          .reshape([1, secLen]);
-
-      // Outer product: [1, seqLen] × [1, secLen] → [seqLen, secLen]
-      final posExpanded = posStream.reshape([seqLen, 1]);
-      posStream.close();
-      final angles = mx.matmul(posExpanded, secFreq);
-      posExpanded.close();
-      secFreq.close();
-      freqParts.add(angles); // [seqLen, secLen]
-      dimOffset += secLen;
+    } finally {
+      positionExpanded.close();
+      invExpanded.close();
     }
-
-    // Concatenate all section frequencies → [seqLen, halfDim]
-    final freqs = mx.concatenate(freqParts, axis: 1);
-    for (final part in freqParts) {
-      part.close();
-    }
-
-    // Double to full headDim: [seqLen, headDim]
-    final fullFreqs = mx.concatenate([freqs, freqs], axis: 1);
-    freqs.close();
-
-    // cos/sin: [1, 1, seqLen, headDim]
-    final cosArr = fullFreqs.cos().astype(dtype).reshape([
-      1,
-      1,
-      seqLen,
-      halfDim * 2,
-    ]);
-    final sinArr = fullFreqs.sin().astype(dtype).reshape([
-      1,
-      1,
-      seqLen,
-      halfDim * 2,
-    ]);
-    fullFreqs.close();
-    return (cos: cosArr, sin: sinArr);
   }
 
   // -----------------------------------------------------------------------
@@ -184,67 +191,75 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
     return MlxArray.fromInt32List(flat, shape: [3, 1, seqLen]);
   }
 
-  /// Build multimodal position IDs for a sequence containing vision tokens.
+  /// Build multimodal position IDs for a single-image prompt.
   ///
-  /// Text tokens get sequential IDs on all 3 streams.
-  /// Vision tokens get (temporal=t, height=row, width=col) positions.
+  /// This follows the official MLX / Hugging Face `get_rope_index()` logic:
+  /// text preceding the image uses sequential 1D positions, the image token run
+  /// uses compact 3D positions derived from the merged vision grid, and the
+  /// trailing text resumes from `max(vision_positions) + 1`.
   ///
-  /// [tokenIds] is the full token sequence.
-  /// [gridH] / [gridW] are the vision grid dimensions after patch embedding.
-  /// Returns shape `[3, 1, totalSeqLen]`.
-  MlxArray _multimodalPositionIds(List<int> tokenIds, int gridH, int gridW) {
+  /// Returns the position tensor plus the first position ID to use for the
+  /// next generated token.
+  ({MlxArray ids, int nextTextPosition}) _multimodalPositionIds(
+    List<int> tokenIds,
+    int gridH,
+    int gridW,
+  ) {
     final mergeSize = config._vision.spatialMergeSize;
     final mergedH = gridH ~/ mergeSize;
     final mergedW = gridW ~/ mergeSize;
-    final numVisionTokens = mergedH * mergedW;
     final totalLen = tokenIds.length;
+
+    final imageStart = tokenIds.indexOf(config.imageTokenId);
+    if (imageStart < 0) {
+      return (ids: _textPositionIds(totalLen), nextTextPosition: totalLen);
+    }
+
+    var imageEnd = imageStart;
+    while (imageEnd < totalLen && tokenIds[imageEnd] == config.imageTokenId) {
+      imageEnd++;
+    }
+
+    final imageTokenCount = imageEnd - imageStart;
+    final expectedImageTokenCount = mergedH * mergedW;
+    if (imageTokenCount != expectedImageTokenCount) {
+      throw StateError(
+        'Expected $expectedImageTokenCount image tokens for grid '
+        '$mergedH x $mergedW, but prompt contains $imageTokenCount.',
+      );
+    }
 
     final temporal = List<int>.filled(totalLen, 0);
     final height = List<int>.filled(totalLen, 0);
     final width = List<int>.filled(totalLen, 0);
 
-    var textPos = 0;
-    var i = 0;
-    while (i < totalLen) {
-      if (tokenIds[i] == config.visionStartTokenId) {
-        // vision_start token
-        temporal[i] = textPos;
-        height[i] = textPos;
-        width[i] = textPos;
-        i++;
+    for (var i = 0; i < imageStart; i++) {
+      temporal[i] = i;
+      height[i] = i;
+      width[i] = i;
+    }
 
-        // Vision content tokens
-        var vIdx = 0;
-        while (vIdx < numVisionTokens && i < totalLen) {
-          final row = vIdx ~/ mergedW;
-          final col = vIdx % mergedW;
-          temporal[i] = textPos;
-          height[i] = textPos + row;
-          width[i] = textPos + col;
-          i++;
-          vIdx++;
-        }
+    final imageBase = imageStart;
+    for (var i = 0; i < imageTokenCount; i++) {
+      final tokenIndex = imageStart + i;
+      temporal[tokenIndex] = imageBase;
+      height[tokenIndex] = imageBase + (i ~/ mergedW);
+      width[tokenIndex] = imageBase + (i % mergedW);
+    }
 
-        // vision_end token
-        if (i < totalLen && tokenIds[i] == config.visionEndTokenId) {
-          temporal[i] = textPos;
-          height[i] = textPos + mergedH - 1;
-          width[i] = textPos + mergedW - 1;
-          i++;
-        }
-
-        // Advance text position past the vision span
-        textPos += math.max(mergedH, mergedW);
-      } else {
-        temporal[i] = textPos;
-        height[i] = textPos;
-        width[i] = textPos;
-        textPos++;
-        i++;
-      }
+    final imageMaxPosition = imageBase + math.max(mergedH, mergedW).toInt() - 1;
+    final trailingTextBase = imageMaxPosition + 1;
+    for (var i = imageEnd; i < totalLen; i++) {
+      final textPosition = trailingTextBase + (i - imageEnd);
+      temporal[i] = textPosition;
+      height[i] = textPosition;
+      width[i] = textPosition;
     }
 
     final flat = <int>[...temporal, ...height, ...width];
-    return MlxArray.fromInt32List(flat, shape: [3, 1, totalLen]);
+    return (
+      ids: MlxArray.fromInt32List(flat, shape: [3, 1, totalLen]),
+      nextTextPosition: trailingTextBase + (totalLen - imageEnd),
+    );
   }
 }

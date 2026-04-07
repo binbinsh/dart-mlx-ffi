@@ -9,6 +9,10 @@ sealed class _LinearBase {
 
   MlxArray apply(MlxArray input);
 
+  /// Close all MlxArray handles held by this linear layer and remove them
+  /// from [tensors] so they are not double-closed by the runner.
+  void release(Map<String, MlxArray> tensors);
+
   static _LinearBase load(
     Map<String, MlxArray> tensors,
     String prefix, {
@@ -22,9 +26,9 @@ sealed class _LinearBase {
       throw StateError('Missing weight tensor for $prefix.');
     }
     if (scales != null) {
-      return _QuantLinear(weight, scales, biases, bias, defaultQuant);
+      return _QuantLinear(weight, scales, biases, bias, defaultQuant, prefix);
     }
-    return _DenseLinear(weight, bias);
+    return _DenseLinear(weight, bias, prefix);
   }
 
   static _LinearBase? maybeLoad(
@@ -38,10 +42,11 @@ sealed class _LinearBase {
 }
 
 final class _DenseLinear extends _LinearBase {
-  const _DenseLinear(this.weight, this.bias);
+  const _DenseLinear(this.weight, this.bias, this.prefix);
 
   final MlxArray weight;
   final MlxArray? bias;
+  final String prefix;
 
   @override
   MlxArray apply(MlxArray input) {
@@ -55,6 +60,17 @@ final class _DenseLinear extends _LinearBase {
       y.close();
     }
   }
+
+  @override
+  void release(Map<String, MlxArray> tensors) {
+    weight.close();
+    tensors.remove('$prefix.weight');
+    final b = bias;
+    if (b != null) {
+      b.close();
+      tensors.remove('$prefix.bias');
+    }
+  }
 }
 
 final class _QuantLinear extends _LinearBase {
@@ -64,6 +80,7 @@ final class _QuantLinear extends _LinearBase {
     this.biases,
     this.bias,
     this.quantSpec,
+    this.prefix,
   );
 
   final MlxArray weight;
@@ -71,6 +88,7 @@ final class _QuantLinear extends _LinearBase {
   final MlxArray? biases;
   final MlxArray? bias;
   final _QuantSpec quantSpec;
+  final String prefix;
 
   MlxQuantizedMatrix get matrix => MlxQuantizedMatrix(weight, scales, biases);
 
@@ -93,6 +111,24 @@ final class _QuantLinear extends _LinearBase {
       y.close();
     }
   }
+
+  @override
+  void release(Map<String, MlxArray> tensors) {
+    weight.close();
+    tensors.remove('$prefix.weight');
+    scales.close();
+    tensors.remove('$prefix.scales');
+    final qBiases = biases;
+    if (qBiases != null) {
+      qBiases.close();
+      tensors.remove('$prefix.biases');
+    }
+    final b = bias;
+    if (b != null) {
+      b.close();
+      tensors.remove('$prefix.bias');
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +142,10 @@ final class _VisionBlockWeights {
     required this.layerNorm1Bias,
     required this.layerNorm2Weight,
     required this.layerNorm2Bias,
+    required this.layerNorm1Key,
+    required this.layerNorm1BiasKey,
+    required this.layerNorm2Key,
+    required this.layerNorm2BiasKey,
     required this.qkv,
     required this.outProj,
     required this.fc1,
@@ -117,6 +157,11 @@ final class _VisionBlockWeights {
   final MlxArray layerNorm1Bias;
   final MlxArray layerNorm2Weight;
   final MlxArray layerNorm2Bias;
+  // Keys for removing from tensor map on release
+  final String layerNorm1Key;
+  final String layerNorm1BiasKey;
+  final String layerNorm2Key;
+  final String layerNorm2BiasKey;
 
   // Fused QKV attention projection + output projection
   final _LinearBase qkv;
@@ -125,6 +170,22 @@ final class _VisionBlockWeights {
   // MLP (fc1 → GELU → fc2)
   final _LinearBase fc1;
   final _LinearBase fc2;
+
+  /// Close all weight tensors and remove them from [tensors].
+  void release(Map<String, MlxArray> tensors) {
+    layerNorm1Weight.close();
+    tensors.remove(layerNorm1Key);
+    layerNorm1Bias.close();
+    tensors.remove(layerNorm1BiasKey);
+    layerNorm2Weight.close();
+    tensors.remove(layerNorm2Key);
+    layerNorm2Bias.close();
+    tensors.remove(layerNorm2BiasKey);
+    qkv.release(tensors);
+    outProj.release(tensors);
+    fc1.release(tensors);
+    fc2.release(tensors);
+  }
 }
 
 /// Weights for the spatial-merge projector.
@@ -132,35 +193,95 @@ final class _ProjectorWeights {
   const _ProjectorWeights({
     required this.preNormWeight,
     required this.preNormBias,
+    required this.preNormWeightKey,
+    required this.preNormBiasKey,
     required this.linear1,
     required this.linear2,
   });
 
   final MlxArray preNormWeight;
   final MlxArray preNormBias;
+  final String preNormWeightKey;
+  final String preNormBiasKey;
   final _LinearBase linear1;
   final _LinearBase linear2;
+
+  /// Close all weight tensors and remove them from [tensors].
+  void release(Map<String, MlxArray> tensors) {
+    preNormWeight.close();
+    tensors.remove(preNormWeightKey);
+    preNormBias.close();
+    tensors.remove(preNormBiasKey);
+    linear1.release(tensors);
+    linear2.release(tensors);
+  }
 }
 
 /// Complete vision encoder weights (ViT + projector).
 final class _VisionWeights {
-  const _VisionWeights({
+  _VisionWeights({
     required this.patchEmbedWeight,
     required this.patchEmbedBias,
+    required this.patchEmbedWeightKey,
+    required this.patchEmbedBiasKey,
     required this.positionEmbedding,
     required this.blocks,
+    required this.postLayerNormWeight,
+    required this.postLayerNormBias,
+    required this.postLayerNormWeightKey,
+    required this.postLayerNormBiasKey,
     required this.projector,
   });
 
   /// Conv2d patch embedding kernel: [outChannels, inChannels, pH, pW].
   final MlxArray patchEmbedWeight;
   final MlxArray? patchEmbedBias;
+  final String patchEmbedWeightKey;
+  final String? patchEmbedBiasKey;
 
   /// Position embedding — may be quantized.
   final _LinearBase positionEmbedding;
 
   final List<_VisionBlockWeights> blocks;
+  final MlxArray postLayerNormWeight;
+  final MlxArray postLayerNormBias;
+  final String postLayerNormWeightKey;
+  final String postLayerNormBiasKey;
   final _ProjectorWeights projector;
+
+  bool _released = false;
+
+  /// Whether the vision weights have already been released.
+  bool get isReleased => _released;
+
+  /// Close all vision weight tensors and remove them from [tensors].
+  ///
+  /// After this call, the vision encoder cannot be used again.
+  void release(Map<String, MlxArray> tensors) {
+    if (_released) return;
+    _released = true;
+
+    patchEmbedWeight.close();
+    tensors.remove(patchEmbedWeightKey);
+    final pBias = patchEmbedBias;
+    if (pBias != null && patchEmbedBiasKey != null) {
+      pBias.close();
+      tensors.remove(patchEmbedBiasKey);
+    }
+
+    positionEmbedding.release(tensors);
+
+    for (final block in blocks) {
+      block.release(tensors);
+    }
+
+    postLayerNormWeight.close();
+    tensors.remove(postLayerNormWeightKey);
+    postLayerNormBias.close();
+    tensors.remove(postLayerNormBiasKey);
+
+    projector.release(tensors);
+  }
 }
 
 // ---------------------------------------------------------------------------
