@@ -65,14 +65,14 @@ final class VadConv1d {
 }
 
 // ---------------------------------------------------------------------------
-// LSTM Cell (matches Silero VAD state shape)
+// LSTM Cell — single-step for Silero VAD v6
 // ---------------------------------------------------------------------------
 
-/// A single-layer LSTM cell for Silero VAD.
+/// A single-step LSTM cell for Silero VAD v6.
 ///
-/// Silero VAD carries hidden state as `(2, batch, hidden)` where index 0
-/// is `h` and index 1 is `c`. Each call processes the full time sequence
-/// and returns the final `(h, c)`.
+/// Silero VAD v6 collapses encoder output to a single time step via strided
+/// convolutions, so only one LSTM cell step is needed per audio frame.
+/// State is `(h, c)` each with shape `(batch, hidden)`.
 final class VadLstmCell {
   VadLstmCell({
     required this.inputWeight,
@@ -105,54 +105,41 @@ final class VadLstmCell {
     );
   }
 
-  /// Run LSTM over a time-sequence input `(batch, time, features)`.
-  /// Returns the final hidden and cell states, each `(batch, hidden)`.
+  /// Run a single LSTM step. `xt` is `(batch, features)`.
+  /// Returns the new `(h, c)`, each `(batch, hidden)`.
   ({MlxArray h, MlxArray c}) call({
-    required MlxArray input,
-    required MlxArray h0,
-    required MlxArray c0,
+    required MlxArray xt,
+    required MlxArray h,
+    required MlxArray c,
   }) {
-    final batch = input.shape[0];
-    final timeSteps = input.shape[1];
-    var h = h0;
-    var c = c0;
-    for (var t = 0; t < timeSteps; t++) {
-      // Extract timestep: (batch, features).
-      final xt = input
-          .slice(start: [0, t, 0], stop: [batch, t + 1, input.shape[2]])
-          .reshape([batch, input.shape[2]]);
-      // gates = xt @ W_ih^T + bias_ih + h @ W_hh^T + bias_hh
-      final gates1 = mx.addmm(inputBias, xt, _iwT);
-      xt.close();
-      final gates = mx.addmm(mx.add(gates1, hiddenBias), h, _hwT);
-      gates1.close();
+    // gates = xt @ W_ih^T + bias_ih + h @ W_hh^T + bias_hh
+    final gates1 = mx.addmm(inputBias, xt, _iwT);
+    final gates = mx.addmm(mx.add(gates1, hiddenBias), h, _hwT);
+    gates1.close();
 
-      final iGate = gates
-          .slice(start: [0, 0], stop: [batch, hiddenSize])
-          .sigmoid();
-      final fGate = gates
-          .slice(start: [0, hiddenSize], stop: [batch, hiddenSize * 2])
-          .sigmoid();
-      final gGate = gates
-          .slice(start: [0, hiddenSize * 2], stop: [batch, hiddenSize * 3])
-          .tanh();
-      final oGate = gates
-          .slice(start: [0, hiddenSize * 3], stop: [batch, hiddenSize * 4])
-          .sigmoid();
-      gates.close();
+    final batch = xt.shape[0];
+    final iGate = gates
+        .slice(start: [0, 0], stop: [batch, hiddenSize])
+        .sigmoid();
+    final fGate = gates
+        .slice(start: [0, hiddenSize], stop: [batch, hiddenSize * 2])
+        .sigmoid();
+    final gGate = gates
+        .slice(start: [0, hiddenSize * 2], stop: [batch, hiddenSize * 3])
+        .tanh();
+    final oGate = gates
+        .slice(start: [0, hiddenSize * 3], stop: [batch, hiddenSize * 4])
+        .sigmoid();
+    gates.close();
 
-      final newC = mx.add(mx.multiply(fGate, c), mx.multiply(iGate, gGate));
-      final newH = mx.multiply(oGate, newC.tanh());
-      iGate.close();
-      fGate.close();
-      gGate.close();
-      oGate.close();
-      if (!identical(h, h0)) h.close();
-      if (!identical(c, c0)) c.close();
-      h = newH;
-      c = newC;
-    }
-    return (h: h, c: c);
+    final newC = mx.add(mx.multiply(fGate, c), mx.multiply(iGate, gGate));
+    final newH = mx.multiply(oGate, newC.tanh());
+    iGate.close();
+    fGate.close();
+    gGate.close();
+    oGate.close();
+
+    return (h: newH, c: newC);
   }
 }
 
