@@ -10,6 +10,7 @@ final class Qwen3_5Runner {
     this.finalNorm,
     this._lmHeadWeights,
     this._logitPrefixMatrix,
+    this._visionWeights,
   );
 
   factory Qwen3_5Runner.load(String snapshotPath) {
@@ -117,6 +118,12 @@ final class Qwen3_5Runner {
       config.tieWordEmbeddings ? embed : lmHead!,
       config: config,
     );
+
+    // Load vision weights if present (VLM mode).
+    final visionWeights = config.hasVision
+        ? Qwen35Vision.loadVisionWeights(tensors)
+        : null;
+
     final runner = Qwen3_5Runner._(
       config,
       tensors,
@@ -126,6 +133,7 @@ final class Qwen3_5Runner {
       finalNorm,
       lmHead,
       logitPrefixMatrix,
+      visionWeights,
     );
     _warmQwen35CompiledHelpers(config);
     _warmQwen35GDeltaStep(
@@ -153,6 +161,7 @@ final class Qwen3_5Runner {
   final MlxArray finalNorm;
   final _LinearBase? _lmHeadWeights;
   final MlxArray _logitPrefixMatrix;
+  final _Qwen35VisionWeights? _visionWeights;
   MlxArray? _ropeInvFreq;
   final Map<String, ({MlxArray cos, MlxArray sin})> _ropeCache = {};
   final Map<String, MlxArray> _linearScaleCache = {};
@@ -884,6 +893,424 @@ final class Qwen3_5Runner {
   double _scalarAt(MlxArray logits, int index) {
     final values = logits.toList().cast<double>();
     return values[index];
+  }
+
+  /// Whether this runner has vision encoder weights loaded.
+  bool get hasVision => _visionWeights != null;
+
+  /// Generate token IDs from a vision-language prompt.
+  ///
+  /// [promptIds] are token IDs with `imageTokenId` placeholders for where
+  /// the image tokens should be inserted.
+  /// [patchedPixels] is a pre-processed patch tensor
+  ///   `[N_patches, C * temporal_ps * ps * ps]` in merge-grouped order.
+  /// [gridH] and [gridW] are the spatial patch grid dimensions.
+  ///
+  /// Returns the generated token IDs (prompt + generated).
+  List<int> generateFromImage(
+    List<int> promptIds,
+    MlxArray patchedPixels,
+    int gridH,
+    int gridW, {
+    int maxNewTokens = 512,
+    int? eosTokenId,
+    void Function(String message)? onStage,
+    void Function(int tokenId)? onToken,
+    void Function(String stage, MlxArray value)? onDumpIntermediate,
+  }) {
+    final visionWeights = _visionWeights;
+    if (visionWeights == null) {
+      throw StateError('No vision weights loaded. Cannot generate from image.');
+    }
+
+    // 1. Encode image through ViT + projector
+    onStage?.call('generateFromImage: encoding image...');
+    final imageEncoding = encodeImage(
+      patchedPixels,
+      gridH,
+      gridW,
+      visionWeights,
+      onStage: onStage,
+      onDumpIntermediate: onDumpIntermediate,
+    );
+    final imageHidden = imageEncoding.hidden;
+    onStage?.call(
+      'generateFromImage: image encoded, '
+      'grid=${gridH}x${gridW}, tokens=${imageHidden.shape[0]}',
+    );
+
+    // 2. Expand image token placeholders to match actual token count
+    final numImageTokens = imageHidden.shape[0];
+    final imageTokenId = config.imageTokenId!;
+    final imageTokenCountInPrompt = promptIds
+        .where((id) => id == imageTokenId)
+        .length;
+    final expandedIds = imageTokenCountInPrompt == numImageTokens
+        ? List<int>.from(promptIds)
+        : _expandImageTokens(promptIds, numImageTokens);
+    onStage?.call(
+      'generateFromImage: expanded prompt ${promptIds.length} → '
+      '${expandedIds.length} tokens',
+    );
+
+    // 3. Build multimodal embedding (replace image placeholders with vision)
+    final embeddings = buildMultimodalEmbedding(expandedIds, imageHidden);
+    onStage?.call(
+      'generateFromImage: multimodal embeddings shape=${embeddings.shape}',
+    );
+    imageHidden.close();
+
+    // 4. Build multimodal M-RoPE position IDs
+    final positionInfo = multimodalPositionIds(expandedIds, gridH, gridW);
+    final posIds = positionInfo.ids;
+    onStage?.call('generateFromImage: position IDs ready');
+
+    // 5. Run LM forward pass from embeddings with multimodal positions
+    final cache = _makeDecodeCache(this);
+    try {
+      var logits = _runFromEmbeddingWithPositionIds(
+        embeddings,
+        posIds,
+        expandedIds.length,
+        cache,
+      );
+      embeddings.close();
+      posIds.close();
+      onStage?.call('generateFromImage: prompt forward done');
+
+      // 6. Greedy decode
+      final tokens = List<int>.from(expandedIds);
+      try {
+        var nextTextPosition = positionInfo.nextTextPosition;
+        for (var step = 0; step < maxNewTokens; step++) {
+          final next = _nextTokenFromLogits(logits);
+          tokens.add(next);
+          onToken?.call(next);
+          if (step == 0) {
+            onStage?.call('generateFromImage: first token=$next');
+          }
+          if (eosTokenId != null && next == eosTokenId) break;
+          if (step + 1 >= maxNewTokens) break;
+
+          logits.close();
+          final stepArr = MlxArray.fromInt32List([next], shape: [1, 1]);
+          logits = _runWithCacheAtOffset(
+            stepArr,
+            cache,
+            offset: nextTextPosition,
+          );
+          stepArr.close();
+          nextTextPosition++;
+          if ((step + 1) % 16 == 0) {
+            onStage?.call('generateFromImage: generated ${step + 1} tokens');
+          }
+        }
+      } finally {
+        logits.close();
+      }
+      return tokens;
+    } finally {
+      cache.close();
+    }
+  }
+
+  /// Forward pass from pre-built embeddings with explicit M-RoPE position IDs.
+  MlxArray _runFromEmbeddingWithPositionIds(
+    MlxArray embeddings,
+    MlxArray positionIds,
+    int seqLen,
+    _ModelDecodeCache cache,
+  ) {
+    var hidden = embeddings;
+    try {
+      for (var index = 0; index < _layers.length; index++) {
+        final layer = _layers[index];
+        final norm1 = mx.fast.rmsNorm(
+          hidden,
+          weight: layer.inputNorm,
+          eps: config.rmsNormEps,
+        );
+
+        final MlxArray attn;
+        if (layer.fullAttention != null) {
+          attn = _fullAttentionWithPositionIds(
+            layer.fullAttention!,
+            norm1,
+            seqLen,
+            positionIds,
+            cache: cache.layers[index] as _KvDecodeCache,
+          );
+        } else {
+          attn = _linearAttention(
+            layer.linearAttention!,
+            norm1,
+            seqLen,
+            cache: cache.layers[index] as _LinearDecodeCache,
+          );
+        }
+
+        final h = mx.add(hidden, attn);
+        attn.close();
+        norm1.close();
+        hidden.close();
+
+        final norm2 = mx.fast.rmsNorm(
+          h,
+          weight: layer.postNorm,
+          eps: config.rmsNormEps,
+        );
+        final mlp = _denseMlp(layer.denseMlp, norm2, seqLen);
+        norm2.close();
+        final next = mx.add(h, mlp);
+        mlp.close();
+        h.close();
+        hidden = next;
+      }
+
+      final norm = mx.fast.rmsNorm(
+        hidden,
+        weight: finalNorm,
+        eps: config.rmsNormEps,
+      );
+      hidden.close();
+      final output = _lmHeadFull(norm, seqLen);
+      norm.close();
+      return output;
+    } catch (_) {
+      hidden.close();
+      rethrow;
+    }
+  }
+
+  /// Full attention with explicit M-RoPE position IDs (for multimodal prompt).
+  MlxArray _fullAttentionWithPositionIds(
+    _FullAttentionWeights layer,
+    MlxArray input,
+    int seqLen,
+    MlxArray positionIds, {
+    _KvDecodeCache? cache,
+  }) {
+    final useHighRank = _useHighRankLinear(seqLen);
+    final linearInput = useHighRank
+        ? input
+        : input.reshape([seqLen, config.hiddenSize]);
+    final qGate = layer.qProj.apply(linearInput, config: config).reshape([
+      1,
+      seqLen,
+      config.numAttentionHeads,
+      config.headDim * 2,
+    ]);
+    final split = mx.splitSections(qGate, [config.headDim], axis: 3);
+    qGate.close();
+    final q = split[0].reshape([
+      seqLen,
+      config.numAttentionHeads * config.headDim,
+    ]);
+    final gate = split[1].reshape([
+      seqLen,
+      config.numAttentionHeads * config.headDim,
+    ]);
+    final k = layer.kProj.apply(linearInput, config: config);
+    final v = layer.vProj.apply(linearInput, config: config);
+    if (linearInput != input) {
+      linearInput.close();
+    }
+
+    final q4 = q
+        .reshape([1, seqLen, config.numAttentionHeads, config.headDim])
+        .transposeAxes([0, 2, 1, 3]);
+    final k4 = k
+        .reshape([1, seqLen, config.numKeyValueHeads, config.headDim])
+        .transposeAxes([0, 2, 1, 3]);
+    final v4 = v
+        .reshape([1, seqLen, config.numKeyValueHeads, config.headDim])
+        .transposeAxes([0, 2, 1, 3]);
+    q.close();
+    k.close();
+    v.close();
+
+    final qNorm = mx.fast.rmsNorm(
+      q4,
+      weight: layer.qNormWeight,
+      eps: config.rmsNormEps,
+    );
+    final kNorm = mx.fast.rmsNorm(
+      k4,
+      weight: layer.kNormWeight,
+      eps: config.rmsNormEps,
+    );
+    q4.close();
+    k4.close();
+
+    // Use explicit multimodal position IDs for M-RoPE
+    final rope = applyMropeWithPositionIds(qNorm, kNorm, positionIds, seqLen);
+    final qRope = rope.q;
+    var kRope = rope.k;
+    var vAttn = v4;
+    if (cache != null) {
+      final fetched = cache.updateAndFetch(kRope, vAttn);
+      kRope = fetched.$1;
+      vAttn = fetched.$2;
+    }
+    qNorm.close();
+    kNorm.close();
+
+    final repeatKv = config.numAttentionHeads ~/ config.numKeyValueHeads;
+    if (repeatKv > 1) {
+      kRope = _repeatKvHeads(
+        kRope,
+        numHeads: config.numAttentionHeads,
+        numKvHeads: config.numKeyValueHeads,
+        seqLen: kRope.shape[2],
+        headDim: config.headDim,
+      );
+      vAttn = _repeatKvHeads(
+        vAttn,
+        numHeads: config.numAttentionHeads,
+        numKvHeads: config.numKeyValueHeads,
+        seqLen: vAttn.shape[2],
+        headDim: config.headDim,
+      );
+      if (cache == null) {
+        rope.k.close();
+        v4.close();
+      }
+    }
+
+    final attn = mx.fast.scaledDotProductAttention(
+      qRope,
+      kRope,
+      vAttn,
+      scale: 1 / math.sqrt(config.headDim),
+      maskMode: cache != null && seqLen == 1 ? '' : 'causal',
+    );
+    qRope.close();
+    if ((repeatKv > 1) || cache == null) {
+      kRope.close();
+      vAttn.close();
+    }
+
+    final merged = attn.transposeAxes([0, 2, 1, 3]).reshape([
+      seqLen,
+      config.numAttentionHeads * config.headDim,
+    ]);
+    attn.close();
+    final gated =
+        merged *
+        gate.reshape([
+          seqLen,
+          config.numAttentionHeads * config.headDim,
+        ]).sigmoid();
+    gate.close();
+    merged.close();
+    final outInput = useHighRank
+        ? gated.reshape([1, seqLen, config.numAttentionHeads * config.headDim])
+        : gated;
+    final out = layer.oProj.apply(outInput, config: config);
+    if (outInput != gated) {
+      outInput.close();
+    }
+    gated.close();
+    return out.reshape([1, seqLen, config.hiddenSize]);
+  }
+
+  /// Run a single decode step using the cache with a specific M-RoPE offset.
+  ///
+  /// For VLM decode: the M-RoPE position must be [offset] (which may differ
+  /// from the KV-cache length due to spatial image positions).
+  MlxArray _runWithCacheAtOffset(
+    MlxArray ids,
+    _ModelDecodeCache cache, {
+    required int offset,
+  }) {
+    final hidden = _embed(ids);
+    final seqLen = ids.shape[1];
+    // Build position IDs for this decode step: all 3 dims use [offset].
+    final flat = <int>[offset, offset, offset];
+    final posIds = MlxArray.fromInt32List(flat, shape: [3, 1, seqLen]);
+    try {
+      var h = hidden;
+      for (var index = 0; index < _layers.length; index++) {
+        final layer = _layers[index];
+        final norm1 = mx.fast.rmsNorm(
+          h,
+          weight: layer.inputNorm,
+          eps: config.rmsNormEps,
+        );
+
+        final MlxArray attn;
+        if (layer.fullAttention != null) {
+          attn = _fullAttentionWithPositionIds(
+            layer.fullAttention!,
+            norm1,
+            seqLen,
+            posIds,
+            cache: cache.layers[index] as _KvDecodeCache,
+          );
+        } else {
+          attn = _linearAttention(
+            layer.linearAttention!,
+            norm1,
+            seqLen,
+            cache: cache.layers[index] as _LinearDecodeCache,
+          );
+        }
+
+        final nextH = mx.add(h, attn);
+        attn.close();
+        norm1.close();
+        h.close();
+
+        final norm2 = mx.fast.rmsNorm(
+          nextH,
+          weight: layer.postNorm,
+          eps: config.rmsNormEps,
+        );
+        final mlp = _denseMlp(layer.denseMlp, norm2, seqLen);
+        norm2.close();
+        final next = mx.add(nextH, mlp);
+        mlp.close();
+        nextH.close();
+        h = next;
+      }
+
+      final norm = mx.fast.rmsNorm(
+        h,
+        weight: finalNorm,
+        eps: config.rmsNormEps,
+      );
+      h.close();
+      final output = _lmHeadFull(norm, seqLen);
+      norm.close();
+      return output;
+    } catch (_) {
+      hidden.close();
+      rethrow;
+    } finally {
+      posIds.close();
+    }
+  }
+
+  /// Expand a single image_token_id placeholder to the actual number of
+  /// image tokens needed.
+  List<int> _expandImageTokens(List<int> promptIds, int numImageTokens) {
+    final imageTokenId = config.imageTokenId!;
+    final result = <int>[];
+    var expanded = false;
+    for (final id in promptIds) {
+      if (id == imageTokenId && !expanded) {
+        for (var i = 0; i < numImageTokens; i++) {
+          result.add(imageTokenId);
+        }
+        expanded = true;
+      } else if (id == imageTokenId && expanded) {
+        // Skip additional image token placeholders
+        continue;
+      } else {
+        result.add(id);
+      }
+    }
+    return result;
   }
 
   void close() {
