@@ -63,11 +63,13 @@ class ParallelFileReader : public Reader {
         label_(std::move(file_path)) {}
 
   ~ParallelFileReader() override {
-    close(fd_);
+    if (fd_ >= 0) {
+      close(fd_);
+    }
   }
 
   bool is_open() const override {
-    return fd_ > 0;
+    return fd_ >= 0;
   }
 
   bool good() const override {
@@ -123,7 +125,7 @@ class FileWriter : public Writer {
   }
 
   ~FileWriter() override {
-    if (fd_ != 0) {
+    if (fd_ >= 0) {
       close(fd_);
     }
   }
@@ -167,7 +169,7 @@ class FileWriter : public Writer {
   }
 
  private:
-  int fd_{0};
+  int fd_{-1};
   std::string label_;
 };
 

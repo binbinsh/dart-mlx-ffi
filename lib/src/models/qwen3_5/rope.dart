@@ -94,6 +94,31 @@ extension on Qwen3_5Runner {
     return (q: qRot, k: kRot);
   }
 
+  /// Apply M-RoPE using explicit multimodal position IDs.
+  ///
+  /// [positionIds] has shape `[3, 1, seqLen]` — one row each for temporal,
+  /// height, and width dimensions.  Used for vision-language prompts where
+  /// image tokens have 2D spatial positions.
+  ({MlxArray q, MlxArray k}) applyMropeWithPositionIds(
+    MlxArray q,
+    MlxArray k,
+    MlxArray positionIds,
+    int seqLen,
+  ) {
+    final invFreq = _getRopeInvFreq();
+    final freqs = _interleavedMropeFreqs(invFreq, positionIds);
+    final emb = mx.concatenate([freqs, freqs], axis: -1);
+    freqs.close();
+    final cos = emb.cos().astype(q.dtype);
+    final sin = emb.sin().astype(q.dtype);
+    emb.close();
+    final qRot = _applyMultimodalRotary(q, cos, sin);
+    final kRot = _applyMultimodalRotary(k, cos, sin);
+    cos.close();
+    sin.close();
+    return (q: qRot, k: kRot);
+  }
+
   MlxArray _interleavedMropeFreqs(MlxArray invFreq, MlxArray positionIds) {
     final invExpanded = invFreq
         .reshape([1, 1, invFreq.shape[0], 1])

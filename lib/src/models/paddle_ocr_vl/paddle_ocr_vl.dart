@@ -3,6 +3,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 import '../shared/tensor_map.dart';

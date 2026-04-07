@@ -29,7 +29,12 @@ List<int> _generateGreedy(
   int maxNewTokens, {
   required int eosTokenId,
 }) {
-  final cache = _ModelCache.create(runner.config.numHiddenLayers);
+  final cache = _ModelCache.create(
+    numLayers: runner.config.numHiddenLayers,
+    numKvHeads: runner.config.numKeyValueHeads,
+    headDim: runner.config.headDim,
+    maxSeqLen: runner.config.maxKvCacheSeqLenForCurrentPlatform,
+  );
   try {
     final tokens = List<int>.from(promptIds);
 

@@ -90,54 +90,39 @@ extension PaddleOcrVlLayers on PaddleOcrVlRunner {
     final rope = _applyMrope(q, k, positionIds);
     q.close();
     k.close();
-    var qRope = rope.q;
-    var kRope = rope.k;
-    var vAttn = v;
+    final qRope = rope.q;
+    final kRope = rope.k;
 
     // Update KV cache
+    // When using the pre-allocated cache, updateAndFetch returns *new slice
+    // views* into the buffer that the caller must close after use.
+    var kAttn = kRope;
+    var vAttn = v;
+    final ownsKV = cache != null; // true → we must close kAttn/vAttn
     if (cache != null) {
       final fetched = cache.updateAndFetch(kRope, vAttn);
-      kRope = fetched.$1;
+      kAttn = fetched.$1;
       vAttn = fetched.$2;
+      // kRope and v are now closed by updateAndFetch — don't double-close.
     }
 
-    // GQA: repeat KV heads to match Q heads
-    final repeatKv = numHeads ~/ numKvHeads;
-    var kForAttn = kRope;
-    var vForAttn = vAttn;
-    if (repeatKv > 1) {
-      kForAttn = _repeatKvHeads(
-        kRope,
-        numHeads: numHeads,
-        numKvHeads: numKvHeads,
-        seqLen: kRope.shape[2],
-        headDim: headDim,
-      );
-      vForAttn = _repeatKvHeads(
-        vAttn,
-        numHeads: numHeads,
-        numKvHeads: numKvHeads,
-        seqLen: vAttn.shape[2],
-        headDim: headDim,
-      );
-      if (cache == null) {
-        kRope.close();
-        vAttn.close();
-      }
-    }
-
-    // Scaled dot-product attention
+    // Scaled dot-product attention. MLX supports grouped-query attention
+    // natively, so keep the 2 KV heads instead of manually repeating them to
+    // 16 heads.
     final attnOut = mx.fast.scaledDotProductAttention(
       qRope,
-      kForAttn,
-      vForAttn,
+      kAttn,
+      vAttn,
       scale: 1.0 / math.sqrt(headDim.toDouble()),
       maskMode: cache != null && seqLen == 1 ? '' : 'causal',
     );
     qRope.close();
-    if (repeatKv > 1 || cache == null) {
-      kForAttn.close();
-      vForAttn.close();
+    if (ownsKV) {
+      kAttn.close();
+      vAttn.close();
+    } else {
+      kRope.close();
+      v.close();
     }
 
     // Merge heads and project output
@@ -150,28 +135,6 @@ extension PaddleOcrVlLayers on PaddleOcrVlRunner {
     final out = attn.oProj.apply(merged);
     merged.close();
     return out.reshape([1, seqLen, config.hiddenSize]);
-  }
-
-  // -----------------------------------------------------------------------
-  // GQA head repetition
-  // -----------------------------------------------------------------------
-
-  MlxArray _repeatKvHeads(
-    MlxArray tensor, {
-    required int numHeads,
-    required int numKvHeads,
-    required int seqLen,
-    required int headDim,
-  }) {
-    final repeat = numHeads ~/ numKvHeads;
-    final expanded = tensor.expandDims(2);
-    try {
-      return expanded
-          .broadcastTo([1, numKvHeads, repeat, seqLen, headDim])
-          .reshape([1, numHeads, seqLen, headDim]);
-    } finally {
-      expanded.close();
-    }
   }
 
   // -----------------------------------------------------------------------
