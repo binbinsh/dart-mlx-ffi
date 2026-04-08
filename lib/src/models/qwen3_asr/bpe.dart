@@ -1,6 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 
+const Map<String, int> _fallbackAddedTokens = <String, int>{
+  '<|endoftext|>': 151643,
+  '<|im_start|>': 151644,
+  '<|im_end|>': 151645,
+  '<|audio_start|>': 151669,
+  '<|audio_end|>': 151670,
+  '<|audio_pad|>': 151676,
+  '<asr_text>': 151704,
+};
+
 /// Byte-level BPE tokenizer compatible with Qwen2/GPT2-style
 /// vocab.json + merges.txt format.
 ///
@@ -15,6 +25,7 @@ final class Qwen3AsrBpeTokenizer {
     required this.byteDecoder,
     required this.eosTokenId,
     required this.padTokenId,
+    required this.specialTokens,
   });
 
   /// Load from a bundle directory containing vocab.json and merges.txt.
@@ -34,6 +45,10 @@ final class Qwen3AsrBpeTokenizer {
     final encoder = <String, int>{};
     for (final entry in vocabJson.entries) {
       encoder[entry.key] = (entry.value as num).toInt();
+    }
+    _mergeAddedTokens(dirPath, encoder);
+    for (final entry in _fallbackAddedTokens.entries) {
+      encoder.putIfAbsent(entry.key, () => entry.value);
     }
 
     // Build reverse mapping.
@@ -64,6 +79,9 @@ final class Qwen3AsrBpeTokenizer {
     // Qwen2 special tokens.
     const eosTokenId = 151645; // <|endoftext|>
     const padTokenId = 151643; // <|endoftext|>
+    final specialTokens =
+        encoder.keys.where(_looksLikeSpecialToken).toList(growable: false)
+          ..sort((a, b) => b.length.compareTo(a.length));
 
     return Qwen3AsrBpeTokenizer._(
       encoder: encoder,
@@ -73,6 +91,7 @@ final class Qwen3AsrBpeTokenizer {
       byteDecoder: byteDecoder,
       eosTokenId: eosTokenId,
       padTokenId: padTokenId,
+      specialTokens: specialTokens,
     );
   }
 
@@ -83,6 +102,7 @@ final class Qwen3AsrBpeTokenizer {
   final Map<String, int> byteDecoder;
   final int eosTokenId;
   final int padTokenId;
+  final List<String> specialTokens;
 
   // BPE merge cache for previously seen tokens.
   final Map<String, List<String>> _bpeCache = {};
@@ -91,18 +111,41 @@ final class Qwen3AsrBpeTokenizer {
   List<int> encode(String text) {
     if (text.isEmpty) return const [];
     final tokens = <int>[];
-    // Qwen2 tokenizer processes the text as raw UTF-8 bytes mapped
-    // through the byte-to-unicode table, then applies BPE merges.
-    final bytes = utf8.encode(text);
-    final unicodeChars = bytes.map((b) => byteEncoder[b]!).join();
-    // Apply BPE to the full unicode-encoded string.
-    final bpeTokens = _bpe(unicodeChars);
-    for (final token in bpeTokens) {
-      final id = encoder[token];
-      if (id != null) {
-        tokens.add(id);
+    final plain = StringBuffer();
+    var index = 0;
+
+    void flushPlain() {
+      if (plain.isEmpty) {
+        return;
       }
+      final bytes = utf8.encode(plain.toString());
+      final unicodeChars = bytes.map((b) => byteEncoder[b]!).join();
+      final bpeTokens = _bpe(unicodeChars);
+      for (final token in bpeTokens) {
+        final id = encoder[token];
+        if (id != null) {
+          tokens.add(id);
+        }
+      }
+      plain.clear();
     }
+
+    while (index < text.length) {
+      final special = _matchSpecialToken(text, index);
+      if (special != null) {
+        flushPlain();
+        final id = encoder[special];
+        if (id != null) {
+          tokens.add(id);
+        }
+        index += special.length;
+        continue;
+      }
+      plain.write(text[index]);
+      index += 1;
+    }
+
+    flushPlain();
     return tokens;
   }
 
@@ -129,7 +172,16 @@ final class Qwen3AsrBpeTokenizer {
   }
 
   bool _isSpecialToken(String token) {
-    return token.startsWith('<|') && token.endsWith('|>');
+    return _looksLikeSpecialToken(token);
+  }
+
+  String? _matchSpecialToken(String text, int index) {
+    for (final token in specialTokens) {
+      if (text.startsWith(token, index)) {
+        return token;
+      }
+    }
+    return null;
   }
 
   /// Apply BPE merges to a unicode-encoded word.
@@ -204,5 +256,38 @@ final class Qwen3AsrBpeTokenizer {
       result[bs[i]] = String.fromCharCode(cs[i]);
     }
     return result;
+  }
+
+  static bool _looksLikeSpecialToken(String token) {
+    return token.length >= 3 &&
+        token.startsWith('<') &&
+        token.endsWith('>') &&
+        !token.contains(' ');
+  }
+
+  static void _mergeAddedTokens(String dirPath, Map<String, int> encoder) {
+    final file = File('$dirPath/tokenizer_config.json');
+    if (!file.existsSync()) {
+      return;
+    }
+    try {
+      final root = jsonDecode(file.readAsStringSync()) as Map<String, Object?>;
+      final added =
+          root['added_tokens_decoder'] as Map<String, Object?>? ?? const {};
+      for (final entry in added.entries) {
+        final id = int.tryParse(entry.key);
+        final payload = entry.value;
+        if (id == null || payload is! Map<String, Object?>) {
+          continue;
+        }
+        final token = payload['content']?.toString();
+        if (token == null || token.isEmpty) {
+          continue;
+        }
+        encoder.putIfAbsent(token, () => id);
+      }
+    } catch (_) {
+      // Fall back to the built-in required token map.
+    }
   }
 }
