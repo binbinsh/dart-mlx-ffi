@@ -1,0 +1,19 @@
+{
+  "audio_samples": 48000,
+  "audio_duration_s": 3.0,
+  "mel_shape": [
+    128,
+    300
+  ],
+  "encoder_shape": [
+    1,
+    39,
+    1024
+  ],
+  "text": "",
+  "raw_text": "language None<asr_text>",
+  "mel_time_ms": 4.207917023450136,
+  "encoder_time_ms": 21.24283299781382,
+  "gen_time_ms": 40.852417005226016,
+  "model_path": "mlx-community/Qwen3-ASR-0.6B-8bit"
+}

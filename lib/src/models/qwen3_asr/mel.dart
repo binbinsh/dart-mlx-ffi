@@ -75,11 +75,21 @@ final class Qwen3AsrMelFrontend {
       // Apply mel filterbank.
       mel = mx.matmul(_filterbankMlx(), power.T);
 
-      // Log mel spectrogram (Whisper convention).
-      logMel = _logMelWhisper(mel);
+      // Trim the last STFT frame to match the reference implementation.
+      // Reference: `log_spec = ... [:, :-1]` in moona3k/mlx-qwen3-asr.
+      final trimmedFrameCount = frameCount - 1;
+      MlxArray? melTrimmed;
+      try {
+        melTrimmed = mel.slice(start: [0, 0], stop: [nMels, trimmedFrameCount]);
+
+        // Log mel spectrogram (Whisper convention).
+        logMel = _logMelWhisper(melTrimmed);
+      } finally {
+        melTrimmed?.close();
+      }
 
       // Transpose to [1, nFrames, nMels].
-      final result = logMel.T.reshape([1, frameCount, nMels]);
+      final result = logMel.T.reshape([1, trimmedFrameCount, nMels]);
       return result;
     } finally {
       input.close();
@@ -195,8 +205,12 @@ Float32List _hannWindow(int n) {
   return out;
 }
 
-/// Whisper-style mel filterbank (HTK mel scale, slaney normalization).
+/// Whisper-style mel filterbank (Slaney mel scale, slaney normalization).
 /// Returns flat array of shape [nMels, bins].
+///
+/// Matches `librosa.filters.mel(sr=16000, n_fft=400, n_mels=128,
+/// htk=False, norm='slaney')` which is the filterbank used by the
+/// moona3k/mlx-qwen3-asr reference (stored in mel_filters.npz).
 Float32List _whisperMelFilterbank({
   required int sampleRate,
   required int nFft,
@@ -204,13 +218,13 @@ Float32List _whisperMelFilterbank({
 }) {
   final bins = (nFft ~/ 2) + 1;
   final out = Float32List(nMels * bins);
-  final melMin = _htkHzToMel(0.0);
-  final melMax = _htkHzToMel(sampleRate / 2.0);
+  final melMin = _slaneyHzToMel(0.0);
+  final melMax = _slaneyHzToMel(sampleRate / 2.0);
   final melPoints = List<double>.generate(
     nMels + 2,
     (i) => melMin + (melMax - melMin) * i / (nMels + 1),
   );
-  final hzPoints = melPoints.map(_htkMelToHz).toList(growable: false);
+  final hzPoints = melPoints.map(_slaneyMelToHz).toList(growable: false);
   final fftFreqs = List<double>.generate(
     bins,
     (i) => sampleRate * i / nFft,
@@ -232,7 +246,16 @@ Float32List _whisperMelFilterbank({
   return out;
 }
 
-/// HTK mel scale (used by Whisper).
-double _htkHzToMel(double hz) =>
-    2595.0 * math.log(1.0 + hz / 700.0) / math.ln10;
-double _htkMelToHz(double mel) => 700.0 * (math.pow(10.0, mel / 2595.0) - 1.0);
+/// Slaney (O'Shaughnessy) mel scale — used by librosa with htk=False.
+/// Linear below 1000 Hz, logarithmic above.
+double _slaneyHzToMel(double hz) {
+  if (hz < 1000.0) return 3.0 * hz / 200.0;
+  return 15.0 + 27.0 * math.log(hz / 1000.0) / _ln6_4;
+}
+
+double _slaneyMelToHz(double mel) {
+  if (mel < 15.0) return 200.0 * mel / 3.0;
+  return 1000.0 * math.exp((mel - 15.0) * _ln6_4 / 27.0);
+}
+
+final double _ln6_4 = math.log(6.4);

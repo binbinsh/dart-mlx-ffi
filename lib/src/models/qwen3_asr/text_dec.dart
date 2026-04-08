@@ -3,26 +3,29 @@ import 'dart:math' as math;
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 
 import 'config.dart';
+import 'mrope.dart';
 
 /// Qwen3 text decoder for Qwen3-ASR.
 ///
-/// Standard Qwen3 transformer: RMSNorm → GQA self-attention (with q/k norm)
-/// → RMSNorm → SwiGLU MLP. 28 layers, 16 heads, 8 KV heads, head_dim=128.
+/// Standard Qwen3 transformer: RMSNorm → GQA self-attention (with q/k norm
+/// and MRoPE) → RMSNorm → SwiGLU MLP. 28 layers, 16 heads, 8 KV heads,
+/// head_dim=128.
+///
+/// Uses InterleavedMRoPE with sections [24, 20, 20] instead of standard RoPE.
+/// Uses explicit additive causal masks instead of mx.fast.sdpa maskMode.
 ///
 /// Text decoder weights are quantized 8-bit affine (group_size=64).
 /// Audio encoder weights are dense (BF16) and handled separately.
-///
-/// Tensor prefix: "model.layers.{i}." for decoder layers,
-///               "model.embed_tokens." for embedding,
-///               "model.norm." for final norm.
 final class Qwen3AsrTextDecoder {
   Qwen3AsrTextDecoder._(
     this.config,
     this._embedWeight,
     this._embedScales,
     this._embedBiases,
+    this._lmHeadWeight,
     this._layers,
     this._finalNormW,
+    this._mrope,
   );
 
   factory Qwen3AsrTextDecoder.load(
@@ -35,13 +38,42 @@ final class Qwen3AsrTextDecoder {
       (i) => _DecoderLayer.load(tensors, '${p}layers.$i.', config),
     );
 
+    final mrope = AsrMRoPE(
+      headDim: config.textHeadDim,
+      base: config.textRopeTheta,
+      sections: config.textMropeSections,
+    );
+
+    final embedW = tensors['${p}embed_tokens.weight']!;
+    final embedS = tensors['${p}embed_tokens.scales'];
+    final embedB = tensors['${p}embed_tokens.biases'];
+
+    // In the reference implementation, lm_head.weight is tied to
+    // embed_tokens.weight *before* quantization. After quantization,
+    // embed_tokens becomes QuantizedEmbedding (uint32) but lm_head retains
+    // the original float weight. Since safetensors only stores the quantized
+    // embed_tokens, we reconstruct the dense lm_head weight by dequantizing.
+    // This matches: lm_head does dense matmul, not quantized matmul.
+    MlxArray? lmHeadWeight;
+    if (embedS != null) {
+      lmHeadWeight = mx.quant.dequantize(
+        MlxQuantizedMatrix(embedW, embedS, embedB),
+        groupSize: config.quantGroupSize,
+        bits: config.quantBits,
+        mode: config.quantMode,
+      );
+      lmHeadWeight.eval();
+    }
+
     return Qwen3AsrTextDecoder._(
       config,
-      tensors['${p}embed_tokens.weight']!,
-      tensors['${p}embed_tokens.scales'],
-      tensors['${p}embed_tokens.biases'],
+      embedW,
+      embedS,
+      embedB,
+      lmHeadWeight,
       layers,
       tensors['${p}norm.weight']!,
+      mrope,
     );
   }
 
@@ -49,18 +81,21 @@ final class Qwen3AsrTextDecoder {
   final MlxArray _embedWeight;
   final MlxArray? _embedScales;
   final MlxArray? _embedBiases;
+
+  /// Dense float32 lm_head weight, dequantized from embed_tokens.
+  /// Null only when embed_tokens is not quantized (dense model).
+  final MlxArray? _lmHeadWeight;
   final List<_DecoderLayer> _layers;
   final MlxArray _finalNormW;
-  MlxArray? _ropeInvFreq;
+  final AsrMRoPE _mrope;
 
   /// Embed token IDs → [1, seqLen, hiddenSize].
   MlxArray embed(List<int> tokenIds) {
     final ids = MlxArray.fromInt32List(tokenIds, shape: [tokenIds.length]);
     try {
       if (_embedScales != null) {
-        // Quantized embedding: gather rows → dequantize.
         final rowsW = _embedWeight.take(ids, axis: 0);
-        final rowsS = _embedScales!.take(ids, axis: 0);
+        final rowsS = _embedScales.take(ids, axis: 0);
         final rowsB = _embedBiases?.take(ids, axis: 0);
         try {
           final out = mx.quant.dequantize(
@@ -76,7 +111,6 @@ final class Qwen3AsrTextDecoder {
           rowsW.close();
         }
       }
-      // Dense embedding.
       final out = _embedWeight.take(ids, axis: 0);
       return out.reshape([1, tokenIds.length, config.textHiddenSize]);
     } finally {
@@ -84,36 +118,87 @@ final class Qwen3AsrTextDecoder {
     }
   }
 
-  /// Run the decoder stack on hidden states.
-  /// Input: [1, seqLen, hiddenSize] (may be mixed audio+text embeddings).
-  /// Output: [1, seqLen, hiddenSize] after final RMSNorm.
-  MlxArray forward(MlxArray hidden, {AsrKvCache? cache}) {
+  /// Run the decoder stack on hidden states with MRoPE position IDs.
+  ///
+  /// [hidden]: [1, seqLen, hiddenSize].
+  /// [positionIds]: [1, 3, seqLen] MRoPE position IDs.
+  /// [cache]: optional KV cache for autoregressive generation.
+  ///
+  /// Returns [1, seqLen, hiddenSize] after final RMSNorm.
+  MlxArray forward(
+    MlxArray hidden, {
+    required MlxArray positionIds,
+    AsrKvCache? cache,
+  }) {
     final seqLen = hidden.shape[1];
-    var h = hidden;
-    for (var i = 0; i < _layers.length; i++) {
-      final next = _decoderLayer(
-        _layers[i],
+
+    // Compute MRoPE cos/sin from position IDs.
+    final rope = _mrope.compute(positionIds, hidden.dtype);
+    try {
+      // Build causal mask.
+      MlxArray? mask;
+      if (cache != null && cache.offset > 0) {
+        // Incremental decode with existing cache.
+        if (seqLen == 1) {
+          // Single-token decode: no mask needed (attends to all cached KV).
+          mask = null;
+        } else {
+          // Multi-token decode after prefix: causal among new tokens,
+          // full visibility to cached prefix.
+          mask = _createCausalMaskWithPrefix(
+            seqLen: seqLen,
+            prefixLen: cache.offset,
+            dtype: hidden.dtype,
+          );
+        }
+      } else {
+        // First prefill: standard causal mask.
+        mask = seqLen > 1 ? _createCausalMask(seqLen, hidden.dtype) : null;
+      }
+
+      var h = hidden;
+      for (var i = 0; i < _layers.length; i++) {
+        final next = _decoderLayer(
+          _layers[i],
+          h,
+          seqLen,
+          cos: rope.cos,
+          sin: rope.sin,
+          mask: mask,
+          cache: cache,
+          layerIdx: i,
+        );
+        if (h != hidden) h.close();
+        h = next;
+      }
+
+      // Update KV cache offset after all layers have processed.
+      if (cache != null) {
+        cache._offset += seqLen;
+      }
+
+      mask?.close();
+      final normed = mx.fast.rmsNorm(
         h,
-        seqLen,
-        cache: cache?.layers[i],
+        weight: _finalNormW,
+        eps: config.textRmsNormEps,
       );
       if (h != hidden) h.close();
-      h = next;
+      return normed;
+    } finally {
+      rope.cos.close();
+      rope.sin.close();
     }
-    final normed = mx.fast.rmsNorm(
-      h,
-      weight: _finalNormW,
-      eps: config.textRmsNormEps,
-    );
-    if (h != hidden) h.close();
-    return normed;
   }
 
   /// Compute logits from decoder output.
   /// Input: [1, seqLen, hiddenSize] (typically just last token).
   /// Output: [1, vocabSize] logits.
+  ///
+  /// Uses the dequantized dense lm_head weight (matching the reference
+  /// implementation where lm_head is a plain nn.Linear with float weight
+  /// tied to embed_tokens *before* quantization).
   MlxArray lmHead(MlxArray hidden) {
-    // tie_word_embeddings: reuse embed weight as LM head.
     final lastH = hidden.shape[1] > 1
         ? hidden.slice(
             start: [0, hidden.shape[1] - 1, 0],
@@ -123,32 +208,30 @@ final class Qwen3AsrTextDecoder {
     final h2d = lastH.reshape([1, config.textHiddenSize]);
     if (lastH != hidden) lastH.close();
     try {
-      if (_embedScales != null) {
-        final result = mx.quant.matmul(
-          h2d,
-          MlxQuantizedMatrix(_embedWeight, _embedScales!, _embedBiases),
-          transpose: true,
-          groupSize: config.quantGroupSize,
-          bits: config.quantBits,
-          mode: config.quantMode,
-        );
-        return result;
+      final w = _lmHeadWeight ?? _embedWeight;
+      final wT = w.transpose();
+      try {
+        return mx.matmul(h2d, wT);
+      } finally {
+        wT.close();
       }
-      return mx.matmul(h2d, _embedWeight.transpose());
     } finally {
       h2d.close();
     }
   }
 
   /// Create a new KV cache for autoregressive decoding.
-  AsrKvCache createCache() =>
-      AsrKvCache(List.generate(config.textNumLayers, (_) => AsrKvLayerCache()));
+  AsrKvCache createCache() => AsrKvCache(config.textNumLayers);
 
   MlxArray _decoderLayer(
     _DecoderLayer layer,
     MlxArray input,
     int seqLen, {
-    AsrKvLayerCache? cache,
+    required MlxArray cos,
+    required MlxArray sin,
+    MlxArray? mask,
+    AsrKvCache? cache,
+    required int layerIdx,
   }) {
     // Pre-norm self-attention.
     final norm1 = mx.fast.rmsNorm(
@@ -156,7 +239,16 @@ final class Qwen3AsrTextDecoder {
       weight: layer.inputNormW,
       eps: config.textRmsNormEps,
     );
-    final attn = _selfAttention(layer, norm1, seqLen, cache: cache);
+    final attn = _selfAttention(
+      layer,
+      norm1,
+      seqLen,
+      cos: cos,
+      sin: sin,
+      mask: mask,
+      cache: cache,
+      layerIdx: layerIdx,
+    );
     norm1.close();
     final residual1 = mx.add(input, attn);
     attn.close();
@@ -179,7 +271,11 @@ final class Qwen3AsrTextDecoder {
     _DecoderLayer layer,
     MlxArray input,
     int seqLen, {
-    AsrKvLayerCache? cache,
+    required MlxArray cos,
+    required MlxArray sin,
+    MlxArray? mask,
+    AsrKvCache? cache,
+    required int layerIdx,
   }) {
     final nH = config.textNumHeads;
     final nKv = config.textNumKvHeads;
@@ -190,51 +286,47 @@ final class Qwen3AsrTextDecoder {
     final k = _quantLinear(input, layer.kW, layer.kS, layer.kB);
     final v = _quantLinear(input, layer.vW, layer.vS, layer.vB);
 
-    // Reshape to [1, seqLen, nHeads, headDim] → [1, nHeads, seqLen, headDim].
-    final q4 = q.reshape([1, seqLen, nH, hd]).transposeAxes([0, 2, 1, 3]);
-    final k4 = k.reshape([1, seqLen, nKv, hd]).transposeAxes([0, 2, 1, 3]);
-    final v4 = v.reshape([1, seqLen, nKv, hd]).transposeAxes([0, 2, 1, 3]);
+    // Reshape to [1, seqLen, nHeads, headDim].
+    final q4r = q.reshape([1, seqLen, nH, hd]);
+    final k4r = k.reshape([1, seqLen, nKv, hd]);
+    final v4r = v.reshape([1, seqLen, nKv, hd]);
     q.close();
     k.close();
     v.close();
 
     // Q/K RMSNorm (Qwen3 has q_norm and k_norm per layer).
     final qNorm = mx.fast.rmsNorm(
-      q4,
+      q4r,
       weight: layer.qNormW,
       eps: config.textRmsNormEps,
     );
     final kNorm = mx.fast.rmsNorm(
-      k4,
+      k4r,
       weight: layer.kNormW,
       eps: config.textRmsNormEps,
     );
-    q4.close();
-    k4.close();
+    q4r.close();
+    k4r.close();
 
-    // Apply RoPE.
-    final offset = cache?.offset ?? 0;
-    final qRope = mx.fast.rope(
-      qNorm,
-      dims: hd,
-      traditional: false,
-      base: config.textRopeTheta,
-      offset: offset,
-    );
-    var kRope = mx.fast.rope(
-      kNorm,
-      dims: hd,
-      traditional: false,
-      base: config.textRopeTheta,
-      offset: offset,
-    );
+    // Transpose to [1, nHeads, seqLen, headDim] for attention.
+    final qT = qNorm.transposeAxes([0, 2, 1, 3]);
+    final kT = kNorm.transposeAxes([0, 2, 1, 3]);
+    final vT = v4r.transposeAxes([0, 2, 1, 3]);
     qNorm.close();
     kNorm.close();
+    v4r.close();
+
+    // Apply MRoPE.
+    final rotated = applyRotaryPosEmb(qT, kT, cos, sin);
+    final qRope = rotated.q;
+    var kRope = rotated.k;
+    qT.close();
+    kT.close();
 
     // KV cache update.
-    var vAttn = v4;
+    var vAttn = vT;
     if (cache != null) {
-      final updated = cache.updateAndFetch(kRope, vAttn);
+      final updated = cache._updateLayer(kRope, vAttn, layerIdx);
       kRope = updated.$1;
       vAttn = updated.$2;
     }
@@ -248,19 +340,29 @@ final class Qwen3AsrTextDecoder {
       vSdpa = _repeatKvHeads(vAttn, nH, nKv, vAttn.shape[2], hd);
       if (cache == null) {
         kRope.close();
-        v4.close();
+        vT.close();
       }
     }
 
-    // Scaled dot-product attention.
-    // Use causal mask for prefill (seqLen > 1), no mask for decode step.
-    final attn = mx.fast.scaledDotProductAttention(
-      qRope,
-      kSdpa,
-      vSdpa,
-      scale: 1.0 / math.sqrt(hd),
-      maskMode: cache != null && seqLen == 1 ? '' : 'causal',
-    );
+    // Scaled dot-product attention with explicit additive mask.
+    final scale = 1.0 / math.sqrt(hd);
+    MlxArray attn;
+    if (mask != null) {
+      attn = mx.fast.scaledDotProductAttention(
+        qRope,
+        kSdpa,
+        vSdpa,
+        scale: scale,
+        mask: mask,
+      );
+    } else {
+      attn = mx.fast.scaledDotProductAttention(
+        qRope,
+        kSdpa,
+        vSdpa,
+        scale: scale,
+      );
+    }
     qRope.close();
     if (repeat > 1 || cache == null) {
       kSdpa.close();
@@ -282,7 +384,6 @@ final class Qwen3AsrTextDecoder {
   MlxArray _swiGluMlp(_DecoderLayer layer, MlxArray input) {
     final gate = _quantLinear(input, layer.gateW, layer.gateS, layer.gateB);
     final up = _quantLinear(input, layer.upW, layer.upS, layer.upB);
-    // SwiGLU: silu(gate) * up.
     final sig = gate.sigmoid();
     final activated = gate * sig;
     sig.close();
@@ -295,7 +396,6 @@ final class Qwen3AsrTextDecoder {
     return down.reshape([1, input.shape[1], config.textHiddenSize]);
   }
 
-  /// Quantized linear: input @ weight^T using quantized matmul.
   MlxArray _quantLinear(
     MlxArray input,
     MlxArray weight,
@@ -334,37 +434,43 @@ final class Qwen3AsrTextDecoder {
   }
 
   void close() {
-    _ropeInvFreq?.close();
-    _ropeInvFreq = null;
+    _lmHeadWeight?.close();
+    _mrope.close();
   }
 }
 
 /// KV cache for autoregressive decoding.
+///
+/// Offset is updated globally after all layers process a step (matching
+/// the reference implementation where offset updates on the last layer).
 final class AsrKvCache {
-  AsrKvCache(this.layers);
+  AsrKvCache(int numLayers)
+    : _keys = List<MlxArray?>.filled(numLayers, null),
+      _values = List<MlxArray?>.filled(numLayers, null),
+      _offset = 0;
 
-  final List<AsrKvLayerCache> layers;
+  final List<MlxArray?> _keys;
+  final List<MlxArray?> _values;
+  int _offset;
 
-  void close() {
-    for (final layer in layers) {
-      layer.close();
-    }
-  }
-}
+  /// Current cached sequence length.
+  int get offset => _offset;
 
-/// Per-layer KV cache.
-final class AsrKvLayerCache {
-  MlxArray? keys;
-  MlxArray? values;
-  int offset = 0;
+  /// Number of decoder layers.
+  int get numLayers => _keys.length;
 
-  (MlxArray, MlxArray) updateAndFetch(MlxArray nextK, MlxArray nextV) {
-    final curK = keys;
-    final curV = values;
+  /// Update a single layer's KV cache. Does NOT update offset.
+  /// Offset is updated by [Qwen3AsrTextDecoder.forward] after all layers.
+  (MlxArray, MlxArray) _updateLayer(
+    MlxArray nextK,
+    MlxArray nextV,
+    int layerIdx,
+  ) {
+    final curK = _keys[layerIdx];
+    final curV = _values[layerIdx];
     if (curK == null || curV == null) {
-      keys = nextK;
-      values = nextV;
-      offset = nextK.shape[2];
+      _keys[layerIdx] = nextK;
+      _values[layerIdx] = nextV;
       return (nextK, nextV);
     }
     final mergedK = mx.concatenate([curK, nextK], axis: 2);
@@ -373,19 +479,81 @@ final class AsrKvLayerCache {
     curV.close();
     nextK.close();
     nextV.close();
-    keys = mergedK;
-    values = mergedV;
-    offset = mergedK.shape[2];
+    _keys[layerIdx] = mergedK;
+    _values[layerIdx] = mergedV;
     return (mergedK, mergedV);
   }
 
-  void close() {
-    keys?.close();
-    values?.close();
-    keys = null;
-    values = null;
-    offset = 0;
+  /// Trim recently appended tokens from all layer caches.
+  void trim(int numTokens) {
+    if (numTokens <= 0 || numTokens > _offset) return;
+    final newLen = _offset - numTokens;
+    for (var i = 0; i < _keys.length; i++) {
+      final k = _keys[i];
+      final v = _values[i];
+      if (k != null) {
+        _keys[i] = k.slice(
+          start: [0, 0, 0, 0],
+          stop: [k.shape[0], k.shape[1], newLen, k.shape[3]],
+        );
+        k.close();
+      }
+      if (v != null) {
+        _values[i] = v.slice(
+          start: [0, 0, 0, 0],
+          stop: [v.shape[0], v.shape[1], newLen, v.shape[3]],
+        );
+        v.close();
+      }
+    }
+    _offset = newLen;
   }
+
+  void close() {
+    for (var i = 0; i < _keys.length; i++) {
+      _keys[i]?.close();
+      _values[i]?.close();
+      _keys[i] = null;
+      _values[i] = null;
+    }
+    _offset = 0;
+  }
+}
+
+// ── Causal mask utilities ──
+
+/// Standard causal mask: (1, 1, L, L) with -1e9 above diagonal, 0 elsewhere.
+MlxArray _createCausalMask(int seqLen, MlxDType dtype) {
+  final mask = MlxArray.full([seqLen, seqLen], -1e9, dtype: dtype);
+  final causal = mask.triu(k: 1); // zero on/below diagonal, -1e9 above
+  mask.close();
+  final expanded = causal.reshape([1, 1, seqLen, seqLen]);
+  causal.close();
+  return expanded;
+}
+
+/// Causal mask for appending tokens after a cached prefix.
+///
+/// The prefix (already in cache) is fully visible to all new queries.
+/// Causality only among the newly appended tokens.
+/// Returns (1, 1, seqLen, prefixLen + seqLen).
+MlxArray _createCausalMaskWithPrefix({
+  required int seqLen,
+  required int prefixLen,
+  required MlxDType dtype,
+}) {
+  // Left block: prefix keys always visible.
+  final left = MlxArray.zeros([seqLen, prefixLen], dtype: dtype);
+  // Right block: causal among new tokens.
+  final right = MlxArray.full([seqLen, seqLen], -1e9, dtype: dtype);
+  final rightCausal = right.triu(k: 1);
+  right.close();
+  final mask = mx.concatenate([left, rightCausal], axis: 1);
+  left.close();
+  rightCausal.close();
+  final expanded = mask.reshape([1, 1, seqLen, prefixLen + seqLen]);
+  mask.close();
+  return expanded;
 }
 
 // ── Decoder layer weight holder ──

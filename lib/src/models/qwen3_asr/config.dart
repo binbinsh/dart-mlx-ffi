@@ -11,6 +11,9 @@ final class Qwen3AsrConfig {
     required this.audioEncoderMelBins,
     required this.audioDownsampleHidden,
     required this.audioOutputDim,
+    required this.audioNWindow,
+    required this.audioNWindowInfer,
+    required this.audioMaxSourcePositions,
     required this.textHiddenSize,
     required this.textIntermediateSize,
     required this.textNumLayers,
@@ -39,8 +42,15 @@ final class Qwen3AsrConfig {
     final root =
         jsonDecode(File('$path/config.json').readAsStringSync())
             as Map<String, Object?>;
-    final audio = root['audio_config'] as Map<String, Object?>? ?? {};
-    final text = root['text_config'] as Map<String, Object?>? ?? {};
+    final thinker = root['thinker_config'] as Map<String, Object?>? ?? {};
+    final audio =
+        thinker['audio_config'] as Map<String, Object?>? ??
+        root['audio_config'] as Map<String, Object?>? ??
+        {};
+    final text =
+        thinker['text_config'] as Map<String, Object?>? ??
+        root['text_config'] as Map<String, Object?>? ??
+        {};
     final quant = root['quantization'] as Map<String, Object?>? ?? {};
 
     // Audio encoder params.
@@ -52,6 +62,10 @@ final class Qwen3AsrConfig {
     final downsampleHidden =
         (audio['downsample_hidden'] as num?)?.toInt() ?? 480;
     final outputDim = (audio['output_dim'] as num?)?.toInt() ?? 1024;
+    final nWindow = (audio['n_window'] as num?)?.toInt() ?? 50;
+    final nWindowInfer = (audio['n_window_infer'] as num?)?.toInt() ?? 800;
+    final maxSourcePositions =
+        (audio['max_source_positions'] as num?)?.toInt() ?? 1500;
 
     // Text decoder params.
     final hiddenSize = (text['hidden_size'] as num?)?.toInt() ?? 1024;
@@ -86,6 +100,9 @@ final class Qwen3AsrConfig {
       audioEncoderMelBins: melBins,
       audioDownsampleHidden: downsampleHidden,
       audioOutputDim: outputDim,
+      audioNWindow: nWindow,
+      audioNWindowInfer: nWindowInfer,
+      audioMaxSourcePositions: maxSourcePositions,
       textHiddenSize: hiddenSize,
       textIntermediateSize: intermediateSize,
       textNumLayers: textLayers,
@@ -100,10 +117,12 @@ final class Qwen3AsrConfig {
       quantGroupSize: groupSize,
       quantBits: bits,
       quantMode: mode,
-      audioPadTokenId: 151676,
-      audioStartTokenId: 151669,
-      audioEndTokenId: 151670,
-      asrTextTokenId: 151704,
+      audioPadTokenId: (thinker['audio_token_id'] as num?)?.toInt() ?? 151676,
+      audioStartTokenId:
+          (thinker['audio_start_token_id'] as num?)?.toInt() ?? 151669,
+      audioEndTokenId:
+          (thinker['audio_end_token_id'] as num?)?.toInt() ?? 151670,
+      asrTextTokenId: (thinker['asr_text_token_id'] as num?)?.toInt() ?? 151704,
       imStartTokenId: 151644,
       imEndTokenId: 151645,
       newlineTokenId: 198,
@@ -119,6 +138,9 @@ final class Qwen3AsrConfig {
   final int audioEncoderMelBins; // 128
   final int audioDownsampleHidden; // 480
   final int audioOutputDim; // 1024
+  final int audioNWindow; // 50
+  final int audioNWindowInfer; // 800
+  final int audioMaxSourcePositions; // 1500
 
   // Text decoder.
   final int textHiddenSize; // 1024
@@ -150,6 +172,9 @@ final class Qwen3AsrConfig {
 
   /// Audio encoder head dimension.
   int get audioHeadDim => audioEncoderDModel ~/ audioEncoderHeads;
+
+  /// Mel frames per encoding chunk (n_window * 2).
+  int get audioChunkSize => audioNWindow * 2;
 
   /// GQA repeat factor for the text decoder.
   int get textGqaRepeat => textNumHeads ~/ textNumKvHeads;
