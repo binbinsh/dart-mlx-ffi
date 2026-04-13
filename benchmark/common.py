@@ -53,16 +53,17 @@ def slug(text: str) -> str:
 
 
 def run_script_capture(cmd: list[str], *, env: dict[str, str]) -> str:
-    temp_dir = Path(tempfile.mkdtemp())
-    stdout_path = temp_dir / "runner.stdout"
-    subprocess.run(
-        ["script", "-q", str(stdout_path), *cmd],
+    completed = subprocess.run(
+        cmd,
         cwd=ROOT,
         env=env,
         check=True,
         text=True,
+        capture_output=True,
     )
-    return stdout_path.read_text(encoding="utf-8")
+    if completed.stderr:
+        return completed.stdout + completed.stderr
+    return completed.stdout
 
 
 def parse_last_json(raw: str) -> dict[str, object]:

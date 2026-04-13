@@ -16,7 +16,7 @@ compile a local MLX dynamic library for the current Apple target.
 - Canonical MLX snapshot preparation through the repository's Unsloth MLX
   wrapper
 - Verified parity against Python MLX on deterministic operator suites
-- Publish-time parity coverage for text, VLM, TTS, and ASR checkpoints
+- Publish-time parity coverage for text, VLM, and TTS checkpoints
 
 ## Platform
 
@@ -138,10 +138,12 @@ There are three main model-workflow areas in this repository:
 Current stable Dart model implementations under [`lib/src/models/`](lib/src/models/)
 include:
 
-- `parakeet_tdt`
+- `paddle_ocr_vl`
 - `qwen2_5`
 - `qwen3_5`
+- `qwen3_asr`
 - `kitten_tts`
+- `silero_vad`
 - `shared` helpers
 
 Current publish-time validation under [`benchmark/`](benchmark/) is organized
@@ -155,13 +157,13 @@ Recommended prepublish text coverage:
 - `mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit`
 - `mlx-community/GLM-4.7-Flash-4bit`
 
-Recommended prepublish multimodal / speech coverage:
+Recommended prepublish multimodal / audio coverage:
 
 - `mlx-community/MiniCPM-o-4_5-4bit`
 - `mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit`
+- `mlx-community/PaddleOCR-VL-1.5-8bit`
 - `mlx-community/Ming-omni-tts-0.5B-4bit`
 - `mlx-community/kitten-tts-nano-0.8-6bit`
-- `mlx-community/parakeet-tdt-0.6b-v3`
 
 ## Validation
 
@@ -171,7 +173,7 @@ APIs, with `0` failures on the benchmark machine.
 
 ### Benchmark Environment
 
-- Date: `2026-04-04`
+- Date: `2026-04-14`
 - Machine: `MacBook Pro (Mac16,5)`
 - Chip: `Apple M4 Max`
 - CPU cores: `16` (`12` performance + `4` efficiency)
@@ -185,27 +187,27 @@ APIs, with `0` failures on the benchmark machine.
 ### Latest Runtime Snapshot
 
 Latest measured runtime snapshot on the benchmark machine, refreshed on
-`2026-04-04`:
+`2026-04-14`:
 
 Text models:
 
 | Model | Python MLX ms | Dart MLX ms | Max abs diff |
 | --- | ---: | ---: | ---: |
-| `gemma-4-E2B-it-UD-MLX-4bit` | `30.47` | `34.30` | `0` |
-| `Qwen3.5-27B-4bit-DWQ` | `172.81` | `170.25` | `0` |
-| `translategemma-27b-it-4bit` | `166.52` | `170.46` | `0` |
-| `NVIDIA-Nemotron-3-Nano-30B-A3B-4bit` | `36.62` | `35.67` | `0` |
-| `GLM-4.7-Flash-4bit` | `46.61` | `45.81` | `0` |
+| `gemma-4-E2B-it-UD-MLX-4bit` | `30.28` | `31.02` | `0` |
+| `Qwen3.5-27B-4bit-DWQ` | `206.76` | `188.46` | `0` |
+| `translategemma-27b-it-4bit` | `206.58` | `181.81` | `0` |
+| `NVIDIA-Nemotron-3-Nano-30B-A3B-4bit` | `39.73` | `38.01` | `0` |
+| `GLM-4.7-Flash-4bit` | `48.91` | `51.36` | `0` |
 
 Non-text models:
 
 | Model | Kind | Python MLX ms | Dart MLX ms | Max abs diff | Notes |
 | --- | --- | ---: | ---: | ---: | --- |
-| `MiniCPM-o-4_5-4bit` | `vlm` | `130.82` | `131.58` | `0` | synthetic image + prompt |
-| `Gemma-SEA-LION-v4-4B-VL-mlx-3bit` | `vlm` | `718.60` | `756.92` | `0` | synthetic image + prompt |
-| `Ming-omni-tts-0.5B-4bit` | `tts` | `4.59` | `4.85` | `0` | deterministic `forward_with_cfg` |
-| `kitten-tts-nano-0.8-6bit` | `tts` | `66.25` | `69.20` | `1.19e-07` | full waveform |
-| `parakeet-tdt-0.6b-v3` | `asr` | `30.95` | `29.72` | `5.72e-06` | transcript matched |
+| `MiniCPM-o-4_5-4bit` | `vlm` | `216.37` | `171.69` | `0` | synthetic image + prompt |
+| `Gemma-SEA-LION-v4-4B-VL-mlx-3bit` | `vlm` | `1151.80` | `1187.94` | `0` | synthetic image + prompt |
+| `PaddleOCR-VL-1.5-8bit` | `vlm` | `85.62` | `120.62` | `0.163` | synthetic OCR image + prompt, direct runner `warmup=1/iters=1` |
+| `Ming-omni-tts-0.5B-4bit` | `tts` | `4.98` | `4.78` | `0` | deterministic `forward_with_cfg` |
+| `kitten-tts-nano-0.8-6bit` | `tts` | `70.69` | `75.57` | `1.19e-07` | full waveform |
 
 ### What `Max abs diff` Means
 
@@ -217,8 +219,6 @@ Examples:
 - `0` means the compared tensor matched exactly at the chosen dtype
 - `7.62939453125e-06` means the worst element differed by about `0.00000763`
 - for text and VLM rows, the compared tensor is the final-token `logits[:16]`
-- for `parakeet-tdt-0.6b-v3`, the compared tensor is the first-step
-  `token_logits[:16] + duration_logits`
 - for `Ming-omni-tts-0.5B-4bit`, the compared tensor is the deterministic
   `forward_with_cfg` subgraph output
 - for `kitten-tts-nano-0.8-6bit`, the compared tensor is the full waveform
@@ -231,6 +231,10 @@ Generate the publish-time report with `warmup=3` and `iters=10`:
 uv sync
 HF_HUB_DISABLE_XET=1 uv run --no-project --with mlx-lm --with pillow --with mlx-vlm --with mlx-audio --with parakeet-mlx python benchmark/publish_report.py
 ```
+
+`PaddleOCR-VL-1.5-8bit` is the one exception in the current matrix: its
+publish-time benchmark uses the direct Dart runner path and internally clamps
+to `warmup=1` / `iters=1` so the release report can complete reliably.
 
 The aggregated results are written to:
 

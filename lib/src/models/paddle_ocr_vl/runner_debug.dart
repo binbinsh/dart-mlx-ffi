@@ -1,6 +1,39 @@
 part of 'paddle_ocr_vl.dart';
 
 extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
+  MlxArray debugPrefillLogitsFromImage(
+    List<int> promptIds,
+    MlxArray imagePixels,
+  ) {
+    final imageEncoding = _encodeImage(imagePixels);
+    final imageHidden = imageEncoding.hidden;
+    final numImageTokens = imageHidden.shape[0];
+    final imageTokenCountInPrompt = promptIds
+        .where((id) => id == config.imageTokenId)
+        .length;
+    final expandedIds = imageTokenCountInPrompt == numImageTokens
+        ? List<int>.from(promptIds)
+        : _expandImageTokens(promptIds, numImageTokens);
+    final positionInfo = _multimodalPositionIds(
+      expandedIds,
+      imageEncoding.gridHeight,
+      imageEncoding.gridWidth,
+    );
+    final posIds = positionInfo.ids;
+    final embeddings = _buildMultimodalEmbedding(expandedIds, imageHidden);
+    imageHidden.close();
+
+    final cache = _ModelCache.create(config: config);
+    try {
+      return _prefillFromEmbeddingWithCache(embeddings, posIds, cache)
+          .reshape([1, config.vocabSize]);
+    } finally {
+      embeddings.close();
+      posIds.close();
+      cache.close();
+    }
+  }
+
   List<Map<String, Object?>> debugTokenMarginsFromImage(
     List<int> promptIds,
     MlxArray imagePixels, {

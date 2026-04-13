@@ -13,7 +13,9 @@ try:
         benchmark_dart_export,
         cleanup_mlx,
         compare_lists,
+        parse_last_json,
         resolve_model_path,
+        run_script_capture,
         slug,
     )
     from .parakeet_tdt_sweep import asr_bench
@@ -30,7 +32,9 @@ except ImportError:
         benchmark_dart_export,
         cleanup_mlx,
         compare_lists,
+        parse_last_json,
         resolve_model_path,
+        run_script_capture,
         slug,
     )
     from parakeet_tdt_sweep import asr_bench
@@ -303,6 +307,63 @@ def vlm_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, o
     }
 
 
+def paddle_ocr_vl_bench(
+    model_id: str,
+    *,
+    warmup: int = 3,
+    iters: int = 10,
+) -> dict[str, object]:
+    # PaddleOCR-VL currently benchmarks through the Dart runner debug path
+    # instead of an exported shapeless function, so keep the iteration count
+    # smaller than the generic VLM matrix to avoid very long release runs.
+    local_warmup = min(warmup, 1)
+    local_iters = 1
+    export_dir = ROOT / "benchmark" / "out" / "publish" / slug(model_id)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    python_cmd = [
+        "uv",
+        "run",
+        "--no-project",
+        "--with",
+        "mlx-vlm",
+        "--with",
+        "pillow",
+        "python",
+        "benchmark/paddle_ocr_vl/python_ref.py",
+        f"--model-id={model_id}",
+        f"--out-dir={export_dir}",
+        f"--warmup={local_warmup}",
+        f"--iters={local_iters}",
+    ]
+    python_payload = parse_last_json(run_script_capture(python_cmd, env=dict(os.environ)))
+    dart_cmd = [
+        "dart",
+        "run",
+        "benchmark/paddle_ocr_vl/dart_bench.dart",
+        f"--snapshot={python_payload['snapshot_path']}",
+        f"--input-ids={python_payload['input_ids_path']}",
+        f"--image={python_payload['image_path']}",
+        f"--warmup={local_warmup}",
+        f"--iters={local_iters}",
+    ]
+    dart_payload = parse_last_json(run_script_capture(dart_cmd, env=dict(os.environ)))
+    max_diff, mean_diff = compare_lists(
+        [float(v) for v in python_payload["values"]],
+        [float(v) for v in dart_payload["values"]],
+    )
+    cleanup_mlx(mx)
+    return {
+        "model_id": model_id,
+        "kind": "vlm",
+        "input_desc": "1 synthetic OCR image + text prompt",
+        "comparison": "last-token logits[:16]",
+        "python_ms": float(python_payload["python_ms"]),
+        "dart_ms": float(dart_payload["per_iter_ms"]),
+        "max_abs_diff": max_diff,
+        "mean_abs_diff": mean_diff,
+    }
+
+
 def ming_tts_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, object]:
     export_dir = ROOT / "benchmark" / "out" / "publish" / slug(model_id)
     export_path, input_path, input_names = export_ming_tts_model(model_id, export_dir)
@@ -404,6 +465,8 @@ def main() -> None:
             report.append(kitten_bench())
         elif runner == "unsloth_mlx":
             report.append(unsloth_mlx_text_bench(mid))
+        elif runner == "paddle_ocr_vl":
+            report.append(paddle_ocr_vl_bench(mid))
         elif kind == "text":
             report.append(text_bench(mid))
         elif kind == "vlm":
