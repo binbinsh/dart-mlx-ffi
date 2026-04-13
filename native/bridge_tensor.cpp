@@ -1,4 +1,8 @@
 #include "bridge.h"
+#include "mlx/backend/common/slicing.h"
+#include "mlx/backend/gpu/copy.h"
+#include "mlx/c/private/array.h"
+#include "mlx/c/private/stream.h"
 
 extern "C" int dart_mlx_eval_many(DartMlxArrayHandle** arrays, size_t len) {
   auto values = mlx_vector_array_new();
@@ -529,6 +533,45 @@ extern "C" DartMlxArrayHandle* dart_mlx_slice_update_dynamic(
     return nullptr;
   }
   return wrap_array(out);
+}
+
+extern "C" int dart_mlx_slice_update_inplace(
+    DartMlxArrayHandle* target,
+    const DartMlxArrayHandle* update,
+    const int* start,
+    size_t start_len,
+    const int* strides,
+    size_t strides_len) {
+  try {
+    if (start_len != strides_len) {
+      mlx_error("slice_update_inplace requires start and strides to have matching lengths");
+      return 1;
+    }
+    auto& dst = mlx_array_get_(target->value);
+    auto& src = mlx_array_get_(update->value);
+    if (src.size() == 0) {
+      return 0;
+    }
+    mlx::core::Shape start_indices(start, start + start_len);
+    mlx::core::Shape stride_values(strides, strides + strides_len);
+    auto [data_offset, out_strides] =
+        mlx::core::prepare_slice(dst, start_indices, stride_values);
+    auto stream = default_device_stream();
+    mlx::core::copy_gpu_inplace(
+        src,
+        dst,
+        src.shape(),
+        src.strides(),
+        out_strides,
+        0,
+        data_offset,
+        mlx::core::CopyType::GeneralGeneral,
+        mlx_stream_get_(stream));
+  } catch (std::exception& e) {
+    mlx_error(e.what());
+    return 1;
+  }
+  return 0;
 }
 
 extern "C" DartMlxArrayHandle* dart_mlx_einsum(

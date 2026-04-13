@@ -101,173 +101,62 @@ final class PaddleOcrVlConfig {
   int get visionInputImageSize => _vision.alignedImageSize;
   int get visionPatchSize => _vision.patchSize;
   int get visionSpatialMergeSize => _vision.spatialMergeSize;
+  int get visionResizeFactor => visionPatchSize * visionSpatialMergeSize;
   int get recommendedMinPixels => 28 * 28 * 188;
   int get recommendedMaxPixelsForCurrentPlatform {
+    final override = Platform.environment['DART_MLX_PADDLE_MAX_PIXELS'];
+    if (override != null) {
+      final parsed = int.tryParse(override);
+      if (parsed != null && parsed > 0) return parsed;
+    }
     if (Platform.isIOS) {
-      // Reduced from 28*28*1280 to 28*28*896 (~30% fewer pixels) to cut
-      // vision encoder peak memory on iPhone while retaining high-quality OCR
-      // for typical recipe photos (effective resolution up to ~840×840).
-      return 28 * 28 * 896;
+      // iPhone Jetsam logs show the 640-pixel tier can still exceed the
+      // foreground hard limit on complex photos, so default to 512.
+      return 28 * 28 * 512;
     }
     return 2822400;
   }
 
-  int get recommendedVisionWindowSizeForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_VISION_WINDOW_SIZE'];
-    if (override != null) {
-      final parsed = int.tryParse(override);
-      if (parsed != null) return parsed;
-    }
-    // Quality-first default: keep exact full-attention semantics unless
-    // explicitly overridden for experimentation.
-    return -1;
-  }
+  ({int height, int width}) smartResizeForImage(
+    int height,
+    int width, {
+    int? minPixels,
+    int? maxPixels,
+  }) {
+    final factor = visionResizeFactor;
+    final targetMinPixels = minPixels ?? recommendedMinPixels;
+    final targetMaxPixels = maxPixels ?? recommendedMaxPixelsForCurrentPlatform;
 
-  int get recommendedVisionWindowedLayerCountForCurrentPlatform {
-    final override =
-        Platform.environment['DART_MLX_PADDLE_VISION_WINDOW_LAYERS'];
-    if (override != null) {
-      final parsed = int.tryParse(override);
-      if (parsed != null) return parsed;
+    var h = height;
+    var w = width;
+    if (h < factor) {
+      w = ((w * factor) / h).round();
+      h = factor;
     }
-    // Quality-first default: no windowed layers unless explicitly enabled.
-    return 0;
-  }
+    if (w < factor) {
+      h = ((h * factor) / w).round();
+      w = factor;
+    }
+    final aspect = math.max(h, w) / math.min(h, w);
+    if (aspect > 200) {
+      throw ArgumentError(
+        'absolute aspect ratio must be smaller than 200, got $aspect',
+      );
+    }
 
-  int get recommendedVisionAttentionChunkSizeForCurrentPlatform {
-    final override =
-        Platform.environment['DART_MLX_PADDLE_VISION_ATTENTION_CHUNK'];
-    if (override != null) {
-      final parsed = int.tryParse(override);
-      if (parsed != null) return parsed;
+    var hBar = ((h / factor).round()) * factor;
+    var wBar = ((w / factor).round()) * factor;
+    final area = h * w;
+    if (hBar * wBar > targetMaxPixels) {
+      final beta = math.sqrt(area / targetMaxPixels);
+      hBar = ((h / beta) / factor).floor() * factor;
+      wBar = ((w / beta) / factor).floor() * factor;
+    } else if (hBar * wBar < targetMinPixels) {
+      final beta = math.sqrt(targetMinPixels / area);
+      hBar = ((h * beta) / factor).ceil() * factor;
+      wBar = ((w * beta) / factor).ceil() * factor;
     }
-    if (Platform.isIOS) {
-      return 128;
-    }
-    return -1;
-  }
-
-  bool get enableVisionLayerwiseEvalForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_VISION_LAYER_EVAL'];
-    if (override != null) {
-      return override == '1' || override.toLowerCase() == 'true';
-    }
-    return Platform.isIOS;
-  }
-
-  bool get enableDecoderLayerwiseEvalForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_DECODER_LAYER_EVAL'];
-    if (override != null) {
-      return override == '1' || override.toLowerCase() == 'true';
-    }
-    return Platform.isIOS;
-  }
-
-  bool get enableAggressiveCacheClearingForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_CLEAR_CACHE'];
-    if (override != null) {
-      return override == '1' || override.toLowerCase() == 'true';
-    }
-    return Platform.isIOS;
-  }
-
-  bool get forceFloat32VisionForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_FORCE_VISION_F32'];
-    if (override != null) {
-      return override == '1' || override.toLowerCase() == 'true';
-    }
-    return false;
-  }
-
-  // ── Memory limits ──
-
-  /// Recommended MLX memory limit in bytes for the current platform.
-  ///
-  /// On iOS, constrains the Metal allocator so the OS doesn't kill the app.
-  /// Returns -1 to leave the limit unchanged.
-  int get recommendedMemoryLimitBytesForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_MEMORY_LIMIT_MB'];
-    if (override != null) {
-      final parsed = int.tryParse(override);
-      if (parsed != null) return parsed * 1024 * 1024;
-    }
-    if (Platform.isIOS) {
-      return 2304 * 1024 * 1024; // 2.25 GB
-    }
-    return -1;
-  }
-
-  /// Recommended MLX cache limit in bytes for the current platform.
-  ///
-  /// On iOS, limits the amount of freed-but-held GPU memory so the OS can
-  /// reclaim it under pressure.  Returns -1 to leave the limit unchanged.
-  int get recommendedCacheLimitBytesForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_CACHE_LIMIT_MB'];
-    if (override != null) {
-      final parsed = int.tryParse(override);
-      if (parsed != null) return parsed * 1024 * 1024;
-    }
-    if (Platform.isIOS) {
-      return 256 * 1024 * 1024; // 256 MB
-    }
-    return -1;
-  }
-
-  // ── Vision encoder tuning ──
-
-  /// Number of vision layers to batch before calling evalAll.
-  ///
-  /// Higher values reduce GPU dispatch overhead but increase peak memory.
-  /// Only used when [enableVisionLayerwiseEvalForCurrentPlatform] is true.
-  int get visionEvalBatchSizeForCurrentPlatform {
-    final override = Platform.environment['DART_MLX_PADDLE_VISION_EVAL_BATCH'];
-    if (override != null) {
-      final parsed = int.tryParse(override);
-      if (parsed != null && parsed > 0) return parsed;
-    }
-    if (Platform.isIOS) {
-      return 1; // eval every layer to minimize peak graph memory
-    }
-    return 1;
-  }
-
-  // ── KV Cache tuning ──
-
-  /// Maximum sequence length for pre-allocated KV cache buffers.
-  ///
-  /// The cache pre-allocates `[1, numKvHeads, maxKvCacheSeqLen, headDim]`
-  /// per layer.  A shorter limit saves memory but will fail if the total
-  /// sequence (prompt + generated tokens) exceeds this value.
-  ///
-  /// Default: 2048 tokens — plenty for OCR workloads (prompt ~800 tokens
-  /// + up to 512 generated).
-  int get maxKvCacheSeqLenForCurrentPlatform {
-    final override =
-        Platform.environment['DART_MLX_PADDLE_MAX_KV_CACHE_SEQ_LEN'];
-    if (override != null) {
-      final parsed = int.tryParse(override);
-      if (parsed != null && parsed > 0) return parsed;
-    }
-    if (Platform.isIOS) {
-      return 2048;
-    }
-    return 4096;
-  }
-
-  // ── Vision weight lifecycle ──
-
-  /// Whether to release all vision encoder weights after encoding is done.
-  ///
-  /// This frees ~385 MB of GPU memory but means the model can only encode
-  /// one image per runner lifetime.  Enabled by default on iOS where memory
-  /// is the binding constraint.
-  bool get enableVisionWeightReleaseForCurrentPlatform {
-    final override =
-        Platform.environment['DART_MLX_PADDLE_RELEASE_VISION_WEIGHTS'];
-    if (override != null) {
-      return override == '1' || override.toLowerCase() == 'true';
-    }
-    return Platform.isIOS;
+    return (height: hBar, width: wBar);
   }
 }
 

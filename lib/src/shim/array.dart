@@ -111,6 +111,12 @@ external int dart_mlx_array_item_int32(
   ffi.Pointer<ffi.Int32> out,
 );
 
+@ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Int32>)>()
+external int dart_mlx_array_scalar_int32_relaxed(
+  DartMlxArrayHandle handle,
+  ffi.Pointer<ffi.Int32> out,
+);
+
 @ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Uint64>, ffi.Int)>()
 external int dart_mlx_array_copy_uint64(
   DartMlxArrayHandle handle,
@@ -131,10 +137,41 @@ external int dart_mlx_array_copy_float32(
   int len,
 );
 
+@ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Float>)>()
+external int dart_mlx_array_item_float32(
+  DartMlxArrayHandle handle,
+  ffi.Pointer<ffi.Float> out,
+);
+
+@ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Float>)>()
+external int dart_mlx_array_scalar_float32_relaxed(
+  DartMlxArrayHandle handle,
+  ffi.Pointer<ffi.Float> out,
+);
+
 @ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Int64>)>()
 external int dart_mlx_array_item_int64(
   DartMlxArrayHandle handle,
   ffi.Pointer<ffi.Int64> out,
+);
+
+@ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Int32>)>()
+external int dart_mlx_array_argmax_flat_int32(
+  DartMlxArrayHandle handle,
+  ffi.Pointer<ffi.Int32> out,
+);
+
+@ffi.Native<
+  ffi.Int Function(
+    DartMlxArrayHandle,
+    ffi.Pointer<ffi.Int32>,
+    ffi.Pointer<ffi.Float>,
+  )
+>()
+external int dart_mlx_array_argmax_flat_index_value_float32(
+  DartMlxArrayHandle handle,
+  ffi.Pointer<ffi.Int32> outIndex,
+  ffi.Pointer<ffi.Float> outValue,
 );
 
 @ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Double>, ffi.Int)>()
@@ -142,6 +179,12 @@ external int dart_mlx_array_copy_float64(
   DartMlxArrayHandle handle,
   ffi.Pointer<ffi.Double> out,
   int len,
+);
+
+@ffi.Native<ffi.Int Function(DartMlxArrayHandle, ffi.Pointer<ffi.Double>)>()
+external int dart_mlx_array_item_float64(
+  DartMlxArrayHandle handle,
+  ffi.Pointer<ffi.Double> out,
 );
 
 @ffi.Native<ffi.Pointer<ffi.Char> Function(DartMlxArrayHandle)>()

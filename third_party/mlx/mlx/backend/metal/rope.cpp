@@ -1,7 +1,9 @@
 // Copyright © 2023-2024 Apple Inc.
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/utils.h"
 #include "mlx/fast_primitives.h"
+#include "mlx/memory.h"
 
 namespace mlx::core::fast {
 
@@ -47,6 +49,7 @@ void RoPE::eval_gpu(
     donated = true;
     auto ctype =
         (in.flags().row_contiguous) ? CopyType::Vector : CopyType::General;
+    ScopedCopySite copy_site("rope");
     copy_gpu(in, out, ctype, s);
     strides[0] = mat_size;
     strides[1] = out.strides()[ndim - 2];
@@ -54,8 +57,12 @@ void RoPE::eval_gpu(
   } else if (in.flags().row_contiguous) {
     if (in.is_donatable()) {
       donated = true;
+      record_metal_copy_shared_copy();
+      record_metal_rope_copy_shared_copy();
       out.copy_shared_buffer(in);
     } else {
+      record_metal_copy_allocation();
+      record_metal_rope_copy_allocation();
       out.set_data(allocator::malloc(out.nbytes()));
     }
     strides[0] = mat_size;
@@ -63,6 +70,8 @@ void RoPE::eval_gpu(
     strides[2] = in.strides()[ndim - 1];
   } else if (dispatch_ndim == 3) {
     // Handle non-contiguous 3D inputs
+    record_metal_copy_allocation();
+    record_metal_rope_copy_allocation();
     out.set_data(allocator::malloc(out.nbytes()));
     strides[0] = in.strides()[ndim - 3];
     strides[1] = in.strides()[ndim - 2];
@@ -74,6 +83,8 @@ void RoPE::eval_gpu(
       // sequence and head dimensions are transposed
       in.strides()[1] == D && in.strides()[2] == N * D) {
     head_seq_transpose = true;
+    record_metal_copy_allocation();
+    record_metal_rope_copy_allocation();
     out.set_data(allocator::malloc(out.nbytes()));
     strides[0] = in.strides()[1];
     strides[1] = in.strides()[2];
@@ -82,6 +93,7 @@ void RoPE::eval_gpu(
     // Copy non-contiguous > 3D inputs into the output and treat
     // input as donated
     donated = true;
+    ScopedCopySite copy_site("rope");
     copy_gpu(in, out, CopyType::General, s);
     strides[0] = mat_size;
     strides[1] = out.strides()[ndim - 2];

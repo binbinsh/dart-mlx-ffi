@@ -2,8 +2,16 @@
 coverage/
 **/__pycache__/
 *.pyc
+AGENTS.md
+benchmark/
+doc/
+models/
+tool/
 example/.dart_tool/
+example/
 example/build/
+example/ios/
+example/macos/
 example/android/
 example/linux/
 example/web/

@@ -150,6 +150,7 @@ final class Qwen3_5Runner {
       dtype: config.computeDType,
     );
     runner._warmForwardPath();
+    RuntimeTuning.instance.register('qwen3_5', qwen35Tuning);
     return runner;
   }
 

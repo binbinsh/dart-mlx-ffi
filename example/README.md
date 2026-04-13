@@ -1,9 +1,6 @@
 # dart_mlx_ffi example
 
-This Flutter example targets the same platforms as the package itself:
-
-- macOS
-- iOS
+This Flutter example is now a minimal sanity demo for the package.
 
 Run it with:
 
@@ -17,10 +14,14 @@ or:
 flutter run -d ios
 ```
 
-The UI demonstrates:
+The example app shows:
 
-- MLX version lookup
-- default device inspection
-- high-level array creation
-- elementwise addition
-- matrix multiplication
+- MLX version
+- default device info
+- Metal availability
+- current memory stats
+- basic `add`
+- basic `matmul`
+
+It is intentionally small and no longer contains the internal iPhone
+profiling harness that was used during PaddleOCR-VL runtime tuning.

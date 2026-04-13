@@ -37,10 +37,40 @@ class MetalAllocator : public allocator::Allocator {
   size_t get_cache_memory() {
     return buffer_cache_.cache_size();
   };
+  size_t get_cache_count() {
+    return buffer_cache_.cache_count();
+  };
+  size_t get_cache_limit() {
+    return max_pool_size_;
+  };
   size_t set_cache_limit(size_t limit);
   size_t set_memory_limit(size_t limit);
   size_t get_memory_limit();
   size_t set_wired_limit(size_t limit);
+  size_t get_wired_limit() {
+    return wired_limit_;
+  };
+  size_t get_resource_count() {
+    return num_resources_;
+  };
+  size_t get_resource_limit() {
+    return resource_limit_;
+  };
+  size_t get_allocation_request_count() {
+    return allocation_request_count_;
+  };
+  size_t get_cache_reuse_hit_count() {
+    return cache_reuse_hit_count_;
+  };
+  size_t get_new_allocation_count() {
+    return new_allocation_count_;
+  };
+  size_t get_heap_allocation_count() {
+    return heap_allocation_count_;
+  };
+  size_t get_device_allocation_count() {
+    return device_allocation_count_;
+  };
   void clear_cache();
 
  private:
@@ -70,6 +100,11 @@ class MetalAllocator : public allocator::Allocator {
   size_t wired_limit_{0};
   size_t num_resources_{0};
   size_t resource_limit_{0};
+  size_t allocation_request_count_{0};
+  size_t cache_reuse_hit_count_{0};
+  size_t new_allocation_count_{0};
+  size_t heap_allocation_count_{0};
+  size_t device_allocation_count_{0};
 
   std::mutex mutex_;
 };

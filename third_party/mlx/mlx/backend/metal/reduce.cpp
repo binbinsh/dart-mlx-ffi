@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cassert>
 
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/kernels/defines.h"
 #include "mlx/backend/metal/reduce.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 #include "mlx/utils.h"
 
@@ -357,6 +359,7 @@ void all_reduce_dispatch(
 
     // Allocate an intermediate tensor to hold results if needed
     array intermediate({n_rows}, out_type, nullptr, {});
+    record_metal_reduce_allocation();
     intermediate.set_data(allocator::malloc(intermediate.nbytes()));
     d.add_temporary(intermediate, s.index);
 
@@ -651,6 +654,7 @@ void strided_reduce_longcolumn(
   intermediate_shape.insert(
       intermediate_shape.end(), out.shape().begin(), out.shape().end());
   array intermediate(std::move(intermediate_shape), out_type, nullptr, {});
+  record_metal_reduce_allocation();
   intermediate.set_data(allocator::malloc(intermediate.nbytes()));
   d.add_temporary(intermediate, s.index);
 
@@ -822,6 +826,7 @@ void strided_reduce_2pass(
   intermediate_shape.insert(
       intermediate_shape.end(), out.shape().begin(), out.shape().end());
   array intermediate(std::move(intermediate_shape), out_type, nullptr, {});
+  record_metal_reduce_allocation();
   intermediate.set_data(allocator::malloc(intermediate.nbytes()));
   d.add_temporary(intermediate, s.index);
 
@@ -960,6 +965,7 @@ void Reduce::eval_gpu(const std::vector<array>& inputs, array& out) {
   // Minimum of 4 bytes since we use size 4 structs for all reduce
   // and metal will complain o/w
   size_t min_bytes = std::max(out.nbytes(), 4ul);
+  record_metal_reduce_allocation();
   out.set_data(allocator::malloc(min_bytes));
   std::string op_name;
   switch (reduce_type_) {
@@ -999,6 +1005,7 @@ void Reduce::eval_gpu(const std::vector<array>& inputs, array& out) {
     //       input for the axes with stride smaller than the minimum reduction
     //       stride.
     if (plan.type == GeneralReduce) {
+      ScopedCopySite copy_site("reduce");
       array in_copy = contiguous_copy_gpu(in, s);
       d.add_temporary(in_copy, s.index);
       in = in_copy;

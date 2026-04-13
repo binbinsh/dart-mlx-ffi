@@ -9,12 +9,35 @@
 #include "mlx/backend/metal/unary.h"
 #include "mlx/backend/metal/utils.h"
 #include "mlx/fast_primitives.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 #include "mlx/utils.h"
 
 namespace mlx::core {
 
 namespace {
+
+enum class QuantizedContigRole { x, w, scales, biases, indices };
+
+inline void record_quantized_contig_role(QuantizedContigRole role) {
+  switch (role) {
+    case QuantizedContigRole::x:
+      record_quantized_contiguous_x();
+      break;
+    case QuantizedContigRole::w:
+      record_quantized_contiguous_w();
+      break;
+    case QuantizedContigRole::scales:
+      record_quantized_contiguous_scales();
+      break;
+    case QuantizedContigRole::biases:
+      record_quantized_contiguous_biases();
+      break;
+    case QuantizedContigRole::indices:
+      record_quantized_contiguous_indices();
+      break;
+  }
+}
 
 template <typename... Args>
 auto get_quantized_kernel_wrapped(
@@ -51,8 +74,13 @@ auto get_qmm_nax_kernel_wrapped(
 }
 
 inline array
-ensure_row_contiguous(const array& x, metal::Device& d, const Stream& s) {
+ensure_row_contiguous(
+    const array& x,
+    metal::Device& d,
+    const Stream& s,
+    QuantizedContigRole role = QuantizedContigRole::x) {
   if (!x.flags().row_contiguous) {
+    record_quantized_contig_role(role);
     array x_copy = contiguous_copy_gpu(x, s);
     d.add_temporary(x_copy, s.index);
     return x_copy;
@@ -64,7 +92,8 @@ ensure_row_contiguous(const array& x, metal::Device& d, const Stream& s) {
 inline array ensure_row_contiguous_matrix(
     const array& x,
     metal::Device& d,
-    const Stream& s) {
+    const Stream& s,
+    QuantizedContigRole role = QuantizedContigRole::x) {
   if (x.ndim() < 2) {
     if (x.strides()[0] == 1) {
       return x;
@@ -72,10 +101,12 @@ inline array ensure_row_contiguous_matrix(
   } else {
     auto stride_0 = x.strides()[x.ndim() - 2];
     auto stride_1 = x.strides()[x.ndim() - 1];
-    if (stride_0 == x.shape(-1) && stride_1 == 1) {
+    bool single_row = x.shape(-2) == 1;
+    if ((stride_0 == x.shape(-1) || single_row) && stride_1 == 1) {
       return x;
     }
   }
+  record_quantized_contig_role(role);
   array x_copy = contiguous_copy_gpu(x, s);
   d.add_temporary(x_copy, s.index);
   return x_copy;
@@ -355,6 +386,7 @@ void qvm_split_k(
   }
   temp_shape.insert(temp_shape.end() - 2, split_k);
   array intermediate(temp_shape, x.dtype(), nullptr, {});
+  record_metal_quantized_allocation();
   intermediate.set_data(allocator::malloc(intermediate.nbytes()));
   d.add_temporary(intermediate, s.index);
 
@@ -1002,7 +1034,8 @@ void gather_qmm_rhs_nax(
     const Stream& s,
     const std::string mode) {
   // Start by normalizing the indices
-  array indices = ensure_row_contiguous(indices_, d, s);
+  array indices =
+      ensure_row_contiguous(indices_, d, s, QuantizedContigRole::indices);
 
   // Broadcast x with indices. If we are here that means lhs_indices were not
   // provided so the lhs_indices are implied to be the shape of x broadcasted
@@ -1010,7 +1043,7 @@ void gather_qmm_rhs_nax(
   // lhs_indices.
   auto broadcast_with_indices = [&d, &s, &indices](const array& x) {
     if (x.size() / x.shape(-2) / x.shape(-1) == indices.size()) {
-      return ensure_row_contiguous(x, d, s);
+      return ensure_row_contiguous(x, d, s, QuantizedContigRole::x);
     }
 
     auto x_shape = indices.shape();
@@ -1018,13 +1051,14 @@ void gather_qmm_rhs_nax(
     x_shape.push_back(x.shape(-1));
     array new_x(std::move(x_shape), x.dtype(), nullptr, {});
     broadcast(x, new_x);
-    return ensure_row_contiguous(new_x, d, s);
+    return ensure_row_contiguous(new_x, d, s, QuantizedContigRole::x);
   };
 
   // Normalize the input arrays
   array x = broadcast_with_indices(x_);
-  array w = ensure_row_contiguous(w_, d, s);
-  array scales = ensure_row_contiguous(scales_, d, s);
+  array w = ensure_row_contiguous(w_, d, s, QuantizedContigRole::w);
+  array scales =
+      ensure_row_contiguous(scales_, d, s, QuantizedContigRole::scales);
 
   // TODO: Tune the block sizes
   int bm = 64, bn = 64, bk = 64;
@@ -1104,7 +1138,8 @@ void gather_qmm_rhs_nax(
   compute_encoder.set_input_array(w, c++);
   compute_encoder.set_input_array(scales, c++);
   if (biases_) {
-    array biases = ensure_row_contiguous(*biases_, d, s);
+    array biases =
+        ensure_row_contiguous(*biases_, d, s, QuantizedContigRole::biases);
     compute_encoder.set_input_array(biases, c++);
   }
   compute_encoder.set_input_array(indices, c++);
@@ -1153,7 +1188,8 @@ void gather_qmm_rhs(
   }
 
   // Start by normalizing the indices
-  array indices = ensure_row_contiguous(indices_, d, s);
+  array indices =
+      ensure_row_contiguous(indices_, d, s, QuantizedContigRole::indices);
 
   // Broadcast x with indices. If we are here that means lhs_indices were not
   // provided so the lhs_indices are implied to be the shape of x broadcasted
@@ -1161,7 +1197,7 @@ void gather_qmm_rhs(
   // lhs_indices.
   auto broadcast_with_indices = [&d, &s, &indices](const array& x) {
     if (x.size() / x.shape(-2) / x.shape(-1) == indices.size()) {
-      return ensure_row_contiguous(x, d, s);
+      return ensure_row_contiguous(x, d, s, QuantizedContigRole::x);
     }
 
     auto x_shape = indices.shape();
@@ -1169,13 +1205,14 @@ void gather_qmm_rhs(
     x_shape.push_back(x.shape(-1));
     array new_x(std::move(x_shape), x.dtype(), nullptr, {});
     broadcast(x, new_x);
-    return ensure_row_contiguous(new_x, d, s);
+    return ensure_row_contiguous(new_x, d, s, QuantizedContigRole::x);
   };
 
   // Normalize the input arrays
   array x = broadcast_with_indices(x_);
-  array w = ensure_row_contiguous(w_, d, s);
-  array scales = ensure_row_contiguous(scales_, d, s);
+  array w = ensure_row_contiguous(w_, d, s, QuantizedContigRole::w);
+  array scales =
+      ensure_row_contiguous(scales_, d, s, QuantizedContigRole::scales);
 
   // TODO: Tune the block sizes
   int bm = 16, bn = 32, bk = 32;
@@ -1254,7 +1291,8 @@ void gather_qmm_rhs(
   compute_encoder.set_input_array(w, c++);
   compute_encoder.set_input_array(scales, c++);
   if (biases_) {
-    array biases = ensure_row_contiguous(*biases_, d, s);
+    array biases =
+        ensure_row_contiguous(*biases_, d, s, QuantizedContigRole::biases);
     compute_encoder.set_input_array(biases, c++);
   }
   compute_encoder.set_input_array(indices, c++);
@@ -1294,16 +1332,19 @@ void QuantizedMatmul::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto& s = stream();
   auto& d = metal::device(s.device);
 
+  record_metal_quantized_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   // Make sure the last two dims of x and w, s, b are contiguous. This should
   // be relaxed for x.
-  array x = ensure_row_contiguous_matrix(inputs[0], d, s);
-  array w = ensure_row_contiguous_matrix(inputs[1], d, s);
-  array scales = ensure_row_contiguous_matrix(inputs[2], d, s);
+  array x = ensure_row_contiguous_matrix(inputs[0], d, s, QuantizedContigRole::x);
+  array w = ensure_row_contiguous_matrix(inputs[1], d, s, QuantizedContigRole::w);
+  array scales = ensure_row_contiguous_matrix(
+      inputs[2], d, s, QuantizedContigRole::scales);
   std::optional<array> biases = std::nullopt;
   if (inputs.size() == 4) {
-    biases = ensure_row_contiguous_matrix(inputs[3], d, s);
+    biases = ensure_row_contiguous_matrix(
+        inputs[3], d, s, QuantizedContigRole::biases);
   }
 
   // Extract the matmul shapes
@@ -1356,14 +1397,17 @@ void GatherQMM::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto& s = stream();
   auto& d = metal::device(s.device);
 
+  record_metal_quantized_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
-  array x = ensure_row_contiguous_matrix(inputs[0], d, s);
-  array w = ensure_row_contiguous_matrix(inputs[1], d, s);
-  array scales = ensure_row_contiguous_matrix(inputs[2], d, s);
+  array x = ensure_row_contiguous_matrix(inputs[0], d, s, QuantizedContigRole::x);
+  array w = ensure_row_contiguous_matrix(inputs[1], d, s, QuantizedContigRole::w);
+  array scales = ensure_row_contiguous_matrix(
+      inputs[2], d, s, QuantizedContigRole::scales);
   std::optional<array> biases = std::nullopt;
   if (inputs.size() == 6) {
-    biases = ensure_row_contiguous_matrix(inputs[3], d, s);
+    biases = ensure_row_contiguous_matrix(
+        inputs[3], d, s, QuantizedContigRole::biases);
   }
   const array& lhs_indices = inputs[inputs.size() - 2];
   const array& rhs_indices = inputs[inputs.size() - 1];
@@ -1470,7 +1514,7 @@ void quantize_dequantize(
     const Stream& s) {
   auto& compute_encoder = d.get_command_encoder(s.index);
 
-  auto w = ensure_row_contiguous(in, d, s);
+  auto w = ensure_row_contiguous(in, d, s, QuantizedContigRole::w);
   compute_encoder.set_input_array(w, 0);
   compute_encoder.set_output_array(out, 1);
   auto type_string = get_type_string(in.dtype());
@@ -1514,10 +1558,11 @@ void QQMatmul::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto mode = quantization_mode_to_string(mode_);
   bool w_quantized = (inputs[1].dtype() == uint32);
   if (w_quantized && inputs[0].shape(-2) == 1) {
+    record_metal_quantized_allocation();
     out.set_data(allocator::malloc(out.nbytes()));
 
     bool donate_x = inputs[0].is_donatable();
-    array x = ensure_row_contiguous(inputs[0], d, s);
+    array x = ensure_row_contiguous(inputs[0], d, s, QuantizedContigRole::x);
     // If x is a copy it should be donatable
     donate_x |= x.is_donatable();
     auto xhat = donate_x
@@ -1526,8 +1571,9 @@ void QQMatmul::eval_gpu(const std::vector<array>& inputs, array& out) {
     quantize_dequantize(x, xhat, mode, group_size_, bits_, d, s);
 
     // Make sure the last two dims of w and s are contiguous
-    array w = ensure_row_contiguous_matrix(inputs[1], d, s);
-    array scales = ensure_row_contiguous_matrix(inputs[2], d, s);
+    array w = ensure_row_contiguous_matrix(inputs[1], d, s, QuantizedContigRole::w);
+    array scales = ensure_row_contiguous_matrix(
+        inputs[2], d, s, QuantizedContigRole::scales);
 
     bool non_batched = w.ndim() == 2;
     int K = x.shape(-1);
@@ -1558,17 +1604,20 @@ void fast::Quantize::eval_gpu(
     std::vector<array>& outputs) {
   auto& w_pre = inputs[0];
   auto& out = outputs[0];
+  record_metal_quantized_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   auto& s = stream();
   auto& d = metal::device(s.device);
   auto& compute_encoder = d.get_command_encoder(s.index);
 
-  auto w = ensure_row_contiguous(w_pre, d, s);
+  auto w = ensure_row_contiguous(w_pre, d, s, QuantizedContigRole::w);
   if (dequantize_) {
-    auto scales = ensure_row_contiguous(inputs[1], d, s);
+    auto scales = ensure_row_contiguous(
+        inputs[1], d, s, QuantizedContigRole::scales);
     if (mode_ == QuantizationMode::Affine) {
-      auto biases = ensure_row_contiguous(inputs[2], d, s);
+      auto biases = ensure_row_contiguous(
+          inputs[2], d, s, QuantizedContigRole::biases);
       compute_encoder.set_input_array(biases, 2);
     }
     compute_encoder.set_input_array(w, 0);
@@ -1576,9 +1625,11 @@ void fast::Quantize::eval_gpu(
     compute_encoder.set_output_array(out, 3);
   } else {
     auto& scales = outputs[1];
+    record_metal_quantized_allocation();
     scales.set_data(allocator::malloc(scales.nbytes()));
     if (mode_ == QuantizationMode::Affine) {
       auto& biases = outputs[2];
+      record_metal_quantized_allocation();
       biases.set_data(allocator::malloc(biases.nbytes()));
       compute_encoder.set_output_array(biases, 3);
     }

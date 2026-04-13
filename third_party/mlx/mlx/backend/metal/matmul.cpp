@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "mlx/backend/common/broadcasting.h"
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/common/matmul.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/binary.h"
@@ -15,6 +16,7 @@
 #include "mlx/backend/metal/kernels/steel/gemm/params.h"
 #include "mlx/backend/metal/matmul.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 #include "mlx/utils.h"
 
@@ -568,6 +570,7 @@ void steel_gemm_splitk_axpby(
       issubdtype(out.dtype(), complexfloating) ? complex64 : float32,
       nullptr,
       {});
+  record_metal_matmul_allocation();
   C_split.set_data(allocator::malloc(C_split.nbytes()));
   copies.push_back(C_split);
 
@@ -716,6 +719,7 @@ void steel_gemm_splitk_axpby_nax(
   const int split_k_partition_stride = M * N;
 
   array C_split({split_k_partitions, M, N}, float32, nullptr, {});
+  record_metal_matmul_allocation();
   C_split.set_data(allocator::malloc(C_split.nbytes()));
   copies.push_back(C_split);
 
@@ -1230,6 +1234,7 @@ void Matmul::eval_gpu(const std::vector<array>& inputs, array& out) {
     return;
   }
 
+  record_metal_matmul_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   /////////////////////////////////////////////////////////////////////////////
@@ -1325,6 +1330,7 @@ void AddMM::eval_gpu(const std::vector<array>& inputs, array& out) {
 
   // Return 0s if either input is empty
   if (out.size() == 0) {
+    record_metal_matmul_allocation();
     out.set_data(allocator::malloc(out.nbytes()));
     return;
   }
@@ -1336,6 +1342,7 @@ void AddMM::eval_gpu(const std::vector<array>& inputs, array& out) {
   if (inputs[0].shape(-1) == 0) {
     auto& c = inputs[2];
     if (beta_ == 1.0f) {
+      ScopedCopySite copy_site("matmul");
       copy_gpu(
           c,
           out,
@@ -1349,6 +1356,7 @@ void AddMM::eval_gpu(const std::vector<array>& inputs, array& out) {
     return;
   }
 
+  record_metal_matmul_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   auto& a_pre = inputs[0];
@@ -1475,6 +1483,7 @@ void BlockMaskedMM::eval_gpu(const std::vector<array>& inputs, array& out) {
     return;
   }
 
+  record_metal_matmul_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   /////////////////////////////////////////////////////////////////////////////
@@ -2389,6 +2398,7 @@ void GatherMM::eval_gpu(const std::vector<array>& inputs, array& out) {
     return;
   }
 
+  record_metal_matmul_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   // Extract shapes from inputs.
@@ -2571,6 +2581,7 @@ void SegmentedMM::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto& b = inputs[1];
   auto& segments = inputs[2];
 
+  record_metal_matmul_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   // Extract shapes from inputs.

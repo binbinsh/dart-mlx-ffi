@@ -1,5 +1,18 @@
 library;
 
+// ── Shared abstractions ──
+export 'src/models/shared/model_spec.dart';
+export 'src/models/shared/manifest.dart';
+export 'src/models/shared/cache.dart';
+export 'src/models/shared/session.dart';
+export 'src/models/shared/tuning.dart';
+export 'src/models/shared/metal_gate.dart';
+export 'src/models/shared/stream_acc.dart';
+export 'src/models/shared/kv_store.dart';
+export 'src/models/shared/embedding.dart';
+export 'src/models/shared/tensor_map.dart';
+
+// ── Model families ──
 export 'src/models/kitten_tts/kitten_tts.dart'
     show
         KittenTtsEngine,

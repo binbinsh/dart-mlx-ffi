@@ -11,6 +11,26 @@ part of 'paddle_ocr_vl.dart';
 // ---------------------------------------------------------------------------
 
 extension PaddleOcrVlRope on PaddleOcrVlRunner {
+  static bool _loggedDisabledSingleTokenMrope = false;
+
+  bool get _debugMropeTraceEnabled {
+    final raw = Platform.environment['DART_MLX_PADDLE_DEBUG_MROPE'];
+    return raw == '1' || raw == 'true';
+  }
+
+  bool get _disableFastSingleTokenMropeForCurrentPlatform {
+    final debug = PaddleOcrVlDebugOverrides.disableFastSingleTokenMrope;
+    if (debug != null) return debug;
+    final override = Platform.environment[
+      'DART_MLX_PADDLE_DISABLE_FAST_SINGLE_TOKEN_MROPE'
+    ];
+    if (override != null) {
+      return override == '1' || override.toLowerCase() == 'true';
+    }
+    // The Metal fast path can still native-crash on iPhone during decode.
+    return Platform.isIOS;
+  }
+
   /// Compute RoPE inverse frequencies for the full head dimension.
   ///
   /// Returns a 1-D array of shape [headDim/2].
@@ -22,7 +42,11 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
     final created = MlxArray.fromFloat32List(
       [
         for (var i = 0; i < halfDim; i++)
-          math.exp(-(i / halfDim) * math.log(config.ropeTheta)),
+          1.0 /
+              math.pow(
+                config.ropeTheta,
+                (2 * i) / config.headDim,
+              ).toDouble(),
       ],
       shape: [halfDim],
     );
@@ -37,7 +61,7 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
   /// Build cos/sin tables for M-RoPE given per-token 3D position IDs.
   ///
   /// [positionIds] has shape `[3, 1, seqLen]` (temporal, height, width).
-  /// Returns cos/sin each of shape `[1, 1, seqLen, headDim]`.
+  /// Returns cos/sin each of shape `[3, 1, seqLen, headDim]`.
   ({MlxArray cos, MlxArray sin}) _buildMropeCosSin(
     MlxArray positionIds,
     MlxDType dtype,
@@ -64,44 +88,9 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
       try {
         final emb = mx.concatenate([freqs, freqs], axis: 3);
         try {
-          final splitSections = <int>[
-            ...config.mropeSection,
-            ...config.mropeSection,
-          ];
-          final parts = <MlxArray>[];
-          var start = 0;
-          for (var i = 0; i < splitSections.length; i++) {
-            final end = start + splitSections[i];
-            final part = emb
-                .slice(
-                  start: [i % 3, 0, 0, start],
-                  stop: [i % 3 + 1, 1, seqLen, end],
-                )
-                .reshape([1, seqLen, end - start]);
-            parts.add(part);
-            start = end;
-          }
-          final interleaved = mx.concatenate(parts, axis: 2);
-          for (final part in parts) {
-            part.close();
-          }
-          try {
-            final cosArr = interleaved.cos().astype(dtype).reshape([
-              1,
-              1,
-              seqLen,
-              config.headDim,
-            ]);
-            final sinArr = interleaved.sin().astype(dtype).reshape([
-              1,
-              1,
-              seqLen,
-              config.headDim,
-            ]);
-            return (cos: cosArr, sin: sinArr);
-          } finally {
-            interleaved.close();
-          }
+          final cosArr = emb.cos().astype(dtype);
+          final sinArr = emb.sin().astype(dtype);
+          return (cos: cosArr, sin: sinArr);
         } finally {
           emb.close();
         }
@@ -128,13 +117,219 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
     MlxArray k,
     MlxArray positionIds,
   ) {
+    final disableFastPath = _disableFastSingleTokenMropeForCurrentPlatform;
+    if (disableFastPath &&
+        Platform.isIOS &&
+        !_loggedDisabledSingleTokenMrope &&
+        q.shape[2] == 1 &&
+        k.shape[2] == 1 &&
+        (config.enableDecoderTailTraceForCurrentPlatform ||
+            _debugMropeTraceEnabled)) {
+      _loggedDisabledSingleTokenMrope = true;
+      PaddleOcrVlDebugOverrides.traceSink?.call(
+        'mrope fast path forced off on ios q=${q.shape} k=${k.shape}',
+      );
+    }
+    if (!disableFastPath &&
+        q.shape[2] == 1 &&
+        k.shape[2] == 1) {
+      final fast = _applyMropeSingleTokenFast(q, k, positionIds);
+      if (fast != null) {
+        if (config.enableDecoderTailTraceForCurrentPlatform ||
+            _debugMropeTraceEnabled) {
+          PaddleOcrVlDebugOverrides.traceSink?.call(
+            'mrope fast path q=${q.shape} k=${k.shape}',
+          );
+        }
+        return fast;
+      }
+      if (config.enableDecoderTailTraceForCurrentPlatform ||
+          _debugMropeTraceEnabled) {
+        PaddleOcrVlDebugOverrides.traceSink?.call(
+          'mrope fast path skipped q=${q.shape} k=${k.shape}',
+        );
+      }
+    }
     final pair = _buildMropeCosSin(positionIds, q.dtype);
-    // cos/sin shape: [1, 1, seqLen, headDim] — broadcasts over heads
-    final qRot = _rotaryEmbed(q, pair.cos, pair.sin);
-    final kRot = _rotaryEmbed(k, pair.cos, pair.sin);
+    final cos = _applyMultimodalRotarySections(pair.cos);
+    final sin = _applyMultimodalRotarySections(pair.sin);
     pair.cos.close();
     pair.sin.close();
+    final rotaryDim = cos.shape[3];
+    final qRotPart = q.slice(
+      start: [0, 0, 0, 0],
+      stop: [q.shape[0], q.shape[1], q.shape[2], rotaryDim],
+    );
+    final qPass = q.slice(
+      start: [0, 0, 0, rotaryDim],
+      stop: [q.shape[0], q.shape[1], q.shape[2], q.shape[3]],
+    );
+    final kRotPart = k.slice(
+      start: [0, 0, 0, 0],
+      stop: [k.shape[0], k.shape[1], k.shape[2], rotaryDim],
+    );
+    final kPass = k.slice(
+      start: [0, 0, 0, rotaryDim],
+      stop: [k.shape[0], k.shape[1], k.shape[2], k.shape[3]],
+    );
+    final qEmbed = _rotaryEmbed(qRotPart, cos, sin);
+    final kEmbed = _rotaryEmbed(kRotPart, cos, sin);
+    qRotPart.close();
+    kRotPart.close();
+    cos.close();
+    sin.close();
+    final qRot = mx.concatenate([qEmbed, qPass], axis: 3);
+    final kRot = mx.concatenate([kEmbed, kPass], axis: 3);
+    qEmbed.close();
+    kEmbed.close();
+    qPass.close();
+    kPass.close();
     return (q: qRot, k: kRot);
+  }
+
+  ({MlxArray q, MlxArray k})? _applyMropeSingleTokenFast(
+    MlxArray q,
+    MlxArray k,
+    MlxArray positionIds,
+  ) {
+    if (q.shape[3] != config.headDim || k.shape[3] != config.headDim) {
+      return null;
+    }
+    final sections = config.mropeSection;
+    final halfDim = config.headDim ~/ 2;
+    final total = sections.fold<int>(0, (sum, dim) => sum + dim);
+    if (total != halfDim) {
+      return null;
+    }
+    final invFreq = _getInvFreq();
+    final qRot = _applyMropeFastToTensor(
+      q,
+      positionIds,
+      invFreq,
+      sections,
+      halfDim,
+    );
+    final kRot = _applyMropeFastToTensor(
+      k,
+      positionIds,
+      invFreq,
+      sections,
+      halfDim,
+    );
+    return (q: qRot, k: kRot);
+  }
+
+  MlxArray _applyMropeFastToTensor(
+    MlxArray tensor,
+    MlxArray positionIds,
+    MlxArray invFreq,
+    List<int> sections,
+    int halfDim,
+  ) {
+    final firstParts = <MlxArray>[];
+    final secondParts = <MlxArray>[];
+    var cursor = 0;
+    for (var streamIdx = 0; streamIdx < sections.length; streamIdx++) {
+      final width = sections[streamIdx];
+      final first = tensor.slice(
+        start: [0, 0, 0, cursor],
+        stop: [
+          tensor.shape[0],
+          tensor.shape[1],
+          tensor.shape[2],
+          cursor + width,
+        ],
+      );
+      final second = tensor.slice(
+        start: [0, 0, 0, halfDim + cursor],
+        stop: [
+          tensor.shape[0],
+          tensor.shape[1],
+          tensor.shape[2],
+          halfDim + cursor + width,
+        ],
+      );
+      final chunk = mx.concatenate([first, second], axis: 3);
+      first.close();
+      second.close();
+      final offsetView = positionIds
+          .slice(
+            start: [streamIdx, 0, 0],
+            stop: [streamIdx + 1, 1, 1],
+          )
+          .reshape([1]);
+      final offset = offsetView.dtype == MlxDType.MLX_INT32
+          ? offsetView
+          : offsetView.astype(MlxDType.MLX_INT32);
+      final invSlice = invFreq.slice(
+        start: [cursor],
+        stop: [cursor + width],
+      );
+      final freqs = MlxMore.reciprocal(invSlice);
+      invSlice.close();
+      final rotated = mx.fast.ropeDynamic(
+        chunk,
+        dims: width * 2,
+        offset: offset,
+        freqs: freqs,
+      );
+      chunk.close();
+      if (!identical(offset, offsetView)) {
+        offset.close();
+      }
+      offsetView.close();
+      freqs.close();
+      final rotatedFirst = rotated.slice(
+        start: [0, 0, 0, 0],
+        stop: [rotated.shape[0], rotated.shape[1], rotated.shape[2], width],
+      );
+      final rotatedSecond = rotated.slice(
+        start: [0, 0, 0, width],
+        stop: [
+          rotated.shape[0],
+          rotated.shape[1],
+          rotated.shape[2],
+          width * 2,
+        ],
+      );
+      rotated.close();
+      firstParts.add(rotatedFirst);
+      secondParts.add(rotatedSecond);
+      cursor += width;
+    }
+    final out = mx.concatenate([...firstParts, ...secondParts], axis: 3);
+    for (final part in firstParts) {
+      part.close();
+    }
+    for (final part in secondParts) {
+      part.close();
+    }
+    return out;
+  }
+
+  MlxArray _applyMultimodalRotarySections(MlxArray x) {
+    final sections = <int>[
+      ...config.mropeSection,
+      ...config.mropeSection,
+    ];
+    final parts = <MlxArray>[];
+    var start = 0;
+    for (var i = 0; i < sections.length; i++) {
+      final end = start + sections[i];
+      final part = x
+          .slice(
+            start: [i % 3, 0, 0, start],
+            stop: [i % 3 + 1, 1, x.shape[2], end],
+          )
+          .reshape([1, 1, x.shape[2], end - start]);
+      parts.add(part);
+      start = end;
+    }
+    final out = mx.concatenate(parts, axis: 3);
+    for (final part in parts) {
+      part.close();
+    }
+    return out;
   }
 
   /// NeoX-style rotary embedding: x * cos + rotate_half(x) * sin

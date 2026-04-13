@@ -1,8 +1,9 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 
+import '../shared/tensor_map.dart';
+import '../shared/tuning.dart';
 import 'audio_enc.dart';
 import 'bpe.dart';
 import 'config.dart';
@@ -72,11 +73,12 @@ final class Qwen3AsrRunner {
   /// Load all components from a snapshot directory.
   factory Qwen3AsrRunner.load(String snapshotPath) {
     final config = Qwen3AsrConfig.fromSnapshot(snapshotPath);
-    final tensors = _loadAllTensors(snapshotPath);
+    final tensors = loadTensorMap(snapshotPath);
     final audioEncoder = Qwen3AsrAudioEncoder.load(tensors, config);
     final textDecoder = Qwen3AsrTextDecoder.load(tensors, config);
     final mel = Qwen3AsrMelFrontend();
     final tokenizer = Qwen3AsrBpeTokenizer.load(snapshotPath);
+    RuntimeTuning.instance.register('qwen3_asr', qwen3AsrTuning);
     return Qwen3AsrRunner._(
       config,
       audioEncoder,
@@ -451,31 +453,6 @@ final class Qwen3AsrRunner {
     for (final tensor in _tensors.values) {
       tensor.close();
     }
-  }
-
-  static Map<String, MlxArray> _loadAllTensors(String path) {
-    final dir = Directory(path);
-    final files =
-        dir
-            .listSync()
-            .whereType<File>()
-            .where((f) => f.path.endsWith('.safetensors'))
-            .toList()
-          ..sort((a, b) => a.path.compareTo(b.path));
-    if (files.isEmpty) {
-      throw StateError('No safetensors files found in $path');
-    }
-    final merged = <String, MlxArray>{};
-    for (final file in files) {
-      final loaded = mx.io.loadSafetensors(file.path);
-      for (final entry in loaded.tensors.entries) {
-        if (merged.containsKey(entry.key)) {
-          throw StateError('Duplicate tensor: ${entry.key}');
-        }
-        merged[entry.key] = entry.value;
-      }
-    }
-    return merged;
   }
 }
 

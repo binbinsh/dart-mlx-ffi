@@ -34,6 +34,7 @@ void copy_gpu_inplace(
 }
 
 array contiguous_copy_gpu(const array& arr, const Stream& s) {
+  record_gpu_contiguous_copy();
   array arr_copy(arr.shape(), arr.dtype(), nullptr, {});
   copy_gpu(arr, arr_copy, CopyType::General, s);
   return arr_copy;

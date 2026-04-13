@@ -2,44 +2,24 @@ part of '../stable_api.dart';
 
 abstract final class MlxOps {
   /// Elementwise addition.
-  static MlxArray add(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_add',
-    a,
-    b,
-    shim.dart_mlx_add,
-  );
+  static MlxArray add(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_add', a, b, shim.dart_mlx_add);
 
   /// Elementwise subtraction.
-  static MlxArray subtract(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_subtract',
-    a,
-    b,
-    shim.dart_mlx_subtract,
-  );
+  static MlxArray subtract(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_subtract', a, b, shim.dart_mlx_subtract);
 
   /// Elementwise multiplication.
-  static MlxArray multiply(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_multiply',
-    a,
-    b,
-    shim.dart_mlx_multiply,
-  );
+  static MlxArray multiply(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_multiply', a, b, shim.dart_mlx_multiply);
 
   /// Elementwise division.
-  static MlxArray divide(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_divide',
-    a,
-    b,
-    shim.dart_mlx_divide,
-  );
+  static MlxArray divide(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_divide', a, b, shim.dart_mlx_divide);
 
   /// Matrix multiplication.
-  static MlxArray matmul(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_matmul',
-    a,
-    b,
-    shim.dart_mlx_matmul,
-  );
+  static MlxArray matmul(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_matmul', a, b, shim.dart_mlx_matmul);
 
   /// Matrix multiply with additive bias: `alpha * (a @ b) + beta * c`.
   static MlxArray addmm(
@@ -70,12 +50,8 @@ abstract final class MlxOps {
   }
 
   /// Elementwise equality comparison.
-  static MlxArray equal(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_equal',
-    a,
-    b,
-    shim.dart_mlx_equal,
-  );
+  static MlxArray equal(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_equal', a, b, shim.dart_mlx_equal);
 
   /// Selects values from [x] and [y] according to [condition].
   static MlxArray where(MlxArray condition, MlxArray x, MlxArray y) {
@@ -177,12 +153,21 @@ abstract final class MlxOps {
   }
 
   /// Log-sum-exp reduction.
-  static MlxArray logSumExp(MlxArray input, {int? axis, bool keepDims = false}) {
+  static MlxArray logSumExp(
+    MlxArray input, {
+    int? axis,
+    bool keepDims = false,
+  }) {
     _clearError();
     return MlxArray._(
       _checkHandle(
         'dart_mlx_logsumexp',
-        shim.dart_mlx_logsumexp(input._handle, axis ?? 0, axis != null, keepDims),
+        shim.dart_mlx_logsumexp(
+          input._handle,
+          axis ?? 0,
+          axis != null,
+          keepDims,
+        ),
       ),
     );
   }
@@ -248,22 +233,27 @@ abstract final class MlxOps {
   }
 
   /// Broadcasts [input] to [shape].
-  static MlxArray broadcastTo(MlxArray input, List<int> shape) =>
-      _withShape(shape, (shapePointer) {
-        _clearError();
-        return MlxArray._(
-          _checkHandle(
-            'dart_mlx_broadcast_to',
-            shim.dart_mlx_broadcast_to(input._handle, shapePointer, shape.length),
-          ),
-        );
-      });
+  static MlxArray broadcastTo(MlxArray input, List<int> shape) => _withShape(
+    shape,
+    (shapePointer) {
+      _clearError();
+      return MlxArray._(
+        _checkHandle(
+          'dart_mlx_broadcast_to',
+          shim.dart_mlx_broadcast_to(input._handle, shapePointer, shape.length),
+        ),
+      );
+    },
+  );
 
   /// Expands a dimension at [axis].
   static MlxArray expandDims(MlxArray input, int axis) {
     _clearError();
     return MlxArray._(
-      _checkHandle('dart_mlx_expand_dims', shim.dart_mlx_expand_dims(input._handle, axis)),
+      _checkHandle(
+        'dart_mlx_expand_dims',
+        shim.dart_mlx_expand_dims(input._handle, axis),
+      ),
     );
   }
 
@@ -293,20 +283,12 @@ abstract final class MlxOps {
   }
 
   /// Elementwise minimum.
-  static MlxArray minimum(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_minimum',
-    a,
-    b,
-    shim.dart_mlx_minimum,
-  );
+  static MlxArray minimum(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_minimum', a, b, shim.dart_mlx_minimum);
 
   /// Elementwise maximum.
-  static MlxArray maximum(MlxArray a, MlxArray b) => _binary(
-    'dart_mlx_maximum',
-    a,
-    b,
-    shim.dart_mlx_maximum,
-  );
+  static MlxArray maximum(MlxArray a, MlxArray b) =>
+      _binary('dart_mlx_maximum', a, b, shim.dart_mlx_maximum);
 
   /// Returns argmax indices.
   static MlxArray argmax(MlxArray input, {int? axis, bool keepDims = false}) {
@@ -352,14 +334,56 @@ abstract final class MlxOps {
     );
   }
 
+  /// Returns a contiguous materialization of [input].
+  static MlxArray contiguous(MlxArray input, {bool allowColMajor = false}) {
+    final out = calloc<raw.mlx_array>();
+    final stream = calloc<raw.mlx_stream>();
+    try {
+      stream.ref.ctx = ffi.nullptr;
+      _clearError();
+      _checkStatus(
+        'mlx_contiguous',
+        raw.mlx_contiguous(
+          out,
+          input._handle.cast<raw.mlx_array>().ref,
+          allowColMajor,
+          stream.ref,
+        ),
+      );
+      return MlxArray._(_checkHandle('mlx_contiguous', out.ref.ctx));
+    } finally {
+      calloc.free(stream);
+      calloc.free(out);
+    }
+  }
+
+  /// Returns an explicit copy of [input].
+  static MlxArray copy(MlxArray input) {
+    final out = calloc<raw.mlx_array>();
+    final stream = calloc<raw.mlx_stream>();
+    try {
+      stream.ref.ctx = ffi.nullptr;
+      _clearError();
+      _checkStatus(
+        'mlx_copy',
+        raw.mlx_copy(
+          out,
+          input._handle.cast<raw.mlx_array>().ref,
+          stream.ref,
+        ),
+      );
+      return MlxArray._(_checkHandle('mlx_copy', out.ref.ctx));
+    } finally {
+      calloc.free(stream);
+      calloc.free(out);
+    }
+  }
+
   static MlxArray _binary(
     String operation,
     MlxArray a,
     MlxArray b,
-    ffi.Pointer<ffi.Void> Function(
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<ffi.Void>,
-    )
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)
     callback,
   ) {
     _clearError();

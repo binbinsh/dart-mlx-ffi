@@ -2,9 +2,12 @@
 
 // Required for using M_PI in MSVC.
 #define _USE_MATH_DEFINES
+#include <atomic>
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <execinfo.h>
+#include <iostream>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -21,6 +24,26 @@
 namespace mlx::core {
 
 namespace {
+
+thread_local const char* g_current_astype_site_name = nullptr;
+
+int trace_budget_from_env(const char* env_name, int default_budget) {
+  const char* raw = std::getenv(env_name);
+  if (raw == nullptr || raw[0] == '\0' || std::strcmp(raw, "0") == 0) {
+    return 0;
+  }
+  char* end = nullptr;
+  long parsed = std::strtol(raw, &end, 10);
+  if (end != raw) {
+    return parsed > 0 ? static_cast<int>(parsed) : 0;
+  }
+  return default_budget;
+}
+
+std::atomic<int> g_astype_site_remaining{
+    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
+std::atomic<int> g_slice_update_site_remaining{
+    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
 
 std::tuple<Shape, std::vector<int>, bool> compute_reduce_shape(
     const std::vector<int>& axes,
@@ -147,6 +170,14 @@ std::pair<int, int> extract_quantized_matmul_dims(
 
 } // namespace
 
+void set_current_astype_site_name(const char* site_name) {
+  g_current_astype_site_name = site_name;
+}
+
+const char* current_astype_site_name() {
+  return g_current_astype_site_name;
+}
+
 array arange(
     double start,
     double stop,
@@ -258,6 +289,48 @@ array linspace(
 array astype(array a, Dtype dtype, StreamOrDevice s /* = {} */) {
   if (dtype == a.dtype()) {
     return a;
+  }
+  bool trace_site =
+      (a.ndim() == 3 && a.shape(0) == 1 && a.shape(1) == 1 &&
+       a.shape(2) == 1024) ||
+      (a.ndim() == 4 && a.shape(0) == 1 && a.shape(2) == 1 &&
+       a.shape(3) == 128 && (a.shape(1) == 2 || a.shape(1) == 16));
+  if (trace_site) {
+    int prev = g_astype_site_remaining.fetch_sub(1, std::memory_order_relaxed);
+    if (prev > 0) {
+      void* frames[8];
+      int count = backtrace(frames, 8);
+      char** symbols = backtrace_symbols(frames, count);
+      auto fmt_shape = [&a]() {
+        std::ostringstream os;
+        os << "[";
+        for (int i = 0; i < a.ndim(); ++i) {
+          if (i > 0) {
+            os << ",";
+          }
+          os << a.shape(i);
+        }
+        os << "]";
+        return os.str();
+      };
+      std::cerr << "[mlx][astype-site]"
+                << " from=" << a.dtype()
+                << " to=" << dtype
+                << " shape=" << fmt_shape()
+                << " site="
+                << (g_current_astype_site_name == nullptr ? "-" : g_current_astype_site_name);
+      if (symbols != nullptr && count > 1) {
+        std::cerr << " caller1=" << symbols[1];
+        if (count > 2) {
+          std::cerr << " caller2=" << symbols[2];
+        }
+        if (count > 3) {
+          std::cerr << " caller3=" << symbols[3];
+        }
+        free(symbols);
+      }
+      std::cerr << std::endl;
+    }
   }
   auto copied_shape = a.shape(); // |a| will be moved
   return array(
@@ -839,6 +912,34 @@ array slice_update(
   auto [has_neg_strides, upd_shape] =
       normalize_slice(src.shape(), start, stop, strides);
 
+  if (update.ndim() == 4 && update.shape(0) == 1 && update.shape(1) == 2 &&
+      update.shape(2) == 1 && update.shape(3) == 128) {
+    int prev = g_slice_update_site_remaining.fetch_sub(
+        1, std::memory_order_relaxed);
+    if (prev > 0) {
+      auto fmt_shape = [](const array& arr) {
+        std::ostringstream os;
+        os << "[";
+        for (int i = 0; i < arr.ndim(); ++i) {
+          if (i > 0) {
+            os << ",";
+          }
+          os << arr.shape(i);
+        }
+        os << "]";
+        return os.str();
+      };
+      std::cerr << "[mlx][slice-update-site]"
+                << " src_dtype=" << src.dtype()
+                << " upd_dtype=" << update.dtype()
+                << " src_shape=" << fmt_shape(src)
+                << " upd_shape=" << fmt_shape(update)
+                << " src_prim=" << (src.has_primitive() ? src.primitive().name() : "-")
+                << " upd_prim=" << (update.has_primitive() ? update.primitive().name() : "-")
+                << std::endl;
+    }
+  }
+
   // Cast update to src type and broadcast update shape to slice shape
   auto upd = broadcast_to(astype(update, src.dtype(), s), upd_shape, s);
 
@@ -852,6 +953,15 @@ array slice_update(
       std::make_shared<SliceUpdate>(
           to_stream(s), std::move(start), std::move(stop), std::move(strides)),
       {src, upd});
+}
+
+void reset_ops_trace_budgets() {
+  g_astype_site_remaining.store(
+      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48),
+      std::memory_order_relaxed);
+  g_slice_update_site_remaining.store(
+      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48),
+      std::memory_order_relaxed);
 }
 
 /** Update a slice from the source array with stride 1 in each dimension */
@@ -2683,6 +2793,24 @@ array reciprocal(const array& a, StreamOrDevice s /* = {} */) {
 
 array add(const array& a, const array& b, StreamOrDevice s /* = {} */) {
   auto out_type = promote_types(a.dtype(), b.dtype());
+  if (out_type == float32 && a.ndim() == 3 && a.shape(0) == 1 &&
+      a.shape(1) == 1 && a.shape(2) == 1024) {
+    static std::atomic<int> remaining{
+        trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 24)};
+    int prev = remaining.fetch_sub(1, std::memory_order_relaxed);
+    if (prev > 0) {
+      std::cerr << "[mlx][add-site]"
+                << " a=" << a.dtype()
+                << " b=" << b.dtype()
+                << " out=" << out_type
+                << " a_prim=" << (a.has_primitive() ? a.primitive().name() : "-")
+                << " b_prim=" << (b.has_primitive() ? b.primitive().name() : "-")
+                << " a_shape=" << a.shape()
+                << " b_shape=" << b.shape()
+                << std::endl;
+    }
+  }
+  ScopedAstypeSite astype_site("ops_add");
   auto inputs =
       broadcast_arrays({astype(a, out_type, s), astype(b, out_type, s)}, s);
   auto& shape = inputs[0].shape();
@@ -2712,6 +2840,7 @@ array operator-(const array& a, const array& b) {
 
 array multiply(const array& a, const array& b, StreamOrDevice s /* = {} */) {
   auto out_type = promote_types(a.dtype(), b.dtype());
+  ScopedAstypeSite astype_site("ops_multiply");
   auto inputs =
       broadcast_arrays({astype(a, out_type, s), astype(b, out_type, s)}, s);
   auto& shape = inputs[0].shape();
@@ -4350,6 +4479,25 @@ array quantized_matmul(
     msg << "[quantized_matmul] Only real floating types are supported but "
         << "x.dtype() == " << x.dtype() << ".";
     throw std::invalid_argument(msg.str());
+  }
+  if (
+      dtype != x.dtype() && x.ndim() == 3 && x.shape(0) == 1 &&
+      x.shape(1) == 1 && x.shape(2) == 1024) {
+    static std::atomic<int> remaining{
+        trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 24)};
+    int prev = remaining.fetch_sub(1, std::memory_order_relaxed);
+    if (prev > 0) {
+      std::cerr << "[mlx][qmm-cast]"
+                << " x_dtype=" << x.dtype()
+                << " out_dtype=" << dtype
+                << " scales_dtype=" << scales.dtype()
+                << " has_bias=" << biases.has_value()
+                << " transpose=" << transpose
+                << " qmode=" << static_cast<int>(qmode)
+                << " bits=" << bits
+                << " group=" << group_size
+                << std::endl;
+    }
   }
   std::vector<array> inputs;
   if (qmode == QuantizationMode::Affine) {

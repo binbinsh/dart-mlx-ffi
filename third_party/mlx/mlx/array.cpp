@@ -1,14 +1,1009 @@
 // Copyright © 2023-2024 Apple Inc.
+#include <atomic>
+#include <cstring>
 #include <functional>
 #include <unordered_map>
 
 #include "mlx/array.h"
+#include "mlx/memory.h"
 #include "mlx/ops.h"
 #include "mlx/primitives.h"
 #include "mlx/transforms.h"
 #include "mlx/transforms_impl.h"
 
 namespace mlx::core {
+
+namespace {
+
+std::atomic<size_t> g_set_data_count{0};
+std::atomic<size_t> g_shared_buffer_copy_count{0};
+std::atomic<size_t> g_common_binary_allocation_count{0};
+std::atomic<size_t> g_common_binary_shared_copy_count{0};
+std::atomic<size_t> g_common_unary_allocation_count{0};
+std::atomic<size_t> g_common_unary_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_allocation_count{0};
+std::atomic<size_t> g_common_copy_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_scalar_allocation_count{0};
+std::atomic<size_t> g_common_copy_scalar_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_vector_allocation_count{0};
+std::atomic<size_t> g_common_copy_vector_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_general_allocation_count{0};
+std::atomic<size_t> g_common_copy_general_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_general_general_allocation_count{0};
+std::atomic<size_t> g_common_copy_general_general_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_gpri_allocation_count{0};
+std::atomic<size_t> g_common_copy_gpri_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_gpri_astype_allocation_count{0};
+std::atomic<size_t> g_common_copy_gpri_astype_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_gpri_contiguous_allocation_count{0};
+std::atomic<size_t> g_common_copy_gpri_contiguous_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_gpri_full_allocation_count{0};
+std::atomic<size_t> g_common_copy_gpri_full_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_gpri_slice_update_allocation_count{0};
+std::atomic<size_t> g_common_copy_gpri_slice_update_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_gpri_dynamic_slice_update_allocation_count{0};
+std::atomic<size_t> g_common_copy_gpri_dynamic_slice_update_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_idx_allocation_count{0};
+std::atomic<size_t> g_common_copy_idx_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_rope_allocation_count{0};
+std::atomic<size_t> g_common_copy_rope_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_matmul_allocation_count{0};
+std::atomic<size_t> g_common_copy_matmul_shared_copy_count{0};
+std::atomic<size_t> g_common_copy_hadamard_allocation_count{0};
+std::atomic<size_t> g_common_copy_hadamard_shared_copy_count{0};
+std::atomic<size_t> g_common_ternary_allocation_count{0};
+std::atomic<size_t> g_common_ternary_shared_copy_count{0};
+std::atomic<size_t> g_gpu_primitive_allocation_count{0};
+std::atomic<size_t> g_gpu_primitive_shared_copy_count{0};
+std::atomic<size_t> g_gpu_contiguous_copy_count{0};
+std::atomic<size_t> g_quantized_contiguous_x_count{0};
+std::atomic<size_t> g_quantized_contiguous_w_count{0};
+std::atomic<size_t> g_quantized_contiguous_scales_count{0};
+std::atomic<size_t> g_quantized_contiguous_biases_count{0};
+std::atomic<size_t> g_quantized_contiguous_indices_count{0};
+std::atomic<size_t> g_metal_norm_allocation_count{0};
+std::atomic<size_t> g_metal_norm_shared_copy_count{0};
+std::atomic<size_t> g_metal_matmul_allocation_count{0};
+std::atomic<size_t> g_metal_matmul_shared_copy_count{0};
+std::atomic<size_t> g_metal_quantized_allocation_count{0};
+std::atomic<size_t> g_metal_quantized_shared_copy_count{0};
+std::atomic<size_t> g_metal_sdpa_allocation_count{0};
+std::atomic<size_t> g_metal_sdpa_shared_copy_count{0};
+std::atomic<size_t> g_metal_reduce_allocation_count{0};
+std::atomic<size_t> g_metal_reduce_shared_copy_count{0};
+std::atomic<size_t> g_metal_indexing_allocation_count{0};
+std::atomic<size_t> g_metal_indexing_shared_copy_count{0};
+std::atomic<size_t> g_metal_index_concat_allocation_count{0};
+std::atomic<size_t> g_metal_index_concat_shared_copy_count{0};
+std::atomic<size_t> g_metal_index_gather_allocation_count{0};
+std::atomic<size_t> g_metal_index_gather_shared_copy_count{0};
+std::atomic<size_t> g_metal_index_gather_axis_allocation_count{0};
+std::atomic<size_t> g_metal_index_gather_axis_shared_copy_count{0};
+std::atomic<size_t> g_metal_index_dynamic_offset_allocation_count{0};
+std::atomic<size_t> g_metal_index_dynamic_offset_shared_copy_count{0};
+std::atomic<size_t> g_metal_copy_allocation_count{0};
+std::atomic<size_t> g_metal_copy_shared_copy_count{0};
+std::atomic<size_t> g_metal_direct_copy_allocation_count{0};
+std::atomic<size_t> g_metal_direct_copy_shared_copy_count{0};
+std::atomic<size_t> g_metal_rope_copy_allocation_count{0};
+std::atomic<size_t> g_metal_rope_copy_shared_copy_count{0};
+std::atomic<size_t> g_metal_scan_copy_allocation_count{0};
+std::atomic<size_t> g_metal_scan_copy_shared_copy_count{0};
+std::atomic<size_t> g_metal_primitive_copy_allocation_count{0};
+std::atomic<size_t> g_metal_primitive_copy_shared_copy_count{0};
+std::atomic<size_t> g_metal_reshape_copy_count{0};
+std::atomic<size_t> g_metal_reshape_shared_count{0};
+std::atomic<size_t> g_donation_reject_not_unique_count{0};
+std::atomic<size_t> g_donation_reject_desc_not_unique_count{0};
+std::atomic<size_t> g_donation_reject_data_not_unique_count{0};
+std::atomic<size_t> g_donation_reject_itemsize_count{0};
+std::atomic<size_t> g_donation_reject_oversize_count{0};
+std::atomic<size_t> g_donation_reject_layout_count{0};
+std::atomic<size_t> g_common_copy_reject_desc_not_unique_count{0};
+std::atomic<size_t> g_common_copy_reject_data_not_unique_count{0};
+std::atomic<size_t> g_common_binary_reject_desc_not_unique_count{0};
+std::atomic<size_t> g_common_binary_reject_data_not_unique_count{0};
+std::atomic<size_t> g_common_unary_reject_desc_not_unique_count{0};
+std::atomic<size_t> g_common_unary_reject_data_not_unique_count{0};
+std::atomic<size_t> g_common_binary_data_not_unique_scalar_vector_count{0};
+std::atomic<size_t> g_common_binary_data_not_unique_vector_scalar_count{0};
+std::atomic<size_t> g_common_binary_data_not_unique_vector_vector_count{0};
+std::atomic<size_t> g_common_binary_data_not_unique_general_count{0};
+std::atomic<size_t> g_common_binary_add_data_not_unique_vector_vector_count{0};
+std::atomic<size_t> g_common_binary_add_data_not_unique_general_count{0};
+std::atomic<size_t>
+    g_common_binary_multiply_data_not_unique_vector_vector_count{0};
+std::atomic<size_t> g_common_binary_multiply_data_not_unique_general_count{0};
+thread_local const char* g_current_binary_op_name = nullptr;
+thread_local const char* g_current_copy_site_name = nullptr;
+
+} // namespace
+
+size_t get_set_data_count() {
+  return g_set_data_count.load(std::memory_order_relaxed);
+}
+
+size_t get_shared_buffer_copy_count() {
+  return g_shared_buffer_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_binary_allocation_count() {
+  return g_common_binary_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_binary_shared_copy_count() {
+  return g_common_binary_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_unary_allocation_count() {
+  return g_common_unary_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_unary_shared_copy_count() {
+  return g_common_unary_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_allocation_count() {
+  return g_common_copy_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_shared_copy_count() {
+  return g_common_copy_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_scalar_allocation_count() {
+  return g_common_copy_scalar_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_scalar_shared_copy_count() {
+  return g_common_copy_scalar_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_vector_allocation_count() {
+  return g_common_copy_vector_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_vector_shared_copy_count() {
+  return g_common_copy_vector_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_general_allocation_count() {
+  return g_common_copy_general_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_general_shared_copy_count() {
+  return g_common_copy_general_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_general_general_allocation_count() {
+  return g_common_copy_general_general_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_general_general_shared_copy_count() {
+  return g_common_copy_general_general_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_allocation_count() {
+  return g_common_copy_gpri_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_shared_copy_count() {
+  return g_common_copy_gpri_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_astype_allocation_count() {
+  return g_common_copy_gpri_astype_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_astype_shared_copy_count() {
+  return g_common_copy_gpri_astype_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_contiguous_allocation_count() {
+  return g_common_copy_gpri_contiguous_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_contiguous_shared_copy_count() {
+  return g_common_copy_gpri_contiguous_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_full_allocation_count() {
+  return g_common_copy_gpri_full_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_full_shared_copy_count() {
+  return g_common_copy_gpri_full_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_slice_update_allocation_count() {
+  return g_common_copy_gpri_slice_update_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_slice_update_shared_copy_count() {
+  return g_common_copy_gpri_slice_update_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_dynamic_slice_update_allocation_count() {
+  return g_common_copy_gpri_dynamic_slice_update_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_gpri_dynamic_slice_update_shared_copy_count() {
+  return g_common_copy_gpri_dynamic_slice_update_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_idx_allocation_count() {
+  return g_common_copy_idx_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_idx_shared_copy_count() {
+  return g_common_copy_idx_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_rope_allocation_count() {
+  return g_common_copy_rope_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_rope_shared_copy_count() {
+  return g_common_copy_rope_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_matmul_allocation_count() {
+  return g_common_copy_matmul_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_matmul_shared_copy_count() {
+  return g_common_copy_matmul_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_hadamard_allocation_count() {
+  return g_common_copy_hadamard_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_hadamard_shared_copy_count() {
+  return g_common_copy_hadamard_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_ternary_allocation_count() {
+  return g_common_ternary_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_ternary_shared_copy_count() {
+  return g_common_ternary_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_gpu_primitive_allocation_count() {
+  return g_gpu_primitive_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_gpu_primitive_shared_copy_count() {
+  return g_gpu_primitive_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_gpu_contiguous_copy_count() {
+  return g_gpu_contiguous_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_quantized_contiguous_x_count() {
+  return g_quantized_contiguous_x_count.load(std::memory_order_relaxed);
+}
+
+size_t get_quantized_contiguous_w_count() {
+  return g_quantized_contiguous_w_count.load(std::memory_order_relaxed);
+}
+
+size_t get_quantized_contiguous_scales_count() {
+  return g_quantized_contiguous_scales_count.load(std::memory_order_relaxed);
+}
+
+size_t get_quantized_contiguous_biases_count() {
+  return g_quantized_contiguous_biases_count.load(std::memory_order_relaxed);
+}
+
+size_t get_quantized_contiguous_indices_count() {
+  return g_quantized_contiguous_indices_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_norm_allocation_count() {
+  return g_metal_norm_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_norm_shared_copy_count() {
+  return g_metal_norm_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_matmul_allocation_count() {
+  return g_metal_matmul_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_matmul_shared_copy_count() {
+  return g_metal_matmul_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_quantized_allocation_count() {
+  return g_metal_quantized_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_quantized_shared_copy_count() {
+  return g_metal_quantized_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_sdpa_allocation_count() {
+  return g_metal_sdpa_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_sdpa_shared_copy_count() {
+  return g_metal_sdpa_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_reduce_allocation_count() {
+  return g_metal_reduce_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_reduce_shared_copy_count() {
+  return g_metal_reduce_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_indexing_allocation_count() {
+  return g_metal_indexing_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_indexing_shared_copy_count() {
+  return g_metal_indexing_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_index_concat_allocation_count() {
+  return g_metal_index_concat_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_index_concat_shared_copy_count() {
+  return g_metal_index_concat_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_index_gather_allocation_count() {
+  return g_metal_index_gather_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_index_gather_shared_copy_count() {
+  return g_metal_index_gather_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_index_gather_axis_allocation_count() {
+  return g_metal_index_gather_axis_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_metal_index_gather_axis_shared_copy_count() {
+  return g_metal_index_gather_axis_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_metal_index_dynamic_offset_allocation_count() {
+  return g_metal_index_dynamic_offset_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_metal_index_dynamic_offset_shared_copy_count() {
+  return g_metal_index_dynamic_offset_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_metal_copy_allocation_count() {
+  return g_metal_copy_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_copy_shared_copy_count() {
+  return g_metal_copy_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_direct_copy_allocation_count() {
+  return g_metal_direct_copy_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_direct_copy_shared_copy_count() {
+  return g_metal_direct_copy_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_rope_copy_allocation_count() {
+  return g_metal_rope_copy_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_rope_copy_shared_copy_count() {
+  return g_metal_rope_copy_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_scan_copy_allocation_count() {
+  return g_metal_scan_copy_allocation_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_scan_copy_shared_copy_count() {
+  return g_metal_scan_copy_shared_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_primitive_copy_allocation_count() {
+  return g_metal_primitive_copy_allocation_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_metal_primitive_copy_shared_copy_count() {
+  return g_metal_primitive_copy_shared_copy_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_metal_reshape_copy_count() {
+  return g_metal_reshape_copy_count.load(std::memory_order_relaxed);
+}
+
+size_t get_metal_reshape_shared_count() {
+  return g_metal_reshape_shared_count.load(std::memory_order_relaxed);
+}
+
+size_t get_donation_reject_not_unique_count() {
+  return g_donation_reject_not_unique_count.load(std::memory_order_relaxed);
+}
+
+size_t get_donation_reject_itemsize_count() {
+  return g_donation_reject_itemsize_count.load(std::memory_order_relaxed);
+}
+
+size_t get_donation_reject_desc_not_unique_count() {
+  return g_donation_reject_desc_not_unique_count.load(std::memory_order_relaxed);
+}
+
+size_t get_donation_reject_data_not_unique_count() {
+  return g_donation_reject_data_not_unique_count.load(std::memory_order_relaxed);
+}
+
+size_t get_donation_reject_oversize_count() {
+  return g_donation_reject_oversize_count.load(std::memory_order_relaxed);
+}
+
+size_t get_donation_reject_layout_count() {
+  return g_donation_reject_layout_count.load(std::memory_order_relaxed);
+}
+
+size_t get_common_copy_reject_desc_not_unique_count() {
+  return g_common_copy_reject_desc_not_unique_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_copy_reject_data_not_unique_count() {
+  return g_common_copy_reject_data_not_unique_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_reject_desc_not_unique_count() {
+  return g_common_binary_reject_desc_not_unique_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_reject_data_not_unique_count() {
+  return g_common_binary_reject_data_not_unique_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_unary_reject_desc_not_unique_count() {
+  return g_common_unary_reject_desc_not_unique_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_unary_reject_data_not_unique_count() {
+  return g_common_unary_reject_data_not_unique_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_data_not_unique_scalar_vector_count() {
+  return g_common_binary_data_not_unique_scalar_vector_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_data_not_unique_vector_scalar_count() {
+  return g_common_binary_data_not_unique_vector_scalar_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_data_not_unique_vector_vector_count() {
+  return g_common_binary_data_not_unique_vector_vector_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_data_not_unique_general_count() {
+  return g_common_binary_data_not_unique_general_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_add_data_not_unique_vector_vector_count() {
+  return g_common_binary_add_data_not_unique_vector_vector_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_add_data_not_unique_general_count() {
+  return g_common_binary_add_data_not_unique_general_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_multiply_data_not_unique_vector_vector_count() {
+  return g_common_binary_multiply_data_not_unique_vector_vector_count.load(
+      std::memory_order_relaxed);
+}
+
+size_t get_common_binary_multiply_data_not_unique_general_count() {
+  return g_common_binary_multiply_data_not_unique_general_count.load(
+      std::memory_order_relaxed);
+}
+
+void record_common_binary_allocation() {
+  g_common_binary_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_binary_shared_copy() {
+  g_common_binary_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_unary_allocation() {
+  g_common_unary_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_unary_shared_copy() {
+  g_common_unary_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_copy_allocation() {
+  g_common_copy_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_copy_shared_copy() {
+  g_common_copy_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_copy_scalar_allocation() {
+  g_common_copy_scalar_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_copy_scalar_shared_copy() {
+  g_common_copy_scalar_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_copy_vector_allocation() {
+  g_common_copy_vector_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_copy_vector_shared_copy() {
+  g_common_copy_vector_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_copy_general_allocation() {
+  g_common_copy_general_allocation_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_copy_general_shared_copy() {
+  g_common_copy_general_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_copy_general_general_allocation() {
+  g_common_copy_general_general_allocation_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_copy_general_general_shared_copy() {
+  g_common_copy_general_general_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_current_copy_site_allocation() {
+  if (g_current_copy_site_name == nullptr) {
+    return;
+  }
+  if (std::strcmp(g_current_copy_site_name, "gpri_astype") == 0) {
+    g_common_copy_gpri_allocation_count.fetch_add(1, std::memory_order_relaxed);
+    g_common_copy_gpri_astype_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "gpri_contiguous") == 0) {
+    g_common_copy_idx_allocation_count.fetch_add(1, std::memory_order_relaxed);
+    g_common_copy_gpri_contiguous_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "gpri_full") == 0) {
+    g_common_copy_rope_allocation_count.fetch_add(1, std::memory_order_relaxed);
+    g_common_copy_gpri_full_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (
+      std::strcmp(g_current_copy_site_name, "gpri_slice_update") == 0) {
+    g_common_copy_matmul_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+    g_common_copy_gpri_slice_update_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (
+      std::strcmp(g_current_copy_site_name, "gpri_dynamic_slice_update") ==
+      0) {
+    g_common_copy_hadamard_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+    g_common_copy_gpri_dynamic_slice_update_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "idx") == 0) {
+    g_common_copy_idx_allocation_count.fetch_add(1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "rope") == 0) {
+    g_common_copy_rope_allocation_count.fetch_add(1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "matmul") == 0) {
+    g_common_copy_matmul_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "hadamard") == 0) {
+    g_common_copy_hadamard_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "norm") == 0) {
+    g_common_copy_rope_allocation_count.fetch_add(1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "reduce") == 0) {
+    g_common_copy_matmul_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "sdpa") == 0) {
+    g_common_copy_hadamard_allocation_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+}
+
+void record_current_copy_site_shared_copy() {
+  if (g_current_copy_site_name == nullptr) {
+    return;
+  }
+  if (std::strcmp(g_current_copy_site_name, "gpri_astype") == 0) {
+    g_common_copy_gpri_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+    g_common_copy_gpri_astype_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "gpri_contiguous") == 0) {
+    g_common_copy_idx_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+    g_common_copy_gpri_contiguous_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "gpri_full") == 0) {
+    g_common_copy_rope_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+    g_common_copy_gpri_full_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (
+      std::strcmp(g_current_copy_site_name, "gpri_slice_update") == 0) {
+    g_common_copy_matmul_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+    g_common_copy_gpri_slice_update_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (
+      std::strcmp(g_current_copy_site_name, "gpri_dynamic_slice_update") ==
+      0) {
+    g_common_copy_hadamard_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+    g_common_copy_gpri_dynamic_slice_update_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "idx") == 0) {
+    g_common_copy_idx_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "rope") == 0) {
+    g_common_copy_rope_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "matmul") == 0) {
+    g_common_copy_matmul_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "hadamard") == 0) {
+    g_common_copy_hadamard_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "norm") == 0) {
+    g_common_copy_rope_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "reduce") == 0) {
+    g_common_copy_matmul_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  } else if (std::strcmp(g_current_copy_site_name, "sdpa") == 0) {
+    g_common_copy_hadamard_shared_copy_count.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+}
+
+void record_common_ternary_allocation() {
+  g_common_ternary_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_ternary_shared_copy() {
+  g_common_ternary_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_gpu_primitive_allocation() {
+  g_gpu_primitive_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_gpu_primitive_shared_copy() {
+  g_gpu_primitive_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_gpu_contiguous_copy() {
+  g_gpu_contiguous_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_quantized_contiguous_x() {
+  g_quantized_contiguous_x_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_quantized_contiguous_w() {
+  g_quantized_contiguous_w_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_quantized_contiguous_scales() {
+  g_quantized_contiguous_scales_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_quantized_contiguous_biases() {
+  g_quantized_contiguous_biases_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_quantized_contiguous_indices() {
+  g_quantized_contiguous_indices_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_norm_allocation() {
+  g_metal_norm_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_norm_shared_copy() {
+  g_metal_norm_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_matmul_allocation() {
+  g_metal_matmul_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_matmul_shared_copy() {
+  g_metal_matmul_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_quantized_allocation() {
+  g_metal_quantized_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_quantized_shared_copy() {
+  g_metal_quantized_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_sdpa_allocation() {
+  g_metal_sdpa_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_sdpa_shared_copy() {
+  g_metal_sdpa_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_reduce_allocation() {
+  g_metal_reduce_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_reduce_shared_copy() {
+  g_metal_reduce_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_indexing_allocation() {
+  g_metal_indexing_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_indexing_shared_copy() {
+  g_metal_indexing_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_index_concat_allocation() {
+  g_metal_index_concat_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_index_concat_shared_copy() {
+  g_metal_index_concat_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_index_gather_allocation() {
+  g_metal_index_gather_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_index_gather_shared_copy() {
+  g_metal_index_gather_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_index_gather_axis_allocation() {
+  g_metal_index_gather_axis_allocation_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_index_gather_axis_shared_copy() {
+  g_metal_index_gather_axis_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_index_dynamic_offset_allocation() {
+  g_metal_index_dynamic_offset_allocation_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_index_dynamic_offset_shared_copy() {
+  g_metal_index_dynamic_offset_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_copy_allocation() {
+  g_metal_copy_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_copy_shared_copy() {
+  g_metal_copy_shared_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_direct_copy_allocation() {
+  g_metal_direct_copy_allocation_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_direct_copy_shared_copy() {
+  g_metal_direct_copy_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_rope_copy_allocation() {
+  g_metal_rope_copy_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_rope_copy_shared_copy() {
+  g_metal_rope_copy_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_scan_copy_allocation() {
+  g_metal_scan_copy_allocation_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_scan_copy_shared_copy() {
+  g_metal_scan_copy_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_primitive_copy_allocation() {
+  g_metal_primitive_copy_allocation_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_primitive_copy_shared_copy() {
+  g_metal_primitive_copy_shared_copy_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_metal_reshape_copy() {
+  g_metal_reshape_copy_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_metal_reshape_shared() {
+  g_metal_reshape_shared_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_donation_reject_not_unique() {
+  g_donation_reject_not_unique_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_donation_reject_itemsize() {
+  g_donation_reject_itemsize_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_donation_reject_desc_not_unique() {
+  g_donation_reject_desc_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_donation_reject_data_not_unique() {
+  g_donation_reject_data_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_donation_reject_oversize() {
+  g_donation_reject_oversize_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_donation_reject_layout() {
+  g_donation_reject_layout_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_common_copy_reject_desc_not_unique() {
+  g_common_copy_reject_desc_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_copy_reject_data_not_unique() {
+  g_common_copy_reject_data_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_reject_desc_not_unique() {
+  g_common_binary_reject_desc_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_reject_data_not_unique() {
+  g_common_binary_reject_data_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_unary_reject_desc_not_unique() {
+  g_common_unary_reject_desc_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_unary_reject_data_not_unique() {
+  g_common_unary_reject_data_not_unique_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_data_not_unique_scalar_vector() {
+  g_common_binary_data_not_unique_scalar_vector_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_data_not_unique_vector_scalar() {
+  g_common_binary_data_not_unique_vector_scalar_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_data_not_unique_vector_vector() {
+  g_common_binary_data_not_unique_vector_vector_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_data_not_unique_general() {
+  g_common_binary_data_not_unique_general_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_add_data_not_unique_vector_vector() {
+  g_common_binary_add_data_not_unique_vector_vector_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_add_data_not_unique_general() {
+  g_common_binary_add_data_not_unique_general_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_multiply_data_not_unique_vector_vector() {
+  g_common_binary_multiply_data_not_unique_vector_vector_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void record_common_binary_multiply_data_not_unique_general() {
+  g_common_binary_multiply_data_not_unique_general_count.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+void set_current_binary_op_name(const char* op_name) {
+  g_current_binary_op_name = op_name;
+}
+
+const char* current_binary_op_name() {
+  return g_current_binary_op_name;
+}
+
+void set_current_copy_site_name(const char* site_name) {
+  g_current_copy_site_name = site_name;
+}
+
+const char* current_copy_site_name() {
+  return g_current_copy_site_name;
+}
 
 array::array(const std::complex<float>& val, Dtype dtype /* = complex64 */)
     : array_desc_(std::make_shared<ArrayDesc>(Shape{}, dtype)) {
@@ -166,6 +1161,7 @@ bool array::is_tracer() const {
 }
 
 void array::set_data(allocator::Buffer buffer, Deleter d) {
+  g_set_data_count.fetch_add(1, std::memory_order_relaxed);
   array_desc_->data = std::make_shared<Data>(buffer, d);
   array_desc_->offset = 0;
   array_desc_->data_size = size();
@@ -181,6 +1177,7 @@ void array::set_data(
     Strides strides,
     Flags flags,
     Deleter d) {
+  g_set_data_count.fetch_add(1, std::memory_order_relaxed);
   array_desc_->data = std::make_shared<Data>(buffer, d);
   array_desc_->offset = 0;
   array_desc_->data_size = data_size;
@@ -194,6 +1191,7 @@ void array::copy_shared_buffer(
     Flags flags,
     size_t data_size,
     int64_t offset /* = 0 */) {
+  g_shared_buffer_copy_count.fetch_add(1, std::memory_order_relaxed);
   array_desc_->data = other.array_desc_->data;
   array_desc_->strides = strides;
   array_desc_->flags = flags;

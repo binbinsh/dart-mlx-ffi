@@ -10,6 +10,7 @@ import 'package:test/test.dart';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
 import 'package:dart_mlx_ffi/models.dart';
+import 'package:dart_mlx_ffi/src/models/paddle_ocr_vl/paddle_ocr_vl.dart';
 
 /// Path to the PaddleOCR-VL-1.5 8-bit model snapshot.
 final _snapshotPath = () {
@@ -24,6 +25,14 @@ const _refDir = '/tmp/paddle_v15_ref';
 
 /// Load a reference .npy file as an MlxArray via the MLX C-level loader.
 MlxArray _loadRef(String name) => mx.io.load('$_refDir/$name.npy');
+
+List<int> _readIdsFile(String name) => File('$_refDir/$name')
+    .readAsStringSync()
+    .trim()
+    .split(',')
+    .where((part) => part.isNotEmpty)
+    .map(int.parse)
+    .toList(growable: false);
 
 /// Compute max and mean absolute difference between two arrays.
 /// Returns (maxDiff, meanDiff).
@@ -109,6 +118,8 @@ void main() {
     () {
       late PaddleOcrVlRunner runner;
       late MlxArray imageNhwc;
+      late int gridH;
+      late int gridW;
 
       setUpAll(() {
         if (!refDirExists) {
@@ -134,6 +145,8 @@ void main() {
         );
 
         imageNhwc = _loadRef('image_nhwc');
+        gridH = imageNhwc.shape[1] ~/ runner.config.visionPatchSize;
+        gridW = imageNhwc.shape[2] ~/ runner.config.visionPatchSize;
         // ignore: avoid_print
         print(
           'Loaded NHWC image: '
@@ -270,11 +283,6 @@ void main() {
             .map((n) => n.toInt())
             .toList();
 
-        // Grid dimensions: 728/14=52 rows, 1316/14=94 cols of patches
-        // (the runner internally divides by merge_size=2 to get 26x47)
-        const gridH = 52;
-        const gridW = 94;
-
         final result = runner.debugMultimodalPositionIds(
           inputIdsList,
           gridH,
@@ -290,11 +298,8 @@ void main() {
       });
 
       test('M-RoPE cos/sin produce correct shape', () {
-        // Dart's M-RoPE combines 3 position streams into a single
-        // interleaved [1, 1, seqLen, headDim] tensor, while Python keeps
-        // them as [3, 1, seqLen, headDim]. The actual RoPE application
-        // is equivalent — verified by the exact position ID match and
-        // the greedy first token match below.
+        // PaddleOCR-VL upstream keeps the three multimodal position streams
+        // separate: [3, 1, seqLen, headDim].
         final refInputIds = _loadRef('input_ids');
         MlxRuntime.evalAll([refInputIds]);
         final inputIdsList = refInputIds
@@ -303,27 +308,26 @@ void main() {
             .map((n) => n.toInt())
             .toList();
 
-        const gridH = 52;
-        const gridW = 94;
-
         final result = runner.debugMropeCosSin(inputIdsList, gridH, gridW);
         // ignore: avoid_print
         print('  Dart cos: shape=${result.cos.shape}');
         // ignore: avoid_print
         print('  Dart sin: shape=${result.sin.shape}');
 
-        // Dart output: [1, 1, 1239, 128] (combined from 3 streams)
-        expect(result.cos.shape, [1, 1, 1239, 128]);
-        expect(result.sin.shape, [1, 1, 1239, 128]);
+        expect(result.cos.shape, [3, 1, inputIdsList.length, 128]);
+        expect(result.sin.shape, [3, 1, inputIdsList.length, 128]);
         result.cos.close();
         result.sin.close();
         refInputIds.close();
       });
 
-      test('greedy first token matches Python reference (806 = LE)', () {
+      test('greedy first token matches Python reference', () {
         final refLogits = _loadRef('last_logits');
         // ignore: avoid_print
         print('  Reference logits: shape=${refLogits.shape}');
+        final pyGeneratedIds = _readIdsFile('py_generated_ids.txt');
+        expect(pyGeneratedIds, isNotEmpty, reason: 'Python generated ids empty');
+        final expectedFirstToken = pyGeneratedIds.first;
 
         // Verify Python reference greedy token
         final refArgmax = mx.argmax(refLogits);
@@ -334,8 +338,10 @@ void main() {
         print('  Python greedy token: $pyGreedyToken');
         expect(
           pyGreedyToken,
-          806,
-          reason: 'Python reference should pick token 806 (LE)',
+          expectedFirstToken,
+          reason:
+              'Python logits argmax should match first generated token '
+              '$expectedFirstToken',
         );
 
         // Build the full prompt token IDs from reference
@@ -360,10 +366,8 @@ void main() {
 
         expect(
           firstGenToken,
-          806,
-          reason:
-              'Dart greedy first token should be 806 (LE), '
-              'got $firstGenToken',
+          expectedFirstToken,
+          reason: 'Dart greedy first token should be $expectedFirstToken',
         );
 
         refLogits.close();
@@ -382,6 +386,9 @@ void main() {
 
         // First run: warmup + prompt processing overhead included
         const maxTokens = 128;
+        final pyGeneratedIds = _readIdsFile('py_generated_ids.txt');
+        expect(pyGeneratedIds, isNotEmpty, reason: 'Python generated ids empty');
+        final expectedFirstToken = pyGeneratedIds.first;
         final sw1 = Stopwatch()..start();
         final result1 = runner.generateFromImageDetailed(
           inputIdsList,
@@ -405,7 +412,7 @@ void main() {
 
         // Sanity checks
         expect(genTokens1, greaterThan(0));
-        expect(result1.fullTokenIds[promptLen], 806);
+        expect(result1.fullTokenIds[promptLen], expectedFirstToken);
         // Should finish 128 tokens in under 30 seconds
         expect(
           totalMs1,
@@ -414,7 +421,7 @@ void main() {
         );
       });
 
-      test('full generation text matches Python reference', () {
+      test('full generation token prefix matches Python reference', () {
         // Load Python reference full output
         final pyOutputFile = File('$_refDir/full_output.txt');
         if (!pyOutputFile.existsSync()) {
@@ -455,22 +462,24 @@ void main() {
 
         // We need to decode token IDs to text.
         // Since we don't have the tokenizer in dart-mlx-ffi, compare token
-        // IDs instead. Load the Python's input_ids to verify the prompt
-        // matches, then compare generated token IDs by saving them for
-        // external comparison.
+        // IDs instead.
         final dartOutputFile = File('$_refDir/dart_generated_ids.txt');
         dartOutputFile.writeAsStringSync(generatedIds.join(','));
         // ignore: avoid_print
         print('  Dart generated IDs saved to ${dartOutputFile.path}');
 
-        // At minimum verify first token matches
-        expect(generatedIds.first, 806, reason: 'First token should be 806');
-
-        // Verify we generated a reasonable number of tokens
+        final pyGeneratedIdsFile = File('$_refDir/py_generated_ids.txt');
+        if (!pyGeneratedIdsFile.existsSync()) {
+          fail('Python reference py_generated_ids.txt not found');
+        }
+        final pyGeneratedIds = _readIdsFile('py_generated_ids.txt');
+        const prefixLen = 128;
         expect(
-          generatedIds.length,
-          greaterThan(50),
-          reason: 'Should generate at least 50 tokens for this image',
+          generatedIds.take(prefixLen).toList(),
+          pyGeneratedIds.take(prefixLen).toList(),
+          reason:
+              'Dart generated token prefix must match Python reference for '
+              'the first $prefixLen tokens',
         );
 
         // ignore: avoid_print

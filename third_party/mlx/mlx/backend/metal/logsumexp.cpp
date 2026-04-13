@@ -1,10 +1,12 @@
 // Copyright © 2023-2024 Apple Inc.
 #include <algorithm>
 
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 
 namespace mlx::core {
@@ -25,6 +27,7 @@ void LogSumExp::eval_gpu(const std::vector<array>& inputs, array& out) {
     if (x.flags().contiguous && x.strides()[x.ndim() - 1] == 1) {
       return x;
     } else {
+      ScopedCopySite copy_site("reduce");
       array x_copy = contiguous_copy_gpu(x, s);
       d.add_temporary(x_copy, s.index);
       return x_copy;
@@ -33,6 +36,7 @@ void LogSumExp::eval_gpu(const std::vector<array>& inputs, array& out) {
 
   auto in = ensure_contiguous(inputs[0]);
   if (in.flags().row_contiguous) {
+    record_metal_reduce_allocation();
     out.set_data(allocator::malloc(out.nbytes()));
   } else {
     auto n = in.shape(-1);
@@ -47,6 +51,7 @@ void LogSumExp::eval_gpu(const std::vector<array>& inputs, array& out) {
           (out.shape(i) == 1 || strides[i - 1] == out.shape(i) * strides[i]);
     }
     flags.col_contiguous = col_contig;
+    record_metal_reduce_allocation();
     out.set_data(
         allocator::malloc(in.nbytes() / n),
         in.data_size() / n,

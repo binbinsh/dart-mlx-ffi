@@ -1,16 +1,21 @@
 // Copyright © 2025 Apple Inc.
 
 #include "mlx/primitives.h"
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/common/slicing.h"
 #include "mlx/backend/common/utils.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/gpu/slicing.h"
+#include "mlx/memory.h"
 
 #if defined(MLX_USE_CUDA)
 #include <nvtx3/nvtx3.hpp>
 #endif
 
 #include <cassert>
+#include <cstdlib>
+#include <iostream>
+#include <sstream>
 
 #if defined(MLX_USE_CUDA)
 #define MLX_PROFILER_RANGE(message) nvtx3::scoped_range r(message)
@@ -19,6 +24,111 @@
 #endif
 
 namespace mlx::core {
+
+namespace {
+
+int trace_budget_from_env(const char* env_name, int default_budget) {
+  const char* raw = std::getenv(env_name);
+  if (raw == nullptr || raw[0] == '\0' || std::strcmp(raw, "0") == 0) {
+    return 0;
+  }
+  char* end = nullptr;
+  long parsed = std::strtol(raw, &end, 10);
+  if (end != raw) {
+    return parsed > 0 ? static_cast<int>(parsed) : 0;
+  }
+  return default_budget;
+}
+
+std::atomic<int> g_trace_astype_remaining{
+    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
+std::atomic<int> g_trace_full_remaining{
+    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32)};
+std::atomic<int> g_trace_slice_update_remaining{
+    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32)};
+
+void maybe_trace_gpu_primitive_copy(
+    const char* op_name,
+    CopyType ctype,
+    const array& in,
+    const array& out) {
+  const bool is_traced_op =
+      std::strcmp(op_name, "AsType") == 0 ||
+      std::strcmp(op_name, "Full") == 0 ||
+      std::strcmp(op_name, "SliceUpdate") == 0;
+  if (!is_traced_op) {
+    return;
+  }
+  if (out.ndim() < 2 || out.ndim() > 4 || out.shape(0) != 1 ||
+      out.shape(-1) < 64) {
+    return;
+  }
+  if (out.ndim() >= 3 && out.shape(1) > 512) {
+    return;
+  }
+  auto& remaining = std::strcmp(op_name, "AsType") == 0
+      ? g_trace_astype_remaining
+      : (std::strcmp(op_name, "Full") == 0
+            ? g_trace_full_remaining
+            : g_trace_slice_update_remaining);
+  int prev = remaining.fetch_sub(1, std::memory_order_relaxed);
+  if (prev <= 0) {
+    return;
+  }
+  auto fmt_dims = [](const auto& vec) {
+    std::ostringstream os;
+    os << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+      if (i > 0) {
+        os << ",";
+      }
+      os << vec[i];
+    }
+    os << "]";
+    return os.str();
+  };
+  const char* ctype_name = "general_general";
+  switch (ctype) {
+    case CopyType::Scalar:
+      ctype_name = "scalar";
+      break;
+    case CopyType::Vector:
+      ctype_name = "vector";
+      break;
+    case CopyType::General:
+      ctype_name = "general";
+      break;
+    case CopyType::GeneralGeneral:
+      ctype_name = "general_general";
+      break;
+  }
+  std::cerr << "[mlx][gpri-copy]"
+            << " op=" << op_name
+            << " src=" << (in.has_primitive() ? in.primitive().name() : "-")
+            << " ctype=" << ctype_name
+            << " in_shape=" << fmt_dims(in.shape())
+            << " in_strides=" << fmt_dims(in.strides())
+            << " in_row=" << in.flags().row_contiguous
+            << " in_col=" << in.flags().col_contiguous
+            << " out_shape=" << fmt_dims(out.shape())
+            << " out_strides=" << fmt_dims(out.strides())
+            << std::endl;
+}
+
+} // namespace
+
+void reset_gpu_primitive_trace_budgets() {
+  g_trace_astype_remaining.store(
+      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48),
+      std::memory_order_relaxed);
+  g_trace_full_remaining.store(
+      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32),
+      std::memory_order_relaxed);
+  g_trace_slice_update_remaining.store(
+      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32),
+      std::memory_order_relaxed);
+  reset_ops_trace_budgets();
+}
 
 void AsStrided::eval_gpu(const std::vector<array>& inputs, array& out) {
   MLX_PROFILER_RANGE("AsStrided::eval_gpu");
@@ -29,6 +139,8 @@ void AsType::eval_gpu(const std::vector<array>& inputs, array& out) {
   MLX_PROFILER_RANGE("AsType::eval_gpu");
   CopyType ctype =
       inputs[0].flags().contiguous ? CopyType::Vector : CopyType::General;
+  maybe_trace_gpu_primitive_copy("AsType", ctype, inputs[0], out);
+  ScopedCopySite copy_site("gpri_astype");
   copy_gpu(inputs[0], out, ctype);
 }
 
@@ -57,6 +169,8 @@ void Contiguous::eval_gpu(const std::vector<array>& inputs, array& out) {
        (allow_col_major_ && in.flags().col_contiguous))) {
     out.copy_shared_buffer(in);
   } else {
+    maybe_trace_gpu_primitive_copy("Contiguous", CopyType::General, in, out);
+    ScopedCopySite copy_site("gpri_contiguous");
     copy_gpu(in, out, CopyType::General);
   }
 }
@@ -83,12 +197,14 @@ void Depends::eval_gpu(
 void DynamicSlice::eval_gpu(const std::vector<array>& inputs, array& out) {
   MLX_PROFILER_RANGE("DynamicSlice::eval_gpu");
   if (out.size() == 0) {
+    record_gpu_primitive_allocation();
     out.set_data(allocator::malloc(0));
     return;
   }
 
   auto& in = inputs[0];
   auto& start = inputs[1];
+  record_gpu_primitive_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   auto s = stream();
@@ -112,6 +228,7 @@ void DynamicSliceUpdate::eval_gpu(
     array& out) {
   MLX_PROFILER_RANGE("DynamicSliceUpdate::eval_gpu");
   if (out.size() == 0) {
+    record_gpu_primitive_allocation();
     out.set_data(allocator::malloc(0));
     return;
   }
@@ -121,6 +238,7 @@ void DynamicSliceUpdate::eval_gpu(
   auto& start_indices = inputs[2];
 
   if (upd.size() == 0) {
+    record_gpu_primitive_shared_copy();
     out.copy_shared_buffer(in);
     return;
   }
@@ -130,6 +248,12 @@ void DynamicSliceUpdate::eval_gpu(
   auto ctype = in.flags().contiguous && in.size() == in.data_size()
       ? CopyType::Vector
       : CopyType::General;
+  maybe_trace_gpu_primitive_copy(
+      "DynamicSliceUpdate",
+      in.data_size() == 1 ? CopyType::Scalar : ctype,
+      in,
+      out);
+  ScopedCopySite copy_site("gpri_dynamic_slice_update");
   copy_gpu(in, out, in.data_size() == 1 ? CopyType::Scalar : ctype, s);
 
   auto out_offset =
@@ -164,6 +288,8 @@ void Full::eval_gpu(const std::vector<array>& inputs, array& out) {
   } else {
     ctype = CopyType::General;
   }
+  maybe_trace_gpu_primitive_copy("Full", ctype, in, out);
+  ScopedCopySite copy_site("gpri_full");
   copy_gpu(in, out, ctype);
 }
 
@@ -209,6 +335,7 @@ void Slice::eval_gpu(const std::vector<array>& inputs, array& out) {
   MLX_PROFILER_RANGE("Slice::eval_gpu");
   assert(inputs.size() == 1);
   if (out.size() == 0) {
+    record_gpu_primitive_allocation();
     out.set_data(allocator::malloc(0));
     return;
   }
@@ -220,6 +347,7 @@ void Slice::eval_gpu(const std::vector<array>& inputs, array& out) {
 void SliceUpdate::eval_gpu(const std::vector<array>& inputs, array& out) {
   assert(inputs.size() == 2);
   if (out.size() == 0) {
+    record_gpu_primitive_allocation();
     out.set_data(allocator::malloc(0));
     return;
   }
@@ -228,6 +356,7 @@ void SliceUpdate::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto& upd = inputs[1];
 
   if (upd.size() == 0) {
+    record_gpu_primitive_shared_copy();
     out.copy_shared_buffer(in);
     return;
   }
@@ -235,6 +364,12 @@ void SliceUpdate::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto ctype = in.flags().contiguous && in.size() == in.data_size()
       ? CopyType::Vector
       : CopyType::General;
+  maybe_trace_gpu_primitive_copy(
+      "SliceUpdate",
+      in.data_size() == 1 ? CopyType::Scalar : ctype,
+      in,
+      out);
+  ScopedCopySite copy_site("gpri_slice_update");
   copy_gpu(in, out, in.data_size() == 1 ? CopyType::Scalar : ctype, stream());
   auto [data_offset, out_strides] =
       prepare_slice(out, start_indices_, strides_);
@@ -288,10 +423,12 @@ void View::eval_gpu(const std::vector<array>& inputs, array& out) {
       strides[i] *= ibytes;
       strides[i] /= obytes;
     }
+    record_gpu_primitive_shared_copy();
     out.copy_shared_buffer(
         in, strides, in.flags(), in.data_size() * ibytes / obytes);
   } else {
     auto tmp = array(in.shape(), in.dtype(), nullptr, {});
+    record_gpu_primitive_allocation();
     tmp.set_data(allocator::malloc(tmp.nbytes()));
     copy_gpu_inplace(in, tmp, CopyType::General, stream());
 
@@ -300,6 +437,7 @@ void View::eval_gpu(const std::vector<array>& inputs, array& out) {
     flags.row_contiguous = true;
     auto max_dim = std::max_element(out.shape().begin(), out.shape().end());
     flags.col_contiguous = out.size() <= 1 || out.size() == *max_dim;
+    record_gpu_primitive_shared_copy();
     out.copy_shared_buffer(tmp, out.strides(), flags, out.size());
   }
 }

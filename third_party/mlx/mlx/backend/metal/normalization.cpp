@@ -1,12 +1,14 @@
 // Copyright © 2024 Apple Inc.
 #include <algorithm>
 
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels/defines.h"
 #include "mlx/backend/metal/reduce.h"
 #include "mlx/backend/metal/utils.h"
 #include "mlx/fast_primitives.h"
+#include "mlx/memory.h"
 
 namespace mlx::core::fast {
 
@@ -30,8 +32,10 @@ void RMSNorm::eval_gpu(
     }
     if (no_copy) {
       if (x.is_donatable()) {
+        record_metal_norm_shared_copy();
         out.copy_shared_buffer(x);
       } else {
+        record_metal_norm_allocation();
         out.set_data(
             allocator::malloc(x.data_size() * x.itemsize()),
             x.data_size(),
@@ -40,7 +44,9 @@ void RMSNorm::eval_gpu(
       }
       return x;
     } else {
+      ScopedCopySite copy_site("norm");
       array x_copy = contiguous_copy_gpu(x, s);
+      record_metal_norm_shared_copy();
       out.copy_shared_buffer(x_copy);
       return x_copy;
     }
@@ -105,6 +111,7 @@ void RMSNormVJP::eval_gpu(
     if (x.flags().row_contiguous) {
       return {x, false};
     }
+    ScopedCopySite copy_site("norm");
     array x_copy = contiguous_copy_gpu(x, s);
     return {x_copy, true};
   };
@@ -122,11 +129,14 @@ void RMSNormVJP::eval_gpu(
   // Allocate space for the outputs
   bool g_in_gx = false;
   if (x.is_donatable()) {
+    record_metal_norm_shared_copy();
     gx.copy_shared_buffer(x);
   } else if (g.is_donatable()) {
+    record_metal_norm_shared_copy();
     gx.copy_shared_buffer(g);
     g_in_gx = true;
   } else {
+    record_metal_norm_allocation();
     gx.set_data(allocator::malloc(gx.nbytes()));
   }
   if (g_copied && !g_in_gx) {
@@ -142,12 +152,15 @@ void RMSNormVJP::eval_gpu(
       (has_w) ? array({n_rows, x.shape().back()}, gw.dtype(), nullptr, {}) : w;
   if (has_w) {
     if (!g_in_gx && donate_g) {
+      record_metal_norm_shared_copy();
       gw_temp.copy_shared_buffer(g);
     } else {
+      record_metal_norm_allocation();
       gw_temp.set_data(allocator::malloc(gw_temp.nbytes()));
       d.add_temporary(gw_temp, s.index);
     }
   }
+  record_metal_norm_allocation();
   gw.set_data(allocator::malloc(gw.nbytes()));
 
   const int simd_size = 32;
@@ -225,8 +238,10 @@ void LayerNorm::eval_gpu(
     }
     if (no_copy) {
       if (x.is_donatable()) {
+        record_metal_norm_shared_copy();
         out.copy_shared_buffer(x);
       } else {
+        record_metal_norm_allocation();
         out.set_data(
             allocator::malloc(x.data_size() * x.itemsize()),
             x.data_size(),
@@ -235,7 +250,9 @@ void LayerNorm::eval_gpu(
       }
       return x;
     } else {
+      ScopedCopySite copy_site("norm");
       array x_copy = contiguous_copy_gpu(x, s);
+      record_metal_norm_shared_copy();
       out.copy_shared_buffer(x_copy);
       return x_copy;
     }
@@ -311,6 +328,7 @@ void LayerNormVJP::eval_gpu(
     if (x.flags().row_contiguous) {
       return {x, false};
     }
+    ScopedCopySite copy_site("norm");
     array x_copy = contiguous_copy_gpu(x, s);
     return {x_copy, true};
   };
@@ -331,11 +349,14 @@ void LayerNormVJP::eval_gpu(
   // Allocate space for the outputs
   bool g_in_gx = false;
   if (donate_x) {
+    record_metal_norm_shared_copy();
     gx.copy_shared_buffer(x);
   } else if (donate_g) {
+    record_metal_norm_shared_copy();
     gx.copy_shared_buffer(g);
     g_in_gx = true;
   } else {
+    record_metal_norm_allocation();
     gx.set_data(allocator::malloc(gx.nbytes()));
   }
   if (g_copied && !g_in_gx) {
@@ -351,13 +372,17 @@ void LayerNormVJP::eval_gpu(
       (has_w) ? array({n_rows, x.shape().back()}, gw.dtype(), nullptr, {}) : w;
   if (has_w) {
     if (!g_in_gx && donate_g) {
+      record_metal_norm_shared_copy();
       gw_temp.copy_shared_buffer(g);
     } else {
+      record_metal_norm_allocation();
       gw_temp.set_data(allocator::malloc(gw_temp.nbytes()));
       d.add_temporary(gw_temp, s.index);
     }
   }
+  record_metal_norm_allocation();
   gw.set_data(allocator::malloc(gw.nbytes()));
+  record_metal_norm_allocation();
   gb.set_data(allocator::malloc(gb.nbytes()));
 
   // Finish with the gradient for b in case we had a b

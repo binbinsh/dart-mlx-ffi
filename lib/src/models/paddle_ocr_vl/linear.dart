@@ -4,6 +4,15 @@ part of 'paddle_ocr_vl.dart';
 // Generic linear building blocks (shared by both vision and language paths)
 // ---------------------------------------------------------------------------
 
+int _debugQuantLinearBudget() {
+  final raw = Platform.environment['DART_MLX_PADDLE_DEBUG_QUANT_LINEAR'];
+  if (raw == null || raw.isEmpty || raw == '0' || raw == 'false') return 0;
+  final parsed = int.tryParse(raw);
+  return parsed != null && parsed > 0 ? parsed : 16;
+}
+
+int _debugQuantLinearRemaining = _debugQuantLinearBudget();
+
 sealed class _LinearBase {
   const _LinearBase();
 
@@ -39,6 +48,96 @@ sealed class _LinearBase {
     if (!tensors.containsKey('$prefix.weight')) return null;
     return load(tensors, prefix, defaultQuant: defaultQuant);
   }
+
+  static _LinearBase? maybeFuse(
+    List<_LinearBase> linears, {
+    required String prefix,
+  }) {
+    if (linears.isEmpty) return null;
+    final first = linears.first;
+    if (linears.every((linear) => linear is _QuantLinear) &&
+        first is _QuantLinear) {
+      final quant = linears.cast<_QuantLinear>();
+      final spec = first.quantSpec;
+      final biases = quant.map((linear) => linear.biases).toList();
+      if (!quant.every((linear) =>
+          linear.quantSpec == spec &&
+          linear.weight.shape.length == first.weight.shape.length &&
+          linear.scales.shape.length == first.scales.shape.length &&
+          linear.weight.shape.skip(1).join(',') ==
+              first.weight.shape.skip(1).join(',') &&
+          linear.scales.shape.skip(1).join(',') ==
+              first.scales.shape.skip(1).join(',') &&
+          ((linear.biases == null) == (first.biases == null)))) {
+        return null;
+      }
+      if (first.biases != null && biases.any((bias) => bias == null)) {
+        return null;
+      }
+      final fusedWeight = mx.concatenate(
+        quant.map((linear) => linear.weight).toList(growable: false),
+        axis: 0,
+      );
+      final fusedScales = mx.concatenate(
+        quant.map((linear) => linear.scales).toList(growable: false),
+        axis: 0,
+      );
+      final fusedBiases = first.biases == null
+          ? null
+          : mx.concatenate(
+              quant.map((linear) => linear.biases!).toList(growable: false),
+              axis: 0,
+            );
+      final denseBiases = quant.map((linear) => linear.bias).toList();
+      final fusedBias = denseBiases.any((bias) => bias != null)
+          ? mx.concatenate(
+              denseBiases.map((bias) {
+                if (bias == null) {
+                  throw StateError('Incompatible fused quant bias layout.');
+                }
+                return bias;
+              }).toList(growable: false),
+              axis: 0,
+            )
+          : null;
+      return _QuantLinear(
+        fusedWeight,
+        fusedScales,
+        fusedBiases,
+        fusedBias,
+        spec,
+        prefix,
+      );
+    }
+    if (linears.every((linear) => linear is _DenseLinear) &&
+        first is _DenseLinear) {
+      final dense = linears.cast<_DenseLinear>();
+      if (!dense.every((linear) =>
+          linear.weight.shape.length == first.weight.shape.length &&
+          linear.weight.shape.skip(1).join(',') ==
+              first.weight.shape.skip(1).join(','))) {
+        return null;
+      }
+      final fusedWeight = mx.concatenate(
+        dense.map((linear) => linear.weight).toList(growable: false),
+        axis: 0,
+      );
+      final denseBiases = dense.map((linear) => linear.bias).toList();
+      final fusedBias = denseBiases.any((bias) => bias != null)
+          ? mx.concatenate(
+              denseBiases.map((bias) {
+                if (bias == null) {
+                  throw StateError('Incompatible fused dense bias layout.');
+                }
+                return bias;
+              }).toList(growable: false),
+              axis: 0,
+            )
+          : null;
+      return _DenseLinear(fusedWeight, fusedBias, prefix);
+    }
+    return null;
+  }
 }
 
 final class _DenseLinear extends _LinearBase {
@@ -50,14 +149,19 @@ final class _DenseLinear extends _LinearBase {
 
   @override
   MlxArray apply(MlxArray input) {
-    final y = mx.matmul(input, weight.transpose());
-    if (bias == null) return y;
-    final b = bias!.reshape([1, bias!.shape[0]]);
+    final weightT = weight.transpose();
     try {
-      return mx.add(y, b);
+      if (bias == null) {
+        return mx.matmul(input, weightT);
+      }
+      final b = bias!.reshape([1, bias!.shape[0]]);
+      try {
+        return mx.addmm(b, input, weightT);
+      } finally {
+        b.close();
+      }
     } finally {
-      b.close();
-      y.close();
+      weightT.close();
     }
   }
 
@@ -102,6 +206,16 @@ final class _QuantLinear extends _LinearBase {
       bits: quantSpec.bits,
       mode: quantSpec.mode,
     );
+    if (y.shape.length == 2 && y.shape[0] == 1 && y.shape[1] == 1024) {
+      if (_debugQuantLinearRemaining > 0) {
+        _debugQuantLinearRemaining--;
+        stderr.writeln(
+          '[pocr][quant-linear] input=${input.dtype} scales=${scales.dtype} '
+          'qbias=${biases?.dtype} bias=${bias?.dtype} output=${y.dtype} '
+          'inShape=${input.shape} outShape=${y.shape} prefix=$prefix',
+        );
+      }
+    }
     if (bias == null) return y;
     final b = bias!.reshape([1, bias!.shape[0]]);
     try {
@@ -291,28 +405,32 @@ final class _VisionWeights {
 /// Attention weights for an ERNIE-4.5 decoder layer.
 final class _LmAttentionWeights {
   const _LmAttentionWeights({
-    required this.qProj,
-    required this.kProj,
-    required this.vProj,
+    this.qProj,
+    this.kProj,
+    this.vProj,
+    this.qkvProj,
     required this.oProj,
   });
 
-  final _LinearBase qProj;
-  final _LinearBase kProj;
-  final _LinearBase vProj;
+  final _LinearBase? qProj;
+  final _LinearBase? kProj;
+  final _LinearBase? vProj;
+  final _LinearBase? qkvProj;
   final _LinearBase oProj;
 }
 
 /// SiLU-gated MLP weights for an ERNIE-4.5 decoder layer.
 final class _LmMlpWeights {
   const _LmMlpWeights({
-    required this.gateProj,
-    required this.upProj,
+    this.gateProj,
+    this.upProj,
+    this.gateUpProj,
     required this.downProj,
   });
 
-  final _LinearBase gateProj;
-  final _LinearBase upProj;
+  final _LinearBase? gateProj;
+  final _LinearBase? upProj;
+  final _LinearBase? gateUpProj;
   final _LinearBase downProj;
 }
 

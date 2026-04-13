@@ -17,15 +17,25 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     void Function(String message)? onStage,
   }) {
     final vCfg = config._vision;
+    final targetPixelDType = _visionWeights.patchEmbedWeight.dtype;
+    final visionPixels = pixels.dtype == targetPixelDType
+        ? pixels
+        : pixels.astype(targetPixelDType);
 
-    // 1. Patch embedding (Conv2d, stride = patchSize)
-    final patchOut = mx.conv2d(
-      pixels,
-      _visionWeights.patchEmbedWeight,
-      stride: [vCfg.patchSize, vCfg.patchSize],
-    );
-    final gridH = patchOut.shape[1];
-    final gridW = patchOut.shape[2];
+    // 1. Patch embedding on pre-split 14x14 tiles, matching upstream
+    final patchInfo = _patchifyVisionImage(visionPixels, vCfg.patchSize);
+    final gridH = patchInfo.gridHeight;
+    final gridW = patchInfo.gridWidth;
+    final patches = patchInfo.patches;
+    final flatPatches = patches
+        .reshape([gridH * gridW, visionPixels.shape[3], vCfg.patchSize, vCfg.patchSize])
+        .transposeAxes([0, 2, 3, 1]);
+    patches.close();
+    if (!identical(visionPixels, pixels)) {
+      visionPixels.close();
+    }
+    final patchOut = mx.conv2d(flatPatches, _visionWeights.patchEmbedWeight);
+    flatPatches.close();
     var hidden = patchOut.reshape([gridH * gridW, vCfg.hiddenSize]);
     patchOut.close();
 
@@ -34,6 +44,12 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
       final biased = mx.add(hidden, _visionWeights.patchEmbedBias!);
       hidden.close();
       hidden = biased;
+    }
+    final targetPatchDType = _visionWeights.patchEmbedWeight.dtype;
+    if (hidden.dtype != targetPatchDType) {
+      final cast = hidden.astype(targetPatchDType);
+      hidden.close();
+      hidden = cast;
     }
 
     // 2. Interpolated position embedding
@@ -57,90 +73,20 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
       gridW,
       MlxDType.MLX_FLOAT32,
     );
-    MlxArray? windowRotaryPosEmb;
-
-    final windowSize = config.recommendedVisionWindowSizeForCurrentPlatform;
-    final windowedLayerCount = math.min(
-      config.recommendedVisionWindowedLayerCountForCurrentPlatform,
-      _visionWeights.blocks.length,
-    );
-    _VisionWindowLayout? windowLayout;
-    var isWindowOrdered = false;
-    if (windowSize > 0 &&
-        windowedLayerCount > 0 &&
-        (gridH > windowSize || gridW > windowSize)) {
-      windowLayout = _buildVisionWindowLayout(gridH, gridW, windowSize);
-      final reorder = MlxArray.fromInt32List(
-        windowLayout.windowIndices,
-        shape: [windowLayout.windowIndices.length],
-      );
-      final reorderedHidden = hidden.take(reorder, axis: 0);
-      final reorderedRotary = baseRotaryPosEmb.take(reorder, axis: 0);
-      hidden.close();
-      reorder.close();
-      hidden = reorderedHidden;
-      windowRotaryPosEmb = reorderedRotary;
-      isWindowOrdered = true;
-      if (config.enableVisionLayerwiseEvalForCurrentPlatform) {
-        MlxRuntime.evalAll([hidden, windowRotaryPosEmb]);
-      }
-      onStage?.call(
-        'encodeImage: window attention enabled windowSize=$windowSize '
-        'windows=${windowLayout.windowLengths.length} '
-        'layers=$windowedLayerCount',
-      );
-    }
 
     // 4. ViT transformer blocks
     final evalBatch = config.visionEvalBatchSizeForCurrentPlatform;
     for (var i = 0; i < _visionWeights.blocks.length; i++) {
-      final useWindowForLayer =
-          windowLayout != null &&
-          i < windowedLayerCount &&
-          windowRotaryPosEmb != null;
       hidden = _visionBlock(
         _visionWeights.blocks[i],
         hidden,
         vCfg,
-        useWindowForLayer ? windowRotaryPosEmb : baseRotaryPosEmb,
-        windowLayout: useWindowForLayer ? windowLayout : null,
+        baseRotaryPosEmb,
       );
-      // Batch-eval: materialize every N layers (or at the last layer, or
-      // right before the windowed→global transition).  This reduces GPU
-      // dispatch overhead compared to evaluating after every single layer.
       final isLastLayer = i + 1 == _visionWeights.blocks.length;
-      final isTransitionLayer = isWindowOrdered && i + 1 == windowedLayerCount;
-      final isGlobalAfterWindow =
-          windowLayout != null && !useWindowForLayer && i + 1 > windowedLayerCount;
-      final effectiveEvalBatch = isGlobalAfterWindow ? 1 : evalBatch;
       if (config.enableVisionLayerwiseEvalForCurrentPlatform &&
-          (isLastLayer ||
-              isTransitionLayer ||
-              (i + 1) % effectiveEvalBatch == 0)) {
+          (isLastLayer || (i + 1) % evalBatch == 0)) {
         MlxRuntime.evalAll([hidden]);
-      }
-      if (isWindowOrdered && i + 1 == windowedLayerCount) {
-        final restore = MlxArray.fromInt32List(
-          windowLayout!.restoreIndices,
-          shape: [windowLayout.restoreIndices.length],
-        );
-        final restored = hidden.take(restore, axis: 0);
-        hidden.close();
-        restore.close();
-        hidden = restored;
-        if (config.enableVisionLayerwiseEvalForCurrentPlatform) {
-          MlxRuntime.evalAll([hidden]);
-        }
-        final activeWindowRotary = windowRotaryPosEmb;
-        if (activeWindowRotary != null) {
-          activeWindowRotary.close();
-        }
-        windowRotaryPosEmb = null;
-        isWindowOrdered = false;
-        onStage?.call(
-          'encodeImage: restored patch order after '
-          '$windowedLayerCount windowed layers',
-        );
       }
       if ((i + 1) % 3 == 0 || i + 1 == _visionWeights.blocks.length) {
         onStage?.call(
@@ -148,21 +94,7 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
         );
       }
     }
-    windowRotaryPosEmb?.close();
     baseRotaryPosEmb.close();
-
-    if (isWindowOrdered && windowLayout != null) {
-      final restore = MlxArray.fromInt32List(
-        windowLayout.restoreIndices,
-        shape: [windowLayout.restoreIndices.length],
-      );
-      final restored = hidden.take(restore, axis: 0);
-      hidden.close();
-      restore.close();
-      hidden = restored;
-      MlxRuntime.evalAll([hidden]);
-      onStage?.call('encodeImage: restored patch order after window attention');
-    }
 
     final postNorm = _visionLayerNorm(
       hidden,
@@ -181,6 +113,34 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     return (hidden: merged, gridHeight: gridH, gridWidth: gridW);
   }
 
+  ({MlxArray patches, int gridHeight, int gridWidth}) _patchifyVisionImage(
+    MlxArray pixels,
+    int patchSize,
+  ) {
+    final gridH = pixels.shape[1] ~/ patchSize;
+    final gridW = pixels.shape[2] ~/ patchSize;
+    final channels = pixels.shape[3];
+    final reshaped = pixels.reshape([
+      pixels.shape[0],
+      gridH,
+      patchSize,
+      gridW,
+      patchSize,
+      channels,
+    ]);
+    final transposed = reshaped.transposeAxes([0, 1, 3, 5, 2, 4]);
+    reshaped.close();
+    final patches = transposed.reshape([
+      pixels.shape[0],
+      gridH * gridW,
+      channels,
+      patchSize,
+      patchSize,
+    ]);
+    transposed.close();
+    return (patches: patches, gridHeight: gridH, gridWidth: gridW);
+  }
+
   // -----------------------------------------------------------------------
   // Position embedding + vision rotary helpers
   // -----------------------------------------------------------------------
@@ -192,17 +152,37 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     final posEmbed = _visionWeights.positionEmbedding;
     late final Float32List dense;
     if (posEmbed case final _QuantLinear q) {
-      final dequantized = mx.quant.dequantize(
-        q.matrix,
-        groupSize: q.quantSpec.groupSize,
-        bits: q.quantSpec.bits,
-        mode: q.quantSpec.mode,
-        dtype: MlxDType.MLX_FLOAT32,
-      );
+      final rowCount = q.scales.shape[0];
+      final rowIds = Int32List(rowCount);
+      for (var i = 0; i < rowCount; i++) {
+        rowIds[i] = i;
+      }
+      final rows = MlxArray.fromInt32List(rowIds, shape: [rowCount]);
       try {
-        dense = dequantized.toFloat32List();
+        final rowsW = q.weight.take(rows, axis: 0);
+        final rowsS = q.scales.take(rows, axis: 0);
+        final rowsB = q.biases?.take(rows, axis: 0);
+        final gathered = MlxQuantizedMatrix(rowsW, rowsS, rowsB);
+        try {
+          final dequantized = mx.quant.dequantize(
+            gathered,
+            groupSize: q.quantSpec.groupSize,
+            bits: q.quantSpec.bits,
+            mode: q.quantSpec.mode,
+            dtype: MlxDType.MLX_FLOAT32,
+          );
+          try {
+            dense = dequantized.toFloat32List();
+          } finally {
+            dequantized.close();
+          }
+        } finally {
+          rowsB?.close();
+          rowsS.close();
+          rowsW.close();
+        }
       } finally {
-        dequantized.close();
+        rows.close();
       }
     } else if (posEmbed case final _DenseLinear d) {
       dense = d.weight.toFloat32List();
@@ -221,66 +201,159 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     final hiddenSize = config._vision.hiddenSize;
     final base = _fullVisionPositionEmbedding();
     final baseGrid = math.sqrt(base.length / hiddenSize).round();
-    final result = Float32List(gridH * gridW * hiddenSize);
-
-    final rowFloor = List<int>.filled(gridH, 0);
-    final rowCeil = List<int>.filled(gridH, 0);
-    final rowWeight = List<double>.filled(gridH, 0);
-    final colFloor = List<int>.filled(gridW, 0);
-    final colCeil = List<int>.filled(gridW, 0);
-    final colWeight = List<double>.filled(gridW, 0);
-
-    for (var y = 0; y < gridH; y++) {
-      final rowPosition = gridH == 1
-          ? 0.0
-          : ((y + 0.5) * baseGrid / gridH) - 0.5;
-      final unclampedFloor = rowPosition.floor();
-      final unclampedCeil = unclampedFloor + 1;
-      rowFloor[y] = unclampedFloor.clamp(0, baseGrid - 1);
-      rowCeil[y] = unclampedCeil.clamp(0, baseGrid - 1);
-      rowWeight[y] = rowPosition - rowFloor[y];
-    }
-
-    for (var x = 0; x < gridW; x++) {
-      final colPosition = gridW == 1
-          ? 0.0
-          : ((x + 0.5) * baseGrid / gridW) - 0.5;
-      final unclampedFloor = colPosition.floor();
-      final unclampedCeil = unclampedFloor + 1;
-      colFloor[x] = unclampedFloor.clamp(0, baseGrid - 1);
-      colCeil[x] = unclampedCeil.clamp(0, baseGrid - 1);
-      colWeight[x] = colPosition - colFloor[x];
-    }
-
-    for (var y = 0; y < gridH; y++) {
-      final rw = rowWeight[y];
-      final oneMinusRw = 1.0 - rw;
-      for (var x = 0; x < gridW; x++) {
-        final cw = colWeight[x];
-        final oneMinusCw = 1.0 - cw;
-        final topLeft = ((rowFloor[y] * baseGrid) + colFloor[x]) * hiddenSize;
-        final topRight = ((rowFloor[y] * baseGrid) + colCeil[x]) * hiddenSize;
-        final bottomLeft = ((rowCeil[y] * baseGrid) + colFloor[x]) * hiddenSize;
-        final bottomRight = ((rowCeil[y] * baseGrid) + colCeil[x]) * hiddenSize;
-        final target = ((y * gridW) + x) * hiddenSize;
-        for (var c = 0; c < hiddenSize; c++) {
-          result[target + c] =
-              (oneMinusRw * oneMinusCw * base[topLeft + c]) +
-              (oneMinusRw * cw * base[topRight + c]) +
-              (rw * oneMinusCw * base[bottomLeft + c]) +
-              (rw * cw * base[bottomRight + c]);
-        }
-      }
-    }
-
-    final out = MlxArray.fromFloat32List(
-      result,
-      shape: [gridH * gridW, hiddenSize],
+    final flatTable32 = MlxArray.fromFloat32List(
+      base,
+      shape: [baseGrid * baseGrid, hiddenSize],
     );
-    if (dtype == MlxDType.MLX_FLOAT32) return out;
-    final cast = out.astype(dtype);
-    out.close();
-    return cast;
+    late final MlxArray flatTable;
+    if (dtype == MlxDType.MLX_FLOAT32) {
+      flatTable = flatTable32;
+    } else {
+      flatTable = flatTable32.astype(dtype);
+      flatTable32.close();
+    }
+    try {
+      final table = flatTable.reshape([baseGrid, baseGrid, hiddenSize]);
+      try {
+        final rowPositions = gridH == 1
+            ? MlxArray.fromFloat32List([0.0], shape: [1])
+            : ((mx.arange(0, gridH.toDouble(), 1, dtype: MlxDType.MLX_FLOAT32) +
+                        MlxArray.full([], 0.5, dtype: MlxDType.MLX_FLOAT32)) *
+                    MlxArray.full(
+                      [],
+                      baseGrid / gridH,
+                      dtype: MlxDType.MLX_FLOAT32,
+                    )) -
+                MlxArray.full([], 0.5, dtype: MlxDType.MLX_FLOAT32);
+        final colPositions = gridW == 1
+            ? MlxArray.fromFloat32List([0.0], shape: [1])
+            : ((mx.arange(0, gridW.toDouble(), 1, dtype: MlxDType.MLX_FLOAT32) +
+                        MlxArray.full([], 0.5, dtype: MlxDType.MLX_FLOAT32)) *
+                    MlxArray.full(
+                      [],
+                      baseGrid / gridW,
+                      dtype: MlxDType.MLX_FLOAT32,
+                    )) -
+                MlxArray.full([], 0.5, dtype: MlxDType.MLX_FLOAT32);
+        try {
+          final rowPositionsList = rowPositions.toFloat32List();
+          final colPositionsList = colPositions.toFloat32List();
+          final rowFloorList = List<int>.filled(gridH, 0);
+          final rowCeilList = List<int>.filled(gridH, 0);
+          final colFloorList = List<int>.filled(gridW, 0);
+          final colCeilList = List<int>.filled(gridW, 0);
+          final rowWeightList = Float32List(gridH);
+          final colWeightList = Float32List(gridW);
+          for (var i = 0; i < gridH; i++) {
+            final pos = rowPositionsList[i];
+            final floor = pos.floor();
+            final ceil = floor + 1;
+            rowFloorList[i] = floor.clamp(0, baseGrid - 1);
+            rowCeilList[i] = ceil.clamp(0, baseGrid - 1);
+            rowWeightList[i] = pos - rowFloorList[i];
+          }
+          for (var i = 0; i < gridW; i++) {
+            final pos = colPositionsList[i];
+            final floor = pos.floor();
+            final ceil = floor + 1;
+            colFloorList[i] = floor.clamp(0, baseGrid - 1);
+            colCeilList[i] = ceil.clamp(0, baseGrid - 1);
+            colWeightList[i] = pos - colFloorList[i];
+          }
+          final rowFloor = MlxArray.fromInt32List(rowFloorList, shape: [gridH]);
+          final colFloor = MlxArray.fromInt32List(colFloorList, shape: [gridW]);
+          final rowCeil = MlxArray.fromInt32List(rowCeilList, shape: [gridH]);
+          final colCeil = MlxArray.fromInt32List(colCeilList, shape: [gridW]);
+          try {
+            final rowWeight = MlxArray.fromFloat32List(
+              rowWeightList,
+              shape: [gridH],
+            );
+            final colWeight = MlxArray.fromFloat32List(
+              colWeightList,
+              shape: [gridW],
+            );
+            try {
+              List<MlxArray> mesh(MlxArray a, MlxArray b) =>
+                  mx.meshgrid([a, b], indexing: 'ij');
+
+              MlxArray gatherPixels(MlxArray rowIdx, MlxArray colIdx) {
+                final flatIndices =
+                    (rowIdx *
+                        MlxArray.full(
+                          [],
+                          baseGrid.toDouble(),
+                          dtype: MlxDType.MLX_INT32,
+                        )) +
+                    colIdx;
+                final gathered = flatTable.take(flatIndices.reshape([gridH * gridW]), axis: 0);
+                flatIndices.close();
+                return gathered.reshape([gridH, gridW, hiddenSize]);
+              }
+
+              final tlGrid = mesh(rowFloor, colFloor);
+              final blGrid = mesh(rowCeil, colFloor);
+              final trGrid = mesh(rowFloor, colCeil);
+              final brGrid = mesh(rowCeil, colCeil);
+              final topLeft = gatherPixels(tlGrid[0], tlGrid[1]);
+              final bottomLeft = gatherPixels(blGrid[0], blGrid[1]);
+              final topRight = gatherPixels(trGrid[0], trGrid[1]);
+              final bottomRight = gatherPixels(brGrid[0], brGrid[1]);
+              for (final arr in [...tlGrid, ...blGrid, ...trGrid, ...brGrid]) {
+                arr.close();
+              }
+              try {
+                final extraDims = List<int>.filled(table.ndim - 2, 1);
+                final rWeight = rowWeight.reshape([gridH, 1, ...extraDims]);
+                final cWeight = colWeight.reshape([1, gridW, ...extraDims]);
+                final one = MlxArray.full([], 1.0, dtype: MlxDType.MLX_FLOAT32);
+                try {
+                  final result = (((one - rWeight) * (one - cWeight)) * topLeft) +
+                      (((one - rWeight) * cWeight) * topRight) +
+                      ((rWeight * (one - cWeight)) * bottomLeft) +
+                      ((rWeight * cWeight) * bottomRight);
+                  try {
+                    final cast = result.astype(dtype);
+                    try {
+                      MlxRuntime.evalAll([cast]);
+                      return cast.reshape([gridH * gridW, hiddenSize]);
+                    } finally {
+                      cast.close();
+                    }
+                  } finally {
+                    result.close();
+                  }
+                } finally {
+                  one.close();
+                  rWeight.close();
+                  cWeight.close();
+                }
+              } finally {
+                topLeft.close();
+                topRight.close();
+                bottomLeft.close();
+                bottomRight.close();
+              }
+            } finally {
+              rowWeight.close();
+              colWeight.close();
+            }
+          } finally {
+            rowFloor.close();
+            colFloor.close();
+            rowCeil.close();
+            colCeil.close();
+          }
+        } finally {
+          rowPositions.close();
+          colPositions.close();
+        }
+      } finally {
+        table.close();
+      }
+    } finally {
+      flatTable.close();
+    }
   }
 
   MlxArray _buildVisionRotaryPosEmbedding(
@@ -290,32 +363,78 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
   ) {
     final seqLen = gridH * gridW;
     final rotaryDim = config._vision.headDim ~/ 2;
-    final invFreqCount = rotaryDim ~/ 2;
     final maxGrid = math.max(gridH, gridW);
+    final invFreq = rotaryDim == 36
+        ? MlxArray.fromFloat32List(
+            const <double>[
+              1.0,
+              0.5994842052459717,
+              0.3593813478946686,
+              0.2154434472322464,
+              0.1291549652814865,
+              0.07742635905742645,
+              0.04641588404774666,
+              0.02782559022307396,
+              0.01668100617825985,
+              0.009999999776482582,
+              0.005994840525090694,
+              0.0035938136279582977,
+              0.002154434099793434,
+              0.001291549764573574,
+              0.0007742635207250714,
+              0.00046415894757956266,
+              0.00027825593133457005,
+              0.00016681008855812252,
+            ],
+            shape: [18],
+          )
+        : (() {
+            final idx = mx.arange(
+              0,
+              rotaryDim.toDouble(),
+              2,
+              dtype: MlxDType.MLX_FLOAT32,
+            );
+            final div = idx /
+                MlxArray.full(
+                  [],
+                  rotaryDim.toDouble(),
+                  dtype: MlxDType.MLX_FLOAT32,
+                );
+            idx.close();
+            final logTheta = MlxArray.full(
+              [],
+              10000.0,
+              dtype: MlxDType.MLX_FLOAT32,
+            ).log();
+            final neg = (div * logTheta).negative();
+            div.close();
+            logTheta.close();
+            final created = neg.exp();
+            neg.close();
+            return created;
+          })();
+    final seq = mx.arange(0, maxGrid.toDouble(), 1, dtype: MlxDType.MLX_FLOAT32);
+    final rotaryFull = mx.outer(seq, invFreq);
+    seq.close();
+    invFreq.close();
 
-    final base = Float32List(maxGrid * invFreqCount);
-    for (var pos = 0; pos < maxGrid; pos++) {
-      for (var i = 0; i < invFreqCount; i++) {
-        final exponent = (2 * i) / rotaryDim;
-        base[(pos * invFreqCount) + i] =
-            pos / math.pow(10000.0, exponent).toDouble();
-      }
-    }
-
-    final freqs = Float32List(seqLen * rotaryDim);
+    final rowIds = Int32List(seqLen);
+    final colIds = Int32List(seqLen);
     for (var idx = 0; idx < seqLen; idx++) {
-      final row = idx ~/ gridW;
-      final col = idx % gridW;
-      final target = idx * rotaryDim;
-      final rowSource = row * invFreqCount;
-      final colSource = col * invFreqCount;
-      for (var i = 0; i < invFreqCount; i++) {
-        freqs[target + i] = base[rowSource + i];
-        freqs[target + invFreqCount + i] = base[colSource + i];
-      }
+      rowIds[idx] = idx ~/ gridW;
+      colIds[idx] = idx % gridW;
     }
-
-    final out = MlxArray.fromFloat32List(freqs, shape: [seqLen, rotaryDim]);
+    final rowIdx = MlxArray.fromInt32List(rowIds, shape: [seqLen]);
+    final colIdx = MlxArray.fromInt32List(colIds, shape: [seqLen]);
+    final rowPart = rotaryFull.take(rowIdx, axis: 0);
+    final colPart = rotaryFull.take(colIdx, axis: 0);
+    rotaryFull.close();
+    rowIdx.close();
+    colIdx.close();
+    final out = mx.concatenate([rowPart, colPart], axis: 1);
+    rowPart.close();
+    colPart.close();
     if (dtype == MlxDType.MLX_FLOAT32) return out;
     final cast = out.astype(dtype);
     out.close();
@@ -325,23 +444,37 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
   MlxArray _applyVisionRotary(MlxArray tensor, MlxArray rotaryPosEmb) {
     final cosBase = rotaryPosEmb.cos();
     final sinBase = rotaryPosEmb.sin();
-    final cos = cosBase.expandDims(1).tile([1, 1, 2]).expandDims(0);
-    final sin = sinBase.expandDims(1).tile([1, 1, 2]).expandDims(0);
+    final cos1 = cosBase.expandDims(1);
+    final sin1 = sinBase.expandDims(1);
+    final cos2 = mx.concatenate([cos1, cos1], axis: 2).expandDims(0);
+    final sin2 = mx.concatenate([sin1, sin1], axis: 2).expandDims(0);
     cosBase.close();
     sinBase.close();
+    cos1.close();
+    sin1.close();
     final rotated = _rotateHalfVision(tensor);
     try {
-      final left = tensor * cos;
-      final right = rotated * sin;
+      final left = tensor * cos2;
+      final right = rotated * sin2;
       final out = mx.add(left, right);
-      left.close();
-      right.close();
-      cos.close();
-      sin.close();
-      if (out.dtype == tensor.dtype) return out;
-      final cast = out.astype(tensor.dtype);
-      out.close();
-      return cast;
+      try {
+        MlxRuntime.evalAll([out]);
+        left.close();
+        right.close();
+        cos2.close();
+        sin2.close();
+        if (out.dtype == tensor.dtype) return out;
+        final cast = out.astype(tensor.dtype);
+        try {
+          MlxRuntime.evalAll([cast]);
+          return cast;
+        } finally {
+          out.close();
+        }
+      } catch (_) {
+        out.close();
+        rethrow;
+      }
     } finally {
       rotated.close();
     }
@@ -365,7 +498,9 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     try {
       final negX2 = x2.negative();
       try {
-        return mx.concatenate([negX2, x1], axis: 3);
+        final out = mx.concatenate([negX2, x1], axis: 3);
+        MlxRuntime.evalAll([out]);
+        return out;
       } finally {
         negX2.close();
       }
@@ -383,9 +518,8 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     _VisionBlockWeights block,
     MlxArray input,
     _VisionConfig vCfg,
-    MlxArray rotaryPosEmb, {
-    _VisionWindowLayout? windowLayout,
-  }) {
+    MlxArray rotaryPosEmb,
+  ) {
     // ── Pre-norm 1 ──
     final norm1 = _visionLayerNorm(
       input,
@@ -395,13 +529,7 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     );
 
     // ── Self-attention (fused QKV) ──
-    final attnOut = _visionAttention(
-      block,
-      norm1,
-      vCfg,
-      rotaryPosEmb,
-      windowLayout: windowLayout,
-    );
+    final attnOut = _visionAttention(block, norm1, vCfg, rotaryPosEmb);
     norm1.close();
 
     // ── Residual 1 ──
@@ -436,9 +564,8 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     _VisionBlockWeights block,
     MlxArray input,
     _VisionConfig vCfg,
-    MlxArray rotaryPosEmb, {
-    _VisionWindowLayout? windowLayout,
-  }) {
+    MlxArray rotaryPosEmb,
+  ) {
     final seqLen = input.shape[0];
     final numHeads = vCfg.numAttentionHeads;
     final headDim = vCfg.headDim;
@@ -454,9 +581,18 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     qkv.close();
 
     // Split into Q, K, V
-    final q = qkv4d.slice(start: [0, 0, 0, 0], stop: [1, seqLen, numHeads, headDim]);
-    final k = qkv4d.slice(start: [1, 0, 0, 0], stop: [2, seqLen, numHeads, headDim]);
-    final v = qkv4d.slice(start: [2, 0, 0, 0], stop: [3, seqLen, numHeads, headDim]);
+    final q = qkv4d.slice(
+      start: [0, 0, 0, 0],
+      stop: [1, seqLen, numHeads, headDim],
+    );
+    final k = qkv4d.slice(
+      start: [1, 0, 0, 0],
+      stop: [2, seqLen, numHeads, headDim],
+    );
+    final v = qkv4d.slice(
+      start: [2, 0, 0, 0],
+      stop: [3, seqLen, numHeads, headDim],
+    );
     qkv4d.close();
 
     final qRot = _applyVisionRotary(q, rotaryPosEmb);
@@ -476,16 +612,7 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     // semantics.
     final chunkSize =
         config.recommendedVisionAttentionChunkSizeForCurrentPlatform;
-    final attn = windowLayout != null
-        ? _windowedVisionAttention(
-            qForAttn,
-            kForAttn,
-            vForAttn,
-            headDim: headDim,
-            dtype: input.dtype,
-            windowLayout: windowLayout,
-          )
-        : chunkSize > 0 && seqLen > chunkSize
+    final attn = chunkSize > 0 && seqLen > chunkSize
         ? _chunkedVisionAttention(
             qForAttn,
             kForAttn,
@@ -495,7 +622,11 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
             dtype: input.dtype,
           )
         : (() {
-            final mask = MlxArray.zeros([1, seqLen, seqLen], dtype: input.dtype);
+            final mask = MlxArray.zeros([
+              1,
+              seqLen,
+              seqLen,
+            ], dtype: input.dtype);
             try {
               return mx.fast.scaledDotProductAttention(
                 qForAttn,
@@ -535,10 +666,12 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
   }) {
     final seqLen = q.shape[2];
     final numHeads = q.shape[1];
-    var combined = MlxArray.zeros(
-      [1, numHeads, seqLen, headDim],
-      dtype: q.dtype,
-    );
+    var combined = MlxArray.zeros([
+      1,
+      numHeads,
+      seqLen,
+      headDim,
+    ], dtype: q.dtype);
     for (var start = 0; start < seqLen; start += chunkSize) {
       final end = math.min(start + chunkSize, seqLen);
       final qChunk = q.slice(
@@ -566,248 +699,4 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     }
     return combined;
   }
-
-  MlxArray _windowedVisionAttention(
-    MlxArray q,
-    MlxArray k,
-    MlxArray v, {
-    required int headDim,
-    required MlxDType dtype,
-    required _VisionWindowLayout windowLayout,
-  }) {
-    final seqLen = q.shape[2];
-    var combined = MlxArray.zeros(
-      [1, q.shape[1], seqLen, headDim],
-      dtype: q.dtype,
-    );
-    var start = 0;
-    for (final length in windowLayout.windowLengths) {
-      final end = start + length;
-      final qChunk = q.slice(
-        start: [0, 0, start, 0],
-        stop: [1, q.shape[1], end, headDim],
-      );
-      final kChunk = k.slice(
-        start: [0, 0, start, 0],
-        stop: [1, k.shape[1], end, headDim],
-      );
-      final vChunk = v.slice(
-        start: [0, 0, start, 0],
-        stop: [1, v.shape[1], end, headDim],
-      );
-      final mask = MlxArray.zeros([1, length, length], dtype: dtype);
-      final out = mx.fast.scaledDotProductAttention(
-        qChunk,
-        kChunk,
-        vChunk,
-        scale: 1.0 / math.sqrt(headDim.toDouble()),
-        mask: mask,
-      );
-      mask.close();
-      qChunk.close();
-      kChunk.close();
-      vChunk.close();
-      final updated = combined.sliceUpdate(
-        out,
-        start: [0, 0, start, 0],
-        stop: [1, q.shape[1], end, headDim],
-      );
-      out.close();
-      combined.close();
-      combined = updated;
-      start = end;
-    }
-    return combined;
-  }
-
-  // -----------------------------------------------------------------------
-  // Vision MLP (fc1 → GELU → fc2)
-  // -----------------------------------------------------------------------
-
-  MlxArray _visionMlp(_VisionBlockWeights block, MlxArray input) {
-    final h = block.fc1.apply(input);
-    final activated = _gelu(h);
-    h.close();
-    final out = block.fc2.apply(activated);
-    activated.close();
-    return out;
-  }
-
-  // -----------------------------------------------------------------------
-  // Spatial-merge projector
-  // -----------------------------------------------------------------------
-
-  /// Performs 2×2 spatial merging then projects to LM hidden size.
-  ///
-  /// Input `hidden`: `[gridH*gridW, visionHidden]`
-  /// Output:         `[mergedTokens, lmHidden]`
-  MlxArray _spatialMergeProject(
-    MlxArray hidden,
-    int gridH,
-    int gridW,
-    _VisionConfig vCfg,
-  ) {
-    final m = vCfg.spatialMergeSize; // 2
-    final mergedH = gridH ~/ m;
-    final mergedW = gridW ~/ m;
-    final proj = _visionWeights.projector;
-
-    // The projector's pre-norm runs on the per-patch hidden dimension before
-    // 2x2 spatial merging. The merged tensor is then fed into linear_1.
-    final normed = _visionLayerNorm(
-      hidden,
-      weight: proj.preNormWeight,
-      bias: proj.preNormBias,
-      eps: vCfg.layerNormEps,
-    );
-
-    // Reshape to [1, gridH, gridW, visionHidden] to mirror the Python MLX
-    // projector path (single-image batch with t=1).
-    final grid = normed.reshape([1, gridH, gridW, vCfg.hiddenSize]);
-    normed.close();
-
-    // Gather 2×2 patches: reshape to
-    //   [1, mergedH, m, mergedW, m, visionHidden]
-    // then transpose to [1, mergedH, mergedW, m, m, visionHidden]
-    // then flatten last 3 dims: [1, mergedH, mergedW, m*m*visionHidden]
-    final reshaped = grid.reshape([1, mergedH, m, mergedW, m, vCfg.hiddenSize]);
-    grid.close();
-    final transposed = reshaped.transposeAxes([0, 1, 3, 2, 4, 5]);
-    reshaped.close();
-    final flat = transposed.reshape([
-      mergedH * mergedW,
-      m * m * vCfg.hiddenSize,
-    ]);
-    transposed.close();
-
-    // linear1 → GELU → linear2
-    final h = proj.linear1.apply(flat);
-    flat.close();
-    final activated = _gelu(h);
-    h.close();
-    final out = proj.linear2.apply(activated);
-    activated.close();
-    MlxRuntime.evalAll([out]);
-    return out; // [mergedTokens, lmHidden]
-  }
-
-  // -----------------------------------------------------------------------
-  // GELU activation — MLX "precise" approximation
-  //
-  // Matches `nn.GELU(approx="precise")` in the Python MLX runtime:
-  //   0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-  // -----------------------------------------------------------------------
-
-  MlxArray _gelu(MlxArray x) {
-    final cubicCoeff = MlxArray.fromFloat32List(
-      [0.044715],
-      shape: [1],
-    ).astype(x.dtype);
-    final scale = MlxArray.fromFloat32List(
-      [math.sqrt(2 / math.pi)],
-      shape: [1],
-    ).astype(x.dtype);
-    final half = MlxArray.fromFloat32List([0.5], shape: [1]).astype(x.dtype);
-    final one = MlxArray.fromFloat32List([1.0], shape: [1]).astype(x.dtype);
-    try {
-      final xSquared = x * x;
-      final xCubed = xSquared * x;
-      xSquared.close();
-      final cubicTerm = xCubed * cubicCoeff;
-      xCubed.close();
-      final inner = mx.add(x, cubicTerm);
-      cubicTerm.close();
-      final scaled = inner * scale;
-      inner.close();
-      final tanhVal = scaled.tanh();
-      scaled.close();
-      final sum = mx.add(one, tanhVal);
-      tanhVal.close();
-      final left = x * half;
-      final result = left * sum;
-      left.close();
-      sum.close();
-      return result;
-    } finally {
-      cubicCoeff.close();
-      scale.close();
-      half.close();
-      one.close();
-    }
-  }
-
-  MlxArray _visionLayerNorm(
-    MlxArray input, {
-    required MlxArray weight,
-    required MlxArray bias,
-    required double eps,
-  }) {
-    return mx.fast.layerNorm(
-      input,
-      weight: weight,
-      bias: bias,
-      eps: eps,
-    );
-  }
-}
-
-final class _VisionWindowLayout {
-  const _VisionWindowLayout({
-    required this.windowIndices,
-    required this.restoreIndices,
-    required this.windowLengths,
-  });
-
-  final List<int> windowIndices;
-  final List<int> restoreIndices;
-  final List<int> windowLengths;
-}
-
-_VisionWindowLayout _buildVisionWindowLayout(
-  int gridH,
-  int gridW,
-  int windowSize,
-) {
-  final padH = ((-gridH) % windowSize + windowSize) % windowSize;
-  final padW = ((-gridW) % windowSize + windowSize) % windowSize;
-  final paddedH = gridH + padH;
-  final paddedW = gridW + padW;
-
-  final padded = List<int>.filled(paddedH * paddedW, -1);
-  for (var row = 0; row < gridH; row++) {
-    for (var col = 0; col < gridW; col++) {
-      padded[(row * paddedW) + col] = (row * gridW) + col;
-    }
-  }
-
-  final windowIndices = <int>[];
-  final windowLengths = <int>[];
-  for (var row = 0; row < paddedH; row += windowSize) {
-    for (var col = 0; col < paddedW; col += windowSize) {
-      var length = 0;
-      for (var dy = 0; dy < windowSize; dy++) {
-        for (var dx = 0; dx < windowSize; dx++) {
-          final index = padded[((row + dy) * paddedW) + col + dx];
-          if (index >= 0) {
-            windowIndices.add(index);
-            length++;
-          }
-        }
-      }
-      if (length > 0) {
-        windowLengths.add(length);
-      }
-    }
-  }
-
-  final restoreIndices = List<int>.filled(windowIndices.length, 0);
-  for (var reordered = 0; reordered < windowIndices.length; reordered++) {
-    restoreIndices[windowIndices[reordered]] = reordered;
-  }
-
-  return _VisionWindowLayout(
-    windowIndices: windowIndices,
-    restoreIndices: restoreIndices,
-    windowLengths: windowLengths,
-  );
 }

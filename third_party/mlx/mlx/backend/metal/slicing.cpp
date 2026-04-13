@@ -8,6 +8,7 @@
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 
 namespace mlx::core {
 
@@ -23,22 +24,26 @@ void concatenate_gpu(
   }
   std::partial_sum(sizes.cbegin(), sizes.cend(), sizes.begin());
 
+  record_metal_indexing_allocation();
+  record_metal_index_concat_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
 
   auto strides = out.strides();
-  auto flags = out.flags();
-  flags.row_contiguous = false;
-  flags.col_contiguous = false;
-  flags.contiguous = false;
   auto& d = metal::device(s.device);
   auto& compute_encoder = d.get_command_encoder(s.index);
-  auto concurrent_ctx = compute_encoder.start_concurrent();
+  [[maybe_unused]] auto concurrent_ctx = compute_encoder.start_concurrent();
   for (int i = 0; i < inputs.size(); i++) {
-    array out_slice(inputs[i].shape(), out.dtype(), nullptr, {});
     size_t data_offset = strides[axis] * sizes[i];
-    out_slice.copy_shared_buffer(
-        out, strides, flags, out_slice.size(), data_offset);
-    copy_gpu_inplace(inputs[i], out_slice, CopyType::GeneralGeneral, s);
+    copy_gpu_inplace(
+        inputs[i],
+        out,
+        inputs[i].shape(),
+        inputs[i].strides(),
+        strides,
+        0,
+        data_offset,
+        CopyType::GeneralGeneral,
+        s);
   }
 }
 
@@ -54,8 +59,12 @@ array compute_dynamic_offset(
   bool donate = indices.is_donatable() &&
       (indices.data_size() * indices.itemsize()) >= offset.itemsize();
   if (donate) {
+    record_metal_indexing_shared_copy();
+    record_metal_index_dynamic_offset_shared_copy();
     offset.copy_shared_buffer(indices);
   } else {
+    record_metal_indexing_allocation();
+    record_metal_index_dynamic_offset_allocation();
     offset.set_data(allocator::malloc(offset.itemsize()));
   }
   d.add_temporary(offset, s.index);

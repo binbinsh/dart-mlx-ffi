@@ -144,6 +144,7 @@ struct DeviceStream {
   std::unique_ptr<CommandEncoder> encoder{nullptr};
   std::shared_ptr<Fence> fence;
   std::vector<array> temporaries;
+  size_t commit_count{0};
 };
 
 class MLX_API Device {
@@ -206,6 +207,13 @@ class MLX_API Device {
   void add_temporaries(std::vector<array> arrays, int index);
 
   void set_residency_set(const MTL::ResidencySet* residency_set);
+
+  size_t total_commit_count() const;
+  size_t total_pending_output_count() const;
+  size_t total_temporary_count() const;
+  size_t total_buffer_op_count() const;
+  size_t total_buffer_size_bytes() const;
+  size_t stream_count() const;
 
  private:
   DeviceStream& get_stream_(int index) {

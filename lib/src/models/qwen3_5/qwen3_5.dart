@@ -6,7 +6,9 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
+import '../shared/session.dart';
 import '../shared/tensor_map.dart';
+import '../shared/tuning.dart';
 
 part 'config.dart';
 part 'cache.dart';

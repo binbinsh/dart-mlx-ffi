@@ -1,5 +1,6 @@
 // Copyright © 2024 Apple Inc.
 
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/common/hadamard.h"
 #include "mlx/backend/common/compiled.h"
 #include "mlx/backend/common/utils.h"
@@ -190,6 +191,7 @@ void Hadamard::eval_gpu(const std::vector<array>& inputs, array& out) {
     }
     hadamard_mn_contiguous(in, out, m, n1, n2, scale_, d, s);
   } else {
+    ScopedCopySite copy_site("hadamard");
     copy_gpu(in, out, CopyType::General, s);
     hadamard_mn_contiguous(out, out, m, n1, n2, scale_, d, s);
   }

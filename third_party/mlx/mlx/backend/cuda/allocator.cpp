@@ -371,6 +371,14 @@ size_t CudaAllocator::get_cache_memory() const {
   return buffer_cache_.cache_size();
 }
 
+size_t CudaAllocator::get_cache_count() const {
+  return buffer_cache_.cache_count();
+}
+
+size_t CudaAllocator::get_cache_limit() const {
+  return max_pool_size_;
+}
+
 size_t CudaAllocator::set_cache_limit(size_t limit) {
   std::lock_guard lk(mutex_);
   std::swap(limit, max_pool_size_);
@@ -436,6 +444,12 @@ size_t get_memory_limit() {
 size_t get_cache_memory() {
   return cu::allocator().get_cache_memory();
 }
+size_t get_cache_count() {
+  return cu::allocator().get_cache_count();
+}
+size_t get_cache_limit() {
+  return cu::allocator().get_cache_limit();
+}
 size_t set_cache_limit(size_t limit) {
   return cu::allocator().set_cache_limit(limit);
 }
@@ -445,6 +459,180 @@ void clear_cache() {
 
 // Not supported in CUDA.
 size_t set_wired_limit(size_t) {
+  return 0;
+}
+size_t get_wired_limit() {
+  return 0;
+}
+size_t get_resource_count() {
+  return 0;
+}
+size_t get_resource_limit() {
+  return 0;
+}
+size_t get_command_buffer_commit_count() {
+  return 0;
+}
+size_t get_pending_output_count() {
+  return 0;
+}
+size_t get_temporary_count() {
+  return 0;
+}
+size_t get_buffer_op_count() {
+  return 0;
+}
+size_t get_buffer_size_bytes() {
+  return 0;
+}
+size_t get_stream_count() {
+  return 0;
+}
+size_t get_allocation_request_count() {
+  return 0;
+}
+size_t get_cache_reuse_hit_count() {
+  return 0;
+}
+size_t get_new_allocation_count() {
+  return 0;
+}
+size_t get_heap_allocation_count() {
+  return 0;
+}
+size_t get_device_allocation_count() {
+  return 0;
+}
+size_t get_common_binary_allocation_count() {
+  return 0;
+}
+size_t get_common_binary_shared_copy_count() {
+  return 0;
+}
+size_t get_common_unary_allocation_count() {
+  return 0;
+}
+size_t get_common_unary_shared_copy_count() {
+  return 0;
+}
+size_t get_common_copy_allocation_count() {
+  return 0;
+}
+size_t get_common_copy_shared_copy_count() {
+  return 0;
+}
+size_t get_common_ternary_allocation_count() {
+  return 0;
+}
+size_t get_common_ternary_shared_copy_count() {
+  return 0;
+}
+size_t get_gpu_primitive_allocation_count() {
+  return 0;
+}
+size_t get_gpu_primitive_shared_copy_count() {
+  return 0;
+}
+size_t get_metal_norm_allocation_count() {
+  return 0;
+}
+size_t get_metal_norm_shared_copy_count() {
+  return 0;
+}
+size_t get_metal_matmul_allocation_count() {
+  return 0;
+}
+size_t get_metal_matmul_shared_copy_count() {
+  return 0;
+}
+size_t get_metal_quantized_allocation_count() {
+  return 0;
+}
+size_t get_metal_quantized_shared_copy_count() {
+  return 0;
+}
+size_t get_metal_sdpa_allocation_count() {
+  return 0;
+}
+size_t get_metal_sdpa_shared_copy_count() {
+  return 0;
+}
+size_t get_metal_reduce_allocation_count() {
+  return 0;
+}
+size_t get_metal_reduce_shared_copy_count() {
+  return 0;
+}
+size_t get_metal_indexing_allocation_count() {
+  return 0;
+}
+size_t get_metal_indexing_shared_copy_count() {
+  return 0;
+}
+size_t get_metal_copy_allocation_count() {
+  return 0;
+}
+size_t get_metal_copy_shared_copy_count() {
+  return 0;
+}
+size_t get_donation_reject_not_unique_count() {
+  return 0;
+}
+size_t get_donation_reject_desc_not_unique_count() {
+  return 0;
+}
+size_t get_donation_reject_data_not_unique_count() {
+  return 0;
+}
+size_t get_donation_reject_itemsize_count() {
+  return 0;
+}
+size_t get_donation_reject_oversize_count() {
+  return 0;
+}
+size_t get_donation_reject_layout_count() {
+  return 0;
+}
+size_t get_common_copy_reject_desc_not_unique_count() {
+  return 0;
+}
+size_t get_common_copy_reject_data_not_unique_count() {
+  return 0;
+}
+size_t get_common_binary_reject_desc_not_unique_count() {
+  return 0;
+}
+size_t get_common_binary_reject_data_not_unique_count() {
+  return 0;
+}
+size_t get_common_unary_reject_desc_not_unique_count() {
+  return 0;
+}
+size_t get_common_unary_reject_data_not_unique_count() {
+  return 0;
+}
+size_t get_common_binary_data_not_unique_scalar_vector_count() {
+  return 0;
+}
+size_t get_common_binary_data_not_unique_vector_scalar_count() {
+  return 0;
+}
+size_t get_common_binary_data_not_unique_vector_vector_count() {
+  return 0;
+}
+size_t get_common_binary_data_not_unique_general_count() {
+  return 0;
+}
+size_t get_common_binary_add_data_not_unique_vector_vector_count() {
+  return 0;
+}
+size_t get_common_binary_add_data_not_unique_general_count() {
+  return 0;
+}
+size_t get_common_binary_multiply_data_not_unique_vector_vector_count() {
+  return 0;
+}
+size_t get_common_binary_multiply_data_not_unique_general_count() {
   return 0;
 }
 

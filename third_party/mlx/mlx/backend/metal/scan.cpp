@@ -8,6 +8,7 @@
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/scan.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 
 namespace mlx::core {
@@ -125,8 +126,12 @@ void Scan::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto in = inputs[0];
   if (in.flags().contiguous && in.strides()[axis_] != 0) {
     if (in.is_donatable() && in.itemsize() == out.itemsize()) {
+      record_metal_copy_shared_copy();
+      record_metal_scan_copy_shared_copy();
       out.copy_shared_buffer(in);
     } else {
+      record_metal_copy_allocation();
+      record_metal_scan_copy_allocation();
       out.set_data(
           allocator::malloc(in.data_size() * out.itemsize()),
           in.data_size(),
@@ -135,6 +140,8 @@ void Scan::eval_gpu(const std::vector<array>& inputs, array& out) {
     }
   } else {
     in = contiguous_copy_gpu(in, stream());
+    record_metal_copy_shared_copy();
+    record_metal_scan_copy_shared_copy();
     out.copy_shared_buffer(in);
   }
 

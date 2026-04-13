@@ -1,6 +1,8 @@
 // Copyright © 2023-2024 Apple Inc.
 
 #include <cstdlib>
+#include <dispatch/dispatch.h>
+#include <mach-o/getsect.h>
 #include <sstream>
 
 #define NS_PRIVATE_IMPLEMENTATION
@@ -50,6 +52,35 @@ std::pair<MTL::Library*, NS::Error*> load_library_from_path(
   auto lib = device->newLibrary(library, &error);
 
   return std::make_pair(lib, error);
+}
+
+std::pair<MTL::Library*, NS::Error*> load_library_from_embedded_section(
+    MTL::Device* device) {
+  Dl_info info;
+  if (!dladdr(
+          reinterpret_cast<void*>(&load_library_from_embedded_section), &info)) {
+    return {nullptr, nullptr};
+  }
+
+  unsigned long section_size = 0;
+  auto header = reinterpret_cast<const mach_header_64*>(info.dli_fbase);
+  auto data_ptr = getsectiondata(
+      header, "__DATA", "__mlx_metallib", &section_size);
+  if (data_ptr == nullptr || section_size == 0) {
+    return {nullptr, nullptr};
+  }
+
+  auto dispatch_data = dispatch_data_create(
+      data_ptr,
+      section_size,
+      dispatch_get_main_queue(),
+      ^{});
+  NS::Error* error = nullptr;
+  auto lib = device->newLibrary(dispatch_data, &error);
+#if !OS_OBJECT_USE_OBJC
+  dispatch_release(dispatch_data);
+#endif
+  return {lib, error};
 }
 
 #ifdef SWIFTPM_BUNDLE
@@ -169,6 +200,17 @@ MTL::Library* load_default_library(MTL::Device* device) {
     return lib;
   }
 
+  if (const char* home = std::getenv("HOME")) {
+    std::string documents_path = std::string(home) + "/Documents/mlx.metallib";
+    auto [doc_lib, doc_error] = load_library_from_path(device, documents_path.c_str());
+    if (doc_lib) {
+      return doc_lib;
+    }
+    error[2] = doc_error;
+  } else {
+    error[2] = nullptr;
+  }
+
   // Then try default.metallib in a SwiftPM bundle if we have one
   std::tie(lib, error[3]) = load_swiftpm_library(device, "default");
   if (lib) {
@@ -184,6 +226,11 @@ MTL::Library* load_default_library(MTL::Device* device) {
 
   // Finally try default_mtllib_path
   std::tie(lib, error[5]) = load_library_from_path(device, default_mtllib_path);
+  if (lib) {
+    return lib;
+  }
+
+  std::tie(lib, error[5]) = load_library_from_embedded_section(device);
   if (!lib) {
     std::ostringstream msg;
     msg << "Failed to load the default metallib. ";
@@ -438,6 +485,7 @@ MTL::CommandBuffer* Device::get_command_buffer(int index) {
 void Device::commit_command_buffer(int index) {
   auto& stream = get_stream_(index);
   stream.buffer->commit();
+  stream.commit_count++;
   stream.buffer->release();
   stream.buffer = nullptr;
   stream.buffer_ops = 0;
@@ -833,6 +881,50 @@ void Device::set_residency_set(const MTL::ResidencySet* residency_set) {
   for (auto& [_, stream] : stream_map_) {
     stream.queue->addResidencySet(residency_set_);
   }
+}
+
+size_t Device::total_commit_count() const {
+  size_t total = 0;
+  for (const auto& [_, stream] : stream_map_) {
+    total += stream.commit_count;
+  }
+  return total;
+}
+
+size_t Device::total_pending_output_count() const {
+  size_t total = 0;
+  for (const auto& [_, stream] : stream_map_) {
+    total += stream.outputs.size();
+  }
+  return total;
+}
+
+size_t Device::total_temporary_count() const {
+  size_t total = 0;
+  for (const auto& [_, stream] : stream_map_) {
+    total += stream.temporaries.size();
+  }
+  return total;
+}
+
+size_t Device::total_buffer_op_count() const {
+  size_t total = 0;
+  for (const auto& [_, stream] : stream_map_) {
+    total += stream.buffer_ops;
+  }
+  return total;
+}
+
+size_t Device::total_buffer_size_bytes() const {
+  size_t total = 0;
+  for (const auto& [_, stream] : stream_map_) {
+    total += stream.buffer_sizes;
+  }
+  return total;
+}
+
+size_t Device::stream_count() const {
+  return stream_map_.size();
 }
 
 Device& device(mlx::core::Device) {

@@ -1,7 +1,6 @@
 // ignore_for_file: unused_import
 
 @TestOn('mac-os')
-
 library;
 
 import 'dart:ffi' as ffi;
@@ -70,7 +69,10 @@ void main() {
     final trigInput = MlxArray.fromFloat32List([0], shape: [1]);
     final reduceInput = MlxArray.fromFloat32List([0, 0], shape: [2]);
     final topkInput = MlxArray.fromFloat32List([3, 1, 2], shape: [3]);
-    final condition = MlxArray.fromBoolList([true, false, true, false], shape: [2, 2]);
+    final condition = MlxArray.fromBoolList(
+      [true, false, true, false],
+      shape: [2, 2],
+    );
     final abs = MlxOps.abs(a);
     final absMethod = a.abs();
     final neg = MlxOps.negative(a);
@@ -132,7 +134,9 @@ void main() {
       expect(softmaxMethod.toList(), <Object>[0.5, 0.5]);
       expect(topK.toList(), <Object>[2.0, 3.0]);
       expect(topKMethod.toList(), <Object>[2.0, 3.0]);
-      final castBack = expInput.astype(MlxDType.MLX_FLOAT16).astype(MlxDType.MLX_FLOAT32);
+      final castBack = expInput
+          .astype(MlxDType.MLX_FLOAT16)
+          .astype(MlxDType.MLX_FLOAT32);
       expect((castBack.toList()[0] as double), closeTo(0.0, 1e-5));
       expect((castBack.toList()[1] as double), closeTo(1.0, 1e-3));
       castBack.close();
@@ -181,10 +185,16 @@ void main() {
     final b = MlxArray.fromFloat32List([5, 6, 7, 8], shape: [2, 2]);
     final concatenated = MlxOps.concatenate([a, b], axis: 0);
     final stacked = MlxOps.stack([a, b], axis: 0);
-    final broadcasted = MlxArray.fromFloat32List([1, 2], shape: [2]).broadcastTo([2, 2]);
+    final broadcasted = MlxArray.fromFloat32List(
+      [1, 2],
+      shape: [2],
+    ).broadcastTo([2, 2]);
     final expanded = MlxArray.fromFloat32List([1, 2], shape: [2]).expandDims(0);
     final squeezed = expanded.squeeze();
-    final clipped = MlxArray.fromFloat32List([-1, 0.5, 3], shape: [3]).clip(min: 0, max: 1);
+    final clipped = MlxArray.fromFloat32List(
+      [-1, 0.5, 3],
+      shape: [3],
+    ).clip(min: 0, max: 1);
     final minned = a.minimum(b);
     final maxed = a.maximum(b);
     final argmax = a.argmax();
@@ -194,9 +204,27 @@ void main() {
 
     try {
       expect(concatenated.shape, <int>[4, 2]);
-      expect(concatenated.toList(), <Object>[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+      expect(concatenated.toList(), <Object>[
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+      ]);
       expect(stacked.shape, <int>[2, 2, 2]);
-      expect(stacked.toList(), <Object>[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+      expect(stacked.toList(), <Object>[
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+      ]);
       expect(broadcasted.toList(), <Object>[1.0, 2.0, 1.0, 2.0]);
       expect(expanded.shape, <int>[1, 2]);
       expect(squeezed.shape, <int>[2]);
@@ -223,6 +251,36 @@ void main() {
       concatenated.close();
       b.close();
       a.close();
+    }
+  });
+
+  test('reads argmax scalars through MLX uint32 indices', () {
+    final a = MlxArray.fromFloat32List([1, 9, 3, 4], shape: [2, 2]);
+    final argmax = a.argmax();
+
+    try {
+      expect(argmax.dtype, MlxDType.MLX_UINT32);
+      expect(argmax.toScalarInt(), 1);
+      expect(a.argmaxFlatScalarInt(), 1);
+      final pair = a.argmaxFlatIndexValueFloat32();
+      expect(pair.index, 1);
+      expect(pair.value, closeTo(9.0, 1e-6));
+    } finally {
+      argmax.close();
+      a.close();
+    }
+  });
+
+  test('reads scalar floats without materializing full arrays', () {
+    final f32 = MlxArray.fromFloat32List([1.5], shape: [1]);
+    final f64 = MlxArray.fromFloat64List([2.5], shape: [1]);
+
+    try {
+      expect(f32.toScalarDouble(), closeTo(1.5, 1e-6));
+      expect(f64.toScalarDouble(), closeTo(2.5, 1e-12));
+    } finally {
+      f64.close();
+      f32.close();
     }
   });
 
@@ -265,11 +323,15 @@ void main() {
         );
         try {
           expect(restored.shape, weights.shape);
-          final restoredValues = List<double>.from(restored.toList().cast<double>());
+          final restoredValues = List<double>.from(
+            restored.toList().cast<double>(),
+          );
           for (var index = 0; index < restoredValues.length; index++) {
             expect(restoredValues[index], closeTo(weightValues[index], 1e-2));
           }
-          final refValues = List<double>.from(reference.toList().cast<double>());
+          final refValues = List<double>.from(
+            reference.toList().cast<double>(),
+          );
           final qmmValues = List<double>.from(qmm.toList().cast<double>());
           expect(qmmValues, hasLength(refValues.length));
           for (var index = 0; index < qmmValues.length; index++) {
@@ -300,7 +362,10 @@ void main() {
     final takeIndices = MlxArray.fromInt32List([2, 0], shape: [2]);
     final matrix = MlxArray.fromFloat32List([1, 2, 3, 4, 5, 6], shape: [2, 3]);
     final takeAxisIndices = MlxArray.fromInt32List([2, 0], shape: [2]);
-    final alongAxisIndices = MlxArray.fromInt32List([2, 0, 1, 1], shape: [2, 2]);
+    final alongAxisIndices = MlxArray.fromInt32List(
+      [2, 0, 1, 1],
+      shape: [2, 2],
+    );
     final rowIndices = MlxArray.fromInt32List([1, 0], shape: [2]);
     final colIndices = MlxArray.fromInt32List([2, 1], shape: [2]);
     final left = MlxArray.fromFloat32List([1, 2, 3, 4], shape: [2, 2]);
@@ -383,11 +448,7 @@ void main() {
       );
       try {
         final qqmmRef = qqmmInput.matmul(qqmmWeights.transpose());
-        final qqmm = mx.quant.qqmm(
-          qqmmInput,
-          qqmmWeights,
-          mode: 'nvfp4',
-        );
+        final qqmm = mx.quant.qqmm(qqmmInput, qqmmWeights, mode: 'nvfp4');
         final qmm = mx.quant.matmul(
           input,
           quantized,
@@ -406,7 +467,9 @@ void main() {
           expect(qqmm.shape, qqmmRef.shape);
           expect(qqmm.dtype, qqmmRef.dtype);
           final qmmValues = List<double>.from(qmm.toList().cast<double>());
-          final gatheredValues = List<double>.from(gathered.toList().cast<double>());
+          final gatheredValues = List<double>.from(
+            gathered.toList().cast<double>(),
+          );
           for (var index = 0; index < qmmValues.length; index++) {
             expect(gatheredValues[index], closeTo(qmmValues[index], 1e-5));
           }
@@ -476,7 +539,9 @@ void main() {
       );
 
       final permutationValues = List<int>.from(permutation.toList());
-      final permutationArangeValues = List<int>.from(permutationArange.toList());
+      final permutationArangeValues = List<int>.from(
+        permutationArange.toList(),
+      );
       permutationValues.sort();
       permutationArangeValues.sort();
       expect(permutationValues, <int>[1, 2, 3, 4]);
@@ -495,5 +560,4 @@ void main() {
       uniform.close();
     }
   });
-
 }

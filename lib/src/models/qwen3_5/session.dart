@@ -1,17 +1,20 @@
 part of 'qwen3_5.dart';
 
-final class Qwen35PromptSession {
+final class Qwen35PromptSession implements PromptSession {
   Qwen35PromptSession._(
     this._runner,
-    this.promptTokenIds,
+    this._promptTokenIds,
     this._cache,
     this._promptLogits,
   );
 
   final Qwen3_5Runner _runner;
-  final List<int> promptTokenIds;
+  final List<int> _promptTokenIds;
   final _ModelDecodeCache _cache;
   final MlxArray _promptLogits;
+
+  @override
+  List<int> get promptTokenIds => _promptTokenIds;
 
   static Qwen35PromptSession prime(
     Qwen3_5Runner runner,
@@ -103,6 +106,30 @@ final class Qwen35PromptSession {
       decodeMs: decodeWatch.elapsedMicroseconds / 1000.0,
       totalMs: totalWatch.elapsedMicroseconds / 1000.0,
       stoppedByStopToken: stoppedByStopToken,
+    );
+  }
+
+  @override
+  GenerationResult generateGreedy({
+    required int maxNewTokens,
+    Set<int> stopTokenIds = const <int>{},
+  }) {
+    final result = timedGenerateGreedy(
+      maxNewTokens,
+      stopTokenIds: stopTokenIds.toList(),
+    );
+    return GenerationResult(
+      tokenIds: result.tokenIds,
+      generatedTokenIds: result.generatedTokenIds,
+      stopReason: result.stoppedByStopToken
+          ? StopReason.stopToken
+          : StopReason.maxTokens,
+      timing: GenerationTiming(
+        promptMs: result.promptMs,
+        firstTokenMs: result.firstTokenMs,
+        decodeMs: result.decodeMs,
+        totalMs: result.totalMs,
+      ),
     );
   }
 

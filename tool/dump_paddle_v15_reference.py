@@ -11,6 +11,7 @@ Writes .npy files to /tmp/paddle_v15_ref/ for the test image
     /Users/binbinsh/Projects/Personal/chef-de-mise/test-ocr-input.jpg
 """
 
+import argparse
 import json
 import os
 import time
@@ -31,6 +32,21 @@ MODEL_PATH = Path(
 )
 IMAGE_PATH = Path("/Users/binbinsh/Projects/Personal/chef-de-mise/test-ocr-input.jpg")
 OUT_DIR = Path("/tmp/paddle_v15_ref")
+OUT_DIR.mkdir(exist_ok=True)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--image", type=Path, default=IMAGE_PATH)
+    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    parser.add_argument("--min-pixels", type=int, default=None)
+    parser.add_argument("--max-pixels", type=int, default=None)
+    return parser.parse_args()
+
+
+ARGS = parse_args()
+IMAGE_PATH = ARGS.image
+OUT_DIR = ARGS.out_dir
 OUT_DIR.mkdir(exist_ok=True)
 
 # ─── load model via mlx-vlm ─────────────────────────────────────────────────
@@ -63,6 +79,10 @@ print(f"  Original size: {orig_w}x{orig_h}")
 
 # Replicate mlx-vlm preprocessing
 ip = processor.image_processor
+if ARGS.min_pixels is not None:
+    ip.min_pixels = ARGS.min_pixels
+if ARGS.max_pixels is not None:
+    ip.max_pixels = ARGS.max_pixels
 resized_h, resized_w = smart_resize(
     orig_h,
     orig_w,
@@ -80,6 +100,7 @@ merged_h = grid_h // merge_size
 merged_w = grid_w // merge_size
 num_merged = merged_h * merged_w
 print(f"  Merged: {merged_h}x{merged_w} = {num_merged} tokens")
+print(f"  min_pixels={ip.min_pixels} max_pixels={ip.max_pixels}")
 
 # Build the prompt text
 prompt_text = (
@@ -93,6 +114,8 @@ inputs = processor(images=[image], text=[prompt_text], return_tensors="np")
 input_ids = mx.array(inputs["input_ids"])
 pixel_values = mx.array(inputs["pixel_values"])
 image_grid_thw = mx.array(inputs["image_grid_thw"])
+vision_dtype = model.visual.embeddings.patch_embedding.weight.dtype
+pixel_values_for_vision = mx.array(pixel_values, dtype=vision_dtype)
 
 print(f"  input_ids shape: {input_ids.shape}")
 print(f"  pixel_values shape: {pixel_values.shape}")
@@ -117,13 +140,30 @@ img_arr = (img_arr - mean) / std
 img_nhwc = img_arr[np.newaxis, :, :, :]
 print(f"  NHWC image: shape={img_nhwc.shape}")
 np.save(OUT_DIR / "image_nhwc.npy", img_nhwc)
+(OUT_DIR / "metadata.json").write_text(
+    json.dumps(
+        {
+            "image_path": str(IMAGE_PATH),
+            "min_pixels": int(ip.min_pixels),
+            "max_pixels": int(ip.max_pixels),
+            "resized_height": int(resized_h),
+            "resized_width": int(resized_w),
+            "grid_h": int(grid_h),
+            "grid_w": int(grid_w),
+            "merged_h": int(merged_h),
+            "merged_w": int(merged_w),
+        },
+        indent=2,
+    ),
+    encoding="utf-8",
+)
 
 # ─── step 1: vision embeddings (patch embed + position interpolation) ────────
 print("\n=== Vision Embeddings ===")
 vis = model.visual
 
 # Call embeddings
-hidden_after_embed = vis.embeddings(pixel_values, image_grid_thw)
+hidden_after_embed = vis.embeddings(pixel_values_for_vision, image_grid_thw)
 mx.eval(hidden_after_embed)
 print(
     f"  After embeddings: shape={hidden_after_embed.shape} dtype={hidden_after_embed.dtype}"
@@ -197,7 +237,7 @@ np.save(
 
 # ─── step 4: full vision encode (end-to-end) ────────────────────────────────
 print("\n=== Full Vision Encode (end-to-end) ===")
-full_hidden = vis(pixel_values, image_grid_thw, output_hidden_states=False)
+full_hidden = vis(pixel_values_for_vision, image_grid_thw, output_hidden_states=False)
 mx.eval(full_hidden)
 print(f"  Full encode: shape={full_hidden.shape}")
 # Verify it matches step-by-step
@@ -335,6 +375,8 @@ output = vlm_generate(
     prompt=prompt,
     max_tokens=1024,
     verbose=False,
+    min_pixels=int(ip.min_pixels),
+    max_pixels=int(ip.max_pixels),
 )
 t1 = time.time()
 print(f"  Generation time: {t1 - t0:.2f}s")
@@ -350,6 +392,45 @@ print(f"  Output:\n---\n{output_text}\n---")
 
 # Save full output text
 (OUT_DIR / "full_output.txt").write_text(output_text, encoding="utf-8")
+
+print("\n=== Full Generation (token ids) ===")
+from mlx_vlm.generate import generate_step
+
+# Reset state
+model.language_model._position_ids = None
+model.language_model._rope_deltas = None
+
+gen_inputs = processor(
+    images=[image],
+    text=[prompt],
+    return_tensors="np",
+    min_pixels=int(ip.min_pixels),
+    max_pixels=int(ip.max_pixels),
+)
+gen_input_ids = mx.array(gen_inputs["input_ids"])
+gen_pixel_values = mx.array(gen_inputs["pixel_values"])
+gen_extra = {}
+for key, value in gen_inputs.items():
+    if key in {"input_ids", "pixel_values", "attention_mask"}:
+        continue
+    gen_extra[key] = mx.array(value) if hasattr(value, "shape") else value
+
+gen_tokens = []
+for token, _logprobs in generate_step(
+    gen_input_ids,
+    model,
+    gen_pixel_values,
+    None,
+    max_tokens=1024,
+    **gen_extra,
+):
+    gen_tokens.append(int(token))
+
+(OUT_DIR / "py_generated_ids.txt").write_text(
+    ",".join(map(str, gen_tokens)),
+    encoding="utf-8",
+)
+print(f"  Saved {len(gen_tokens)} generated ids")
 
 # ─── summary ─────────────────────────────────────────────────────────────────
 print(f"\nAll reference files saved to {OUT_DIR}/")

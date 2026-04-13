@@ -1,11 +1,13 @@
 // Copyright © 2023-2024 Apple Inc.
 #include <algorithm>
 
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/kernels/defines.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 
 namespace mlx::core {
@@ -25,8 +27,10 @@ void Softmax::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto set_output = [&s, &out](const array& x) {
     if (x.flags().contiguous && x.strides()[x.ndim() - 1] == 1) {
       if (x.is_donatable()) {
+        record_metal_reduce_shared_copy();
         out.copy_shared_buffer(x);
       } else {
+        record_metal_reduce_allocation();
         out.set_data(
             allocator::malloc(x.data_size() * x.itemsize()),
             x.data_size(),
@@ -35,7 +39,9 @@ void Softmax::eval_gpu(const std::vector<array>& inputs, array& out) {
       }
       return x;
     } else {
+      ScopedCopySite copy_site("reduce");
       array x_copy = contiguous_copy_gpu(x, s);
+      record_metal_reduce_shared_copy();
       out.copy_shared_buffer(x_copy);
       return x_copy;
     }

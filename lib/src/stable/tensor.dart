@@ -439,6 +439,36 @@ abstract final class MlxTensor {
     );
   });
 
+  static void sliceUpdateInplace(
+    MlxArray target,
+    MlxArray update, {
+    required List<int> start,
+    List<int>? strides,
+  }) {
+    final resolvedStrides = strides ?? List<int>.filled(start.length, 1);
+    if (start.length != resolvedStrides.length) {
+      throw ArgumentError(
+        'sliceUpdateInplace() requires start and strides to share a length.',
+      );
+    }
+    _withInts(start, (startPtr, startLen) {
+      _withInts(resolvedStrides, (stridePtr, strideLen) {
+        _clearError();
+        _checkStatus(
+          'dart_mlx_slice_update_inplace',
+          shim.dart_mlx_slice_update_inplace(
+            target._handle,
+            update._handle,
+            startPtr,
+            startLen,
+            stridePtr,
+            strideLen,
+          ),
+        );
+      });
+    });
+  }
+
   static MlxArray einsum(String subscripts, List<MlxArray> operands) {
     if (operands.isEmpty) {
       throw ArgumentError('einsum() requires at least one operand.');

@@ -2,6 +2,7 @@
 #include <sstream>
 
 #include "mlx/backend/common/compiled.h"
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels.h"
@@ -9,6 +10,7 @@
 #include "mlx/backend/metal/kernels/steel/attn/params.h"
 #include "mlx/backend/metal/utils.h"
 #include "mlx/fast_primitives.h"
+#include "mlx/memory.h"
 #include "mlx/utils.h"
 
 namespace mlx::core::fast {
@@ -492,8 +494,11 @@ void sdpa_vector_2pass(
   intermediate_shape.pop_back();
   array sums(intermediate_shape, float32, nullptr, {});
   array maxs(std::move(intermediate_shape), float32, nullptr, {});
+  record_metal_sdpa_allocation();
   intermediate.set_data(allocator::malloc(intermediate.nbytes()));
+  record_metal_sdpa_allocation();
   sums.set_data(allocator::malloc(sums.nbytes()));
+  record_metal_sdpa_allocation();
   maxs.set_data(allocator::malloc(maxs.nbytes()));
   d.add_temporary(intermediate, s.index);
   d.add_temporary(sums, s.index);
@@ -659,6 +664,7 @@ void ScaledDotProductAttention::eval_gpu(
   auto copy_unless = [&copies, &s](
                          auto predicate, const array& arr) -> const array& {
     if (!predicate(arr)) {
+      ScopedCopySite copy_site("sdpa");
       array arr_copy = contiguous_copy_gpu(arr, s);
       copies.push_back(std::move(arr_copy));
       return copies.back();
@@ -712,17 +718,23 @@ void ScaledDotProductAttention::eval_gpu(
     };
 
     bool q_copied = !q_copy_unless(q_pre);
-    array q = (q_copied) ? contiguous_copy_gpu(q_pre, s) : q_pre;
+    array q = q_pre;
+    if (q_copied) {
+      ScopedCopySite copy_site("sdpa");
+      q = contiguous_copy_gpu(q_pre, s);
+    }
     const auto& k = copy_unless(kv_copy_unless, k_pre);
     const auto& v = copy_unless(kv_copy_unless, v_pre);
 
     // Donate the query if possible
     if (q.is_donatable() && q.flags().row_contiguous && q.size() == o.size()) {
+      record_metal_sdpa_shared_copy();
       o.copy_shared_buffer(q);
     } else {
       if (q_copied) {
         copies.push_back(q);
       }
+      record_metal_sdpa_allocation();
       o.set_data(allocator::malloc(o.nbytes()));
     }
 
@@ -768,6 +780,7 @@ void ScaledDotProductAttention::eval_gpu(
         /* bool col_contiguous = */ 0,
     };
 
+    record_metal_sdpa_allocation();
     o.set_data(
         allocator::malloc(o.nbytes()),
         data_size,

@@ -3,6 +3,7 @@
 #include <fmt/format.h>
 
 #include "mlx/backend/common/compiled.h"
+#include "mlx/backend/common/copy.h"
 #include "mlx/backend/common/utils.h"
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/metal/device.h"
@@ -12,6 +13,7 @@
 #include "mlx/backend/metal/scan.h"
 #include "mlx/backend/metal/utils.h"
 #include "mlx/dtype.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 #include "mlx/utils.h"
 
@@ -47,6 +49,8 @@ void Gather::eval_gpu(const std::vector<array>& inputs, array& out) {
     throw std::runtime_error(msg.str());
   }
 
+  record_metal_indexing_allocation();
+  record_metal_index_gather_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
   if (out.size() == 0) {
     return;
@@ -235,6 +239,7 @@ void Scatter::eval_gpu(const std::vector<array>& inputs, array& out) {
   } else {
     copy_type = CopyType::General;
   }
+  ScopedCopySite copy_site("idx");
   copy_gpu(inputs[0], out, copy_type);
 
   auto& upd = inputs.back();
@@ -443,6 +448,8 @@ void GatherAxis::eval_gpu(const std::vector<array>& inputs, array& out) {
   auto& src = inputs[0];
   auto& idx = inputs[1];
 
+  record_metal_indexing_allocation();
+  record_metal_index_gather_axis_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
   if (out.size() == 0) {
     return;
@@ -534,6 +541,7 @@ void ScatterAxis::eval_gpu(const std::vector<array>& inputs, array& out) {
   } else {
     copy_type = CopyType::General;
   }
+  ScopedCopySite copy_site("idx");
   copy_gpu(src, out, copy_type);
 
   // Empty update
@@ -656,6 +664,7 @@ void MaskedScatter::eval_gpu(const std::vector<array>& inputs, array& out) {
   const CopyType ct = (total == 1)
       ? CopyType::Scalar
       : (dst.flags().row_contiguous ? CopyType::Vector : CopyType::General);
+  ScopedCopySite copy_site("idx");
   copy_gpu(dst, out, ct, s);
   if (total == 0) {
     return;
@@ -673,6 +682,7 @@ void MaskedScatter::eval_gpu(const std::vector<array>& inputs, array& out) {
 
   // Prefix (exclusive) of mask → scatter_offsets
   array scatter_offsets(mask_flat.shape(), uint32, nullptr, {});
+  record_metal_indexing_allocation();
   scatter_offsets.set_data(allocator::malloc(scatter_offsets.nbytes()));
   d.add_temporary(scatter_offsets, s.index);
 

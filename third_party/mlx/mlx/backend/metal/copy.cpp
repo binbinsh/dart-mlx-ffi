@@ -1,17 +1,103 @@
 // Copyright © 2023-2024 Apple Inc.
 
+#include <atomic>
+#include <iostream>
+#include <sstream>
+
 #include "mlx/backend/gpu/copy.h"
 #include "mlx/backend/common/utils.h"
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 
 namespace mlx::core {
 
 constexpr int MAX_COPY_SPECIALIZED_DIMS = 3;
 
+namespace {
+
+int trace_budget_from_env(const char* env_name, int default_budget) {
+  const char* raw = std::getenv(env_name);
+  if (raw == nullptr || raw[0] == '\0' || std::strcmp(raw, "0") == 0) {
+    return 0;
+  }
+  char* end = nullptr;
+  long parsed = std::strtol(raw, &end, 10);
+  if (end != raw) {
+    return parsed > 0 ? static_cast<int>(parsed) : 0;
+  }
+  return default_budget;
+}
+
+std::atomic<int> g_metal_copy_trace_remaining{
+    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
+
+void maybe_trace_metal_copy_site(
+    const array& in,
+    const array& out,
+    CopyType ctype,
+    bool donated) {
+  if (out.ndim() < 2 || out.ndim() > 4 || out.shape(0) != 1 ||
+      out.shape(-1) < 64) {
+    return;
+  }
+  if (out.ndim() >= 3 && out.shape(1) > 512) {
+    return;
+  }
+  int prev =
+      g_metal_copy_trace_remaining.fetch_sub(1, std::memory_order_relaxed);
+  if (prev <= 0) {
+    return;
+  }
+  auto fmt_dims = [](const auto& vec) {
+    std::ostringstream os;
+    os << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+      if (i > 0) {
+        os << ",";
+      }
+      os << vec[i];
+    }
+    os << "]";
+    return os.str();
+  };
+  const char* ctype_name = "gg";
+  switch (ctype) {
+    case CopyType::Scalar:
+      ctype_name = "scalar";
+      break;
+    case CopyType::Vector:
+      ctype_name = "vector";
+      break;
+    case CopyType::General:
+      ctype_name = "general";
+      break;
+    case CopyType::GeneralGeneral:
+      ctype_name = "general_general";
+      break;
+  }
+  std::cerr << "[mlx][metal-copy]"
+            << " site="
+            << (current_copy_site_name() == nullptr ? "-" : current_copy_site_name())
+            << " ctype=" << ctype_name
+            << " donated=" << donated
+            << " in_shape=" << fmt_dims(in.shape())
+            << " in_strides=" << fmt_dims(in.strides())
+            << " in_row=" << in.flags().row_contiguous
+            << " in_col=" << in.flags().col_contiguous
+            << " out_shape=" << fmt_dims(out.shape())
+            << " out_strides=" << fmt_dims(out.strides())
+            << " out_row=" << out.flags().row_contiguous
+            << " out_col=" << out.flags().col_contiguous
+            << std::endl;
+}
+
+} // namespace
+
 void copy_gpu(const array& in, array& out, CopyType ctype, const Stream& s) {
   bool donated = set_copy_output_data(in, out, ctype);
+  maybe_trace_metal_copy_site(in, out, ctype, donated);
   if (donated && in.dtype() == out.dtype()) {
     // If the output has the same type as the input then there is nothing to
     // copy, just use the buffer.
@@ -183,6 +269,8 @@ void fill_gpu(const array& val, array& out, const Stream& s) {
   if (out.size() == 0) {
     return;
   }
+  record_metal_copy_allocation();
+  record_metal_direct_copy_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
   bool large = out.data_size() > UINT32_MAX;
   int work_per_thread = get_work_per_thread(out.dtype(), out.data_size());
@@ -216,6 +304,9 @@ void fill_gpu(const array& val, array& out, const Stream& s) {
 void reshape_gpu(const array& in, array& out, Stream s) {
   auto [copy_necessary, out_strides] = prepare_reshape(in, out);
   if (copy_necessary) {
+    record_metal_reshape_copy();
+    record_metal_copy_allocation();
+    record_metal_direct_copy_allocation();
     out.set_data(allocator::malloc(out.nbytes()));
     copy_gpu_inplace(
         in,
@@ -228,6 +319,7 @@ void reshape_gpu(const array& in, array& out, Stream s) {
         CopyType::General,
         s);
   } else {
+    record_metal_reshape_shared();
     shared_buffer_reshape(in, out_strides, out);
   }
 }

@@ -18,6 +18,19 @@
 
 namespace mlx::core {
 
+namespace {
+
+struct BinaryOpNameScope {
+  explicit BinaryOpNameScope(const char* op_name) {
+    set_current_binary_op_name(op_name);
+  }
+  ~BinaryOpNameScope() {
+    set_current_binary_op_name(nullptr);
+  }
+};
+
+} // namespace
+
 std::string get_kernel_name(
     BinaryOpType bopt,
     const char* op,
@@ -171,6 +184,7 @@ void binary_op_gpu(
   auto& a = inputs[0];
   auto& b = inputs[1];
   auto bopt = get_binary_op_type(a, b);
+  BinaryOpNameScope op_scope(op);
   set_binary_op_output_data(a, b, outputs[0], bopt);
   set_binary_op_output_data(a, b, outputs[1], bopt);
   binary_op_gpu_inplace(inputs, outputs, op, s);
@@ -202,6 +216,7 @@ void binary_op_gpu(
   auto& a = inputs[0];
   auto& b = inputs[1];
   auto bopt = get_binary_op_type(a, b);
+  BinaryOpNameScope op_scope(op);
   set_binary_op_output_data(a, b, out, bopt);
   binary_op_gpu_inplace(inputs, out, op, s);
 }

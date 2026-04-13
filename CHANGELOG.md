@@ -1,5 +1,13 @@
 # Changelog
 
+### 26.414.19
+
+- Switched the iPhone `PaddleOCR-VL-1.5` default KV-cache scheme from `turboquant` to `uniform` after validating the real `photo_render_512` case on-device, restoring the expected token prefix and lowering peak memory.
+- Kept `uniform 8-bit` as the stable iPhone default and rejected `uniform 4-bit` as a product path because it only saved `128 KiB` while drifting from the reference output.
+- Added a dedicated `PaddleOCR-VL` runtime regression test to lock the default KV scheme and debug override behavior.
+- Removed `PaddleOcrVlRunnerDebug` and `PaddleOcrVlDebugOverrides` from the public `lib/models.dart` export surface so the package API is no longer exposing internal profiling hooks.
+- Replaced the old Flutter profiling harness example with a minimal demo app and trimmed the publish surface via `.pubignore` so internal iPhone tuning assets no longer ship to pub.dev.
+
 ### 26.405.15
 
 - Removed the experimental private ANE and Core ML bridge surfaces from the Dart API, native build, tests, local tooling, and vendored `espresso_ane` sources so the package scope is MLX-only again.

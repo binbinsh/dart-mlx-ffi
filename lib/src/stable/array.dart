@@ -329,15 +329,132 @@ final class MlxArray {
     if (size != 1) {
       throw StateError('toScalarInt() requires a scalar or size-1 array.');
     }
-    return switch (dtype) {
-      raw.mlx_dtype_.MLX_UINT32 => _readScalarUint32(),
-      raw.mlx_dtype_.MLX_UINT64 => _readScalarUint64(),
-      raw.mlx_dtype_.MLX_INT32 => _readScalarInt32(),
-      raw.mlx_dtype_.MLX_INT64 => _readScalarInt64(),
-      _ => throw UnsupportedError(
-        'toScalarInt() currently supports uint32/uint64/int32/int64 arrays.',
-      ),
-    };
+    final currentDtype = dtype;
+    try {
+      return switch (currentDtype) {
+        raw.mlx_dtype_.MLX_UINT32 => _readScalarUint32(),
+        raw.mlx_dtype_.MLX_UINT64 => _readScalarUint64(),
+        raw.mlx_dtype_.MLX_INT32 => _readScalarInt32(),
+        raw.mlx_dtype_.MLX_INT64 => _readScalarInt64(),
+        _ => throw UnsupportedError(
+          'toScalarInt() currently supports uint32/uint64/int32/int64 arrays.',
+        ),
+      };
+    } on MlxException {
+      return switch (currentDtype) {
+        raw.mlx_dtype_.MLX_UINT32 => (() {
+          final cast = astype(raw.mlx_dtype_.MLX_INT32);
+          try {
+            return cast.toScalarInt();
+          } on MlxException {
+            return _copyUint32Data().first as int;
+          } finally {
+            cast.close();
+          }
+        })(),
+        raw.mlx_dtype_.MLX_UINT64 => (() {
+          final cast = astype(raw.mlx_dtype_.MLX_INT64);
+          try {
+            return cast.toScalarInt();
+          } on MlxException {
+            return _copyUint64Data().first as int;
+          } finally {
+            cast.close();
+          }
+        })(),
+        raw.mlx_dtype_.MLX_INT32 => _copyInt32Data().first as int,
+        raw.mlx_dtype_.MLX_INT64 => _copyInt64Data().first as int,
+        _ => throw UnsupportedError(
+          'toScalarInt() currently supports uint32/uint64/int32/int64 arrays.',
+        ),
+      };
+    }
+  }
+
+  /// Reads a scalar floating-point value without materializing the array.
+  double toScalarDouble() {
+    _ensureOpen();
+    if (size != 1) {
+      throw StateError('toScalarDouble() requires a scalar or size-1 array.');
+    }
+    final currentDtype = dtype;
+    try {
+      return switch (currentDtype) {
+        raw.mlx_dtype_.MLX_FLOAT32 => _readScalarFloat32(),
+        raw.mlx_dtype_.MLX_FLOAT64 => _readScalarFloat64(),
+        _ => throw UnsupportedError(
+          'toScalarDouble() currently supports float32/float64 arrays.',
+        ),
+      };
+    } on MlxException {
+      return switch (currentDtype) {
+        raw.mlx_dtype_.MLX_FLOAT32 => _copyFloat32TypedData().first.toDouble(),
+        raw.mlx_dtype_.MLX_FLOAT64 => _copyFloat64Data().first as double,
+        _ => throw UnsupportedError(
+          'toScalarDouble() currently supports float32/float64 arrays.',
+        ),
+      };
+    }
+  }
+
+  /// Computes `argmax` over the flattened array on the native side and returns
+  /// the resulting scalar index.
+  int argmaxFlatScalarInt() {
+    _ensureOpen();
+    final out = calloc<ffi.Int32>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_argmax_flat_int32',
+        shim.dart_mlx_array_argmax_flat_int32(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Computes `argmax` over the flattened array on the native side and returns
+  /// both the winning index and its float value.
+  ({int index, double value}) argmaxFlatIndexValueFloat32() {
+    _ensureOpen();
+    final outIndex = calloc<ffi.Int32>();
+    final outValue = calloc<ffi.Float>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_argmax_flat_index_value_float32',
+        shim.dart_mlx_array_argmax_flat_index_value_float32(
+          _handle,
+          outIndex,
+          outValue,
+        ),
+      );
+      return (index: outIndex.value, value: outValue.value.toDouble());
+    } finally {
+      calloc.free(outValue);
+      calloc.free(outIndex);
+    }
+  }
+
+  /// Reads a size-1 int32/uint32 array through the relaxed native path.
+  int scalarInt32Relaxed() {
+    _ensureOpen();
+    if (size != 1) {
+      throw StateError('scalarInt32Relaxed() requires a scalar or size-1 array.');
+    }
+    return _readScalarInt32Relaxed();
+  }
+
+  /// Reads a size-1 float32/float64 array through the relaxed native path.
+  double scalarFloat32Relaxed() {
+    _ensureOpen();
+    if (size != 1) {
+      throw StateError(
+        'scalarFloat32Relaxed() requires a scalar or size-1 array.',
+      );
+    }
+    return _readScalarFloat32Relaxed();
   }
 
   /// Returns a reshaped view-like array with the requested shape.
@@ -540,6 +657,9 @@ final class MlxArray {
   /// Casts this array to a different dtype.
   MlxArray astype(MlxDType dtype) => MlxOps.astype(this, dtype);
 
+  /// Returns an explicit copy.
+  MlxArray copy() => MlxOps.copy(this);
+
   /// Elementwise equality comparison.
   MlxArray equal(MlxArray other) => MlxOps.equal(this, other);
 
@@ -575,6 +695,10 @@ final class MlxArray {
 
   /// Returns sort indices.
   MlxArray argsort({int? axis}) => MlxOps.argsort(this, axis: axis);
+
+  /// Returns a contiguous materialization of this array.
+  MlxArray contiguous({bool allowColMajor = false}) =>
+      MlxOps.contiguous(this, allowColMajor: allowColMajor);
 
   /// Elementwise addition.
   MlxArray operator +(MlxArray other) => MlxOps.add(this, other);
@@ -763,6 +887,20 @@ final class MlxArray {
     }
   }
 
+  int _readScalarInt32Relaxed() {
+    final out = calloc<ffi.Int32>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_scalar_int32_relaxed',
+        shim.dart_mlx_array_scalar_int32_relaxed(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   int _readScalarInt64() {
     final out = calloc<ffi.Int64>();
     try {
@@ -777,6 +915,47 @@ final class MlxArray {
     }
   }
 
+  double _readScalarFloat32() {
+    final out = calloc<ffi.Float>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_item_float32',
+        shim.dart_mlx_array_item_float32(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  double _readScalarFloat32Relaxed() {
+    final out = calloc<ffi.Float>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_scalar_float32_relaxed',
+        shim.dart_mlx_array_scalar_float32_relaxed(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  double _readScalarFloat64() {
+    final out = calloc<ffi.Double>();
+    try {
+      _clearError();
+      _checkStatus(
+        'dart_mlx_array_item_float64',
+        shim.dart_mlx_array_item_float64(_handle, out),
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
 }
 
 /// Managed wrapper for the current MLX default device.

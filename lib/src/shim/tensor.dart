@@ -152,6 +152,25 @@ external DartMlxArrayHandle dart_mlx_slice_update_dynamic(
   int axesLen,
 );
 
+@ffi.Native<
+  ffi.Int Function(
+    DartMlxArrayHandle,
+    DartMlxArrayHandle,
+    ffi.Pointer<ffi.Int>,
+    ffi.Size,
+    ffi.Pointer<ffi.Int>,
+    ffi.Size,
+  )
+>()
+external int dart_mlx_slice_update_inplace(
+  DartMlxArrayHandle target,
+  DartMlxArrayHandle update,
+  ffi.Pointer<ffi.Int> start,
+  int startLen,
+  ffi.Pointer<ffi.Int> strides,
+  int stridesLen,
+);
+
 @ffi.Native<DartMlxArrayHandle Function(DartMlxArrayHandle, ffi.Int, ffi.Int)>()
 external DartMlxArrayHandle dart_mlx_flatten(
   DartMlxArrayHandle input,

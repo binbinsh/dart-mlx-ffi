@@ -124,7 +124,11 @@ Buffer MetalAllocator::malloc(size_t size) {
 
   // Try the cache
   std::unique_lock lk(mutex_);
+  allocation_request_count_++;
   MTL::Buffer* buf = buffer_cache_.reuse_from_cache(size);
+  if (buf) {
+    cache_reuse_hit_count_++;
+  }
   if (!buf) {
     size_t mem_required = get_active_memory() + get_cache_memory() + size;
 
@@ -144,8 +148,10 @@ Buffer MetalAllocator::malloc(size_t size) {
       throw std::runtime_error(msg.str());
     }
     lk.unlock();
+    bool allocated_from_heap = false;
     if (size < small_size_ && heap_) {
       buf = heap_->newBuffer(size, resource_options);
+      allocated_from_heap = (buf != nullptr);
     }
     if (!buf) {
       buf = device_->newBuffer(size, resource_options);
@@ -157,6 +163,12 @@ Buffer MetalAllocator::malloc(size_t size) {
     }
     lk.lock();
     num_resources_++;
+    new_allocation_count_++;
+    if (allocated_from_heap) {
+      heap_allocation_count_++;
+    } else {
+      device_allocation_count_++;
+    }
     if (!buf->heap()) {
       residency_set_.insert(buf);
     }
@@ -245,6 +257,12 @@ MetalAllocator& allocator() {
 size_t set_cache_limit(size_t limit) {
   return metal::allocator().set_cache_limit(limit);
 }
+size_t get_cache_limit() {
+  return metal::allocator().get_cache_limit();
+}
+size_t get_cache_count() {
+  return metal::allocator().get_cache_count();
+}
 size_t set_memory_limit(size_t limit) {
   return metal::allocator().set_memory_limit(limit);
 }
@@ -259,6 +277,48 @@ size_t set_wired_limit(size_t limit) {
         "the maximum working set size is not allowed.");
   }
   return metal::allocator().set_wired_limit(limit);
+}
+size_t get_wired_limit() {
+  return metal::allocator().get_wired_limit();
+}
+size_t get_resource_count() {
+  return metal::allocator().get_resource_count();
+}
+size_t get_resource_limit() {
+  return metal::allocator().get_resource_limit();
+}
+size_t get_command_buffer_commit_count() {
+  return metal::device(mlx::core::Device::gpu).total_commit_count();
+}
+size_t get_pending_output_count() {
+  return metal::device(mlx::core::Device::gpu).total_pending_output_count();
+}
+size_t get_temporary_count() {
+  return metal::device(mlx::core::Device::gpu).total_temporary_count();
+}
+size_t get_buffer_op_count() {
+  return metal::device(mlx::core::Device::gpu).total_buffer_op_count();
+}
+size_t get_buffer_size_bytes() {
+  return metal::device(mlx::core::Device::gpu).total_buffer_size_bytes();
+}
+size_t get_stream_count() {
+  return metal::device(mlx::core::Device::gpu).stream_count();
+}
+size_t get_allocation_request_count() {
+  return metal::allocator().get_allocation_request_count();
+}
+size_t get_cache_reuse_hit_count() {
+  return metal::allocator().get_cache_reuse_hit_count();
+}
+size_t get_new_allocation_count() {
+  return metal::allocator().get_new_allocation_count();
+}
+size_t get_heap_allocation_count() {
+  return metal::allocator().get_heap_allocation_count();
+}
+size_t get_device_allocation_count() {
+  return metal::allocator().get_device_allocation_count();
 }
 size_t get_active_memory() {
   return metal::allocator().get_active_memory();

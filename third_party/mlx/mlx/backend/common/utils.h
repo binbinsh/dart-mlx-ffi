@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "mlx/array.h"
+#include "mlx/memory.h"
 
 namespace mlx::core {
 
@@ -187,6 +188,52 @@ inline bool is_donatable(const array& in, const array& out) {
 
   return in.is_donatable() && in.itemsize() == out.itemsize() &&
       in.buffer_size() <= out.nbytes() + donation_extra;
+}
+
+enum class DonationDecision {
+  success,
+  desc_not_unique,
+  data_not_unique,
+  itemsize_mismatch,
+  oversize,
+};
+
+inline DonationDecision donation_decision(const array& in, const array& out) {
+  constexpr size_t donation_extra = 16384;
+  if (in.data_shared_ptr().use_count() != 1) {
+    return DonationDecision::data_not_unique;
+  }
+  if (!in.is_donatable()) {
+    return DonationDecision::desc_not_unique;
+  }
+  if (in.itemsize() != out.itemsize()) {
+    return DonationDecision::itemsize_mismatch;
+  }
+  if (in.buffer_size() > out.nbytes() + donation_extra) {
+    return DonationDecision::oversize;
+  }
+  return DonationDecision::success;
+}
+
+inline void record_donation_rejection(DonationDecision decision) {
+  switch (decision) {
+    case DonationDecision::success:
+      break;
+    case DonationDecision::desc_not_unique:
+      record_donation_reject_not_unique();
+      record_donation_reject_desc_not_unique();
+      break;
+    case DonationDecision::data_not_unique:
+      record_donation_reject_not_unique();
+      record_donation_reject_data_not_unique();
+      break;
+    case DonationDecision::itemsize_mismatch:
+      record_donation_reject_itemsize();
+      break;
+    case DonationDecision::oversize:
+      record_donation_reject_oversize();
+      break;
+  }
 }
 
 std::pair<bool, Strides> prepare_reshape(const array& in, const array& out);

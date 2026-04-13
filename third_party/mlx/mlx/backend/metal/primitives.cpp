@@ -11,6 +11,7 @@
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/kernels.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/memory.h"
 #include "mlx/primitives.h"
 #include "mlx/scheduler.h"
 #include "mlx/utils.h"
@@ -26,6 +27,8 @@ void arange_set_scalars(T start, T next, metal::CommandEncoder& enc) {
 
 void Arange::eval_gpu(const std::vector<array>& inputs, array& out) {
   assert(inputs.size() == 0);
+  record_metal_copy_allocation();
+  record_metal_primitive_copy_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
   if (out.size() == 0) {
     return;
@@ -87,6 +90,8 @@ void Arange::eval_gpu(const std::vector<array>& inputs, array& out) {
 void ArgReduce::eval_gpu(const std::vector<array>& inputs, array& out) {
   assert(inputs.size() == 1);
   auto& in = inputs[0];
+  record_metal_copy_allocation();
+  record_metal_primitive_copy_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
   auto& s = stream();
   auto& d = metal::device(s.device);
@@ -166,6 +171,8 @@ void RandomBits::eval_gpu(const std::vector<array>& inputs, array& out) {
 
   size_t elems_per_key = out.size() / num_keys;
   size_t bytes_per_key = out.itemsize() * elems_per_key;
+  record_metal_copy_allocation();
+  record_metal_primitive_copy_allocation();
   out.set_data(allocator::malloc(out.nbytes()));
   if (out.size() == 0) {
     return;

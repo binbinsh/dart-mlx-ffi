@@ -141,5 +141,28 @@ endif()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/kernels)
 
+set(MLX_EMBEDDED_METALLIB_OBJ
+    ${CMAKE_CURRENT_BINARY_DIR}/embedded_mlx_metallib.o)
+set(MLX_EMBEDDED_METALLIB_DUMMY_C
+    ${CMAKE_CURRENT_BINARY_DIR}/embedded_mlx_metallib_dummy.c)
+set(MLX_EMBEDDED_METALLIB_DUMMY_OBJ
+    ${CMAKE_CURRENT_BINARY_DIR}/embedded_mlx_metallib_dummy.o)
+add_custom_command(
+  OUTPUT ${MLX_EMBEDDED_METALLIB_OBJ}
+  COMMAND ${CMAKE_COMMAND} -E echo "int _mlx_embedded_metallib_dummy = 0;"
+          > ${MLX_EMBEDDED_METALLIB_DUMMY_C}
+  COMMAND xcrun -sdk ${MLX_METAL_SDK} clang -arch ${CMAKE_OSX_ARCHITECTURES}
+          ${MLX_METAL_MIN_FLAG} -c ${MLX_EMBEDDED_METALLIB_DUMMY_C} -o
+          ${MLX_EMBEDDED_METALLIB_DUMMY_OBJ}
+  COMMAND xcrun -sdk ${MLX_METAL_SDK} ld -r -arch ${CMAKE_OSX_ARCHITECTURES}
+          ${MLX_EMBEDDED_METALLIB_DUMMY_OBJ} -sectcreate __DATA
+          __mlx_metallib ${MLX_METAL_PATH}/mlx.metallib -o
+          ${MLX_EMBEDDED_METALLIB_OBJ}
+  DEPENDS ${MLX_METAL_PATH}/mlx.metallib
+  COMMENT "Embedding mlx.metallib into mlx object section")
+add_custom_target(mlx-embedded-metallib DEPENDS ${MLX_EMBEDDED_METALLIB_OBJ})
+add_dependencies(mlx mlx-embedded-metallib)
+target_link_libraries(mlx PRIVATE ${MLX_EMBEDDED_METALLIB_OBJ})
+
 target_compile_definitions(mlx
                            PRIVATE METAL_PATH="${MLX_METAL_PATH}/mlx.metallib")

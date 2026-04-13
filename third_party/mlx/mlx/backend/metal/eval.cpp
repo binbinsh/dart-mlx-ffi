@@ -4,8 +4,10 @@
 #include "mlx/backend/gpu/eval.h"
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/utils.h"
+#include "mlx/dtype_utils.h"
 #include "mlx/primitives.h"
 #include "mlx/scheduler.h"
+#include "mlx/utils.h"
 
 namespace mlx::core::gpu {
 
@@ -15,10 +17,18 @@ void new_stream(Stream stream) {
   }
 }
 
-inline void check_error(MTL::CommandBuffer* cbuf) {
+inline void check_error(
+    MTL::CommandBuffer* cbuf,
+    const char* primitive_name,
+    Dtype dtype,
+    const Shape& shape) {
   if (cbuf->status() == MTL::CommandBufferStatusError) {
     std::ostringstream msg;
-    msg << "[METAL] Command buffer execution failed: "
+    msg << "[METAL] Command buffer execution failed"
+        << " primitive=" << primitive_name
+        << " dtype=" << dtype_to_string(dtype)
+        << " shape=" << shape
+        << ": "
         << cbuf->error()->localizedDescription()->utf8String();
     throw std::runtime_error(msg.str());
   }
@@ -29,6 +39,9 @@ void eval(array& arr) {
   auto s = arr.primitive().stream();
   auto& d = metal::device(s.device);
   auto command_buffer = d.get_command_buffer(s.index);
+  auto primitive_name = std::string(arr.primitive().name());
+  auto dtype = arr.dtype();
+  auto shape = arr.shape();
 
   auto outputs = arr.outputs();
   {
@@ -40,7 +53,17 @@ void eval(array& arr) {
     }
 
     debug_set_primitive_buffer_label(command_buffer, arr.primitive());
-    arr.primitive().eval_gpu(arr.inputs(), outputs);
+    try {
+      arr.primitive().eval_gpu(arr.inputs(), outputs);
+    } catch (const std::exception& e) {
+      std::ostringstream msg;
+      msg << "[METAL] eval_gpu failed"
+          << " primitive=" << primitive_name
+          << " dtype=" << dtype_to_string(dtype)
+          << " shape=" << shape
+          << ": " << e.what();
+      throw std::runtime_error(msg.str());
+    }
   }
   std::unordered_set<std::shared_ptr<array::Data>> buffers;
   for (auto& in : arr.inputs()) {
@@ -58,16 +81,27 @@ void eval(array& arr) {
     d.end_encoding(s.index);
     scheduler::notify_new_task(s);
     command_buffer->addCompletedHandler(
-        [s, buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
+        [s,
+         buffers = std::move(buffers),
+         primitive_name,
+         dtype,
+         shape](MTL::CommandBuffer* cbuf) {
           scheduler::notify_task_completion(s);
-          check_error(cbuf);
+          check_error(cbuf, primitive_name.c_str(), dtype, shape);
         });
     d.commit_command_buffer(s.index);
+    if (env::metal_sync_on_eval_commit()) {
+      command_buffer->waitUntilCompleted();
+      check_error(command_buffer, primitive_name.c_str(), dtype, shape);
+    }
     d.get_command_buffer(s.index);
   } else {
     command_buffer->addCompletedHandler(
-        [buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
-          check_error(cbuf);
+        [buffers = std::move(buffers),
+         primitive_name,
+         dtype,
+         shape](MTL::CommandBuffer* cbuf) {
+          check_error(cbuf, primitive_name.c_str(), dtype, shape);
         });
   }
 }
@@ -77,7 +111,9 @@ void finalize(Stream s) {
   auto& d = metal::device(s.device);
   auto cb = d.get_command_buffer(s.index);
   d.end_encoding(s.index);
-  cb->addCompletedHandler([](MTL::CommandBuffer* cbuf) { check_error(cbuf); });
+  cb->addCompletedHandler([](MTL::CommandBuffer* cbuf) {
+    check_error(cbuf, "finalize", float32, {});
+  });
   d.commit_command_buffer(s.index);
   d.get_command_buffer(s.index);
 }
@@ -90,7 +126,7 @@ void synchronize(Stream s) {
   d.end_encoding(s.index);
   d.commit_command_buffer(s.index);
   cb->waitUntilCompleted();
-  check_error(cb);
+  check_error(cb, "synchronize", float32, {});
   cb->release();
 }
 

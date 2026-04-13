@@ -89,6 +89,7 @@ array rms_norm(
   auto s = to_stream(s_);
   auto fallback =
       [has_weight, eps, out_type, s](const std::vector<array>& inputs) {
+        ScopedAstypeSite astype_site("fast_rms_norm_fallback");
         auto x = astype(inputs[0], float32, s);
         x = multiply(
             x,
@@ -108,9 +109,13 @@ array rms_norm(
       };
 
   auto passed_weight =
-      (has_weight) ? astype(*weight, out_type, s) : array(1, out_type);
+      [&]() {
+        ScopedAstypeSite astype_site("fast_rms_norm_fast");
+        return (has_weight) ? astype(*weight, out_type, s) : array(1, out_type);
+      }();
 
   if (!RMSNorm::use_fallback(s)) {
+    ScopedAstypeSite astype_site("fast_rms_norm_fast");
     return array(
         x.shape(),
         out_type,
@@ -245,6 +250,7 @@ array layer_norm(
   auto s = to_stream(s_);
   auto fallback = [has_weight, has_bias, eps, out_type, s](
                       const std::vector<array>& inputs) {
+    ScopedAstypeSite astype_site("fast_layer_norm_fallback");
     auto x = astype(inputs[0], float32, s);
 
     auto mu = mean(x, /* axis= */ -1, /* keepdims= */ true, s);
@@ -266,11 +272,18 @@ array layer_norm(
   };
 
   auto passed_weight =
-      (has_weight) ? astype(*weight, out_type, s) : array(1, out_type);
+      [&]() {
+        ScopedAstypeSite astype_site("fast_layer_norm_fast");
+        return (has_weight) ? astype(*weight, out_type, s) : array(1, out_type);
+      }();
   auto passed_bias =
-      (has_bias) ? astype(*bias, out_type, s) : array(0, out_type);
+      [&]() {
+        ScopedAstypeSite astype_site("fast_layer_norm_fast");
+        return (has_bias) ? astype(*bias, out_type, s) : array(0, out_type);
+      }();
 
   if (!LayerNorm::use_fallback(s)) {
+    ScopedAstypeSite astype_site("fast_layer_norm_fast");
     return array(
         x.shape(),
         out_type,

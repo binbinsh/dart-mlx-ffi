@@ -5,11 +5,55 @@ part of 'paddle_ocr_vl.dart';
 // ---------------------------------------------------------------------------
 
 int _nextTokenFromLogits(MlxArray logits) {
-  final argmax = logits.argmax(axis: -1);
+  final flat = logits.reshape([logits.size]);
+  final flatF32 = flat.dtype == MlxDType.MLX_FLOAT32
+      ? flat
+      : flat.astype(MlxDType.MLX_FLOAT32);
   try {
-    return argmax.toScalarInt();
+    return flatF32.argmaxFlatScalarInt();
+  } on MlxException catch (e) {
+    PaddleOcrVlDebugOverrides.traceSink?.call(
+      'sample_token fallback flat_native_helper_failed='
+      '${e.message} logitsShape=${logits.shape} logitsDType=${logits.dtype} '
+      'flatDType=${flatF32.dtype}',
+    );
+    try {
+      final flatArgmax = flatF32.argmax();
+      try {
+        return flatArgmax.toScalarInt();
+      } on MlxException catch (flatError) {
+        PaddleOcrVlDebugOverrides.traceSink?.call(
+          'sample_token fallback flat_argmax_failed='
+          '${flatError.message} flatShape=${flatF32.shape} '
+          'argmaxDType=${flatArgmax.dtype}',
+        );
+      } finally {
+        flatArgmax.close();
+      }
+    } on MlxException catch (flatSetupError) {
+      PaddleOcrVlDebugOverrides.traceSink?.call(
+        'sample_token fallback flat_setup_failed=${flatSetupError.message}',
+      );
+    }
+    try {
+      final argmax = logits.argmax(axis: -1);
+      try {
+        argmax.eval();
+        return argmax.toScalarInt();
+      } finally {
+        argmax.close();
+      }
+    } on MlxException catch (helperError) {
+      PaddleOcrVlDebugOverrides.traceSink?.call(
+        'sample_token fallback axis_argmax_failed=${helperError.message}',
+      );
+      rethrow;
+    }
   } finally {
-    argmax.close();
+    if (!identical(flatF32, flat)) {
+      flatF32.close();
+    }
+    flat.close();
   }
 }
 
@@ -29,22 +73,10 @@ List<int> _generateGreedy(
   int maxNewTokens, {
   required int eosTokenId,
 }) {
-  final cache = _ModelCache.create(
-    numLayers: runner.config.numHiddenLayers,
-    numKvHeads: runner.config.numKeyValueHeads,
-    headDim: runner.config.headDim,
-    maxSeqLen: runner.config.maxKvCacheSeqLenForCurrentPlatform,
-  );
+  final cache = _ModelCache.create(config: runner.config);
   try {
     final tokens = List<int>.from(promptIds);
-
-    // Prefill: run entire prompt through the model
-    final promptArr = MlxArray.fromInt32List(
-      promptIds,
-      shape: [1, promptIds.length],
-    );
-    var logits = runner._forwardWithCache(promptArr, positionIds, cache);
-    promptArr.close();
+    var logits = runner._prefillFromIdsWithCache(promptIds, positionIds, cache);
 
     try {
       for (var step = 0; step < maxNewTokens; step++) {

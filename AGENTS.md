@@ -8,19 +8,14 @@
   - `325` is `month + day` with no unnecessary leading zeroes
   - `7` is the git commit count with no zero padding
 - Update [`pubspec.yaml`](pubspec.yaml) and [`CHANGELOG.md`](CHANGELOG.md) together.
-- Git tags must match the pubspec version and use the form `v<version>`.
-- Example tag: `v26.325.7`.
+- Git tags must match the pubspec version and use the form `v<version>`, Example tag: `v26.325.7`.
 
 ## File Size
 
-- Hand-written source, test, and config files must stay under `800` lines each.
+- Hand-written source, test, and config files must stay under `1200` lines each. Generated files and vendored third-party files are exempt from the `1200`-line limit. When a file approaches the limit, split by module or responsibility instead of appending more code.
 - File names must be short and understandable at a glance.
 - Prefer names such as `array.dart`, `ops.dart`, `io.dart`, `bridge_ops.cpp`.
 - Avoid meaningless sequence names such as `a.dart`, `tmp.dart`, `bridge_a.cpp`.
-- When a file approaches the limit, split by module or responsibility instead of appending more code.
-- Generated files and vendored third-party files are exempt from the `800`-line limit:
-  - [`lib/src/raw/mlx_bindings.g.dart`](lib/src/raw/mlx_bindings.g.dart)
-  - anything under [`third_party/`](third_party/)
 
 ## Python Tooling
 

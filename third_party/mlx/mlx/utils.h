@@ -3,6 +3,7 @@
 #pragma once
 
 #include <exception>
+#include <iostream>
 #include <variant>
 
 #include "mlx/api.h"
@@ -133,6 +134,23 @@ inline int next_power_of_2(int n) {
   return pow(2, std::ceil(std::log2(n)));
 }
 
+MLX_API void set_current_astype_site_name(const char* site_name);
+MLX_API const char* current_astype_site_name();
+
+struct ScopedAstypeSite {
+  explicit ScopedAstypeSite(const char* site_name)
+      : previous_(current_astype_site_name()) {
+    set_current_astype_site_name(site_name);
+  }
+
+  ~ScopedAstypeSite() {
+    set_current_astype_site_name(previous_);
+  }
+
+ private:
+  const char* previous_;
+};
+
 namespace env {
 
 int get_var(const char* name, int default_value);
@@ -160,6 +178,18 @@ inline bool metal_fast_synch() {
   return metal_fast_synch;
 }
 
+inline bool metal_sync_on_eval_commit() {
+  static bool metal_sync_on_eval_commit_ =
+      get_var("MLX_METAL_SYNC_ON_EVAL_COMMIT", 0);
+  return metal_sync_on_eval_commit_;
+}
+
+inline bool metal_sync_on_eval_next() {
+  static bool metal_sync_on_eval_next_ =
+      get_var("MLX_METAL_SYNC_ON_EVAL_NEXT", 0);
+  return metal_sync_on_eval_next_;
+}
+
 inline bool enable_tf32() {
   static bool enable_tf32_ = get_var("MLX_ENABLE_TF32", 1);
   return enable_tf32_;
@@ -173,6 +203,12 @@ inline int nccl_timeout(int default_value) {
 inline const std::string& metal_gpu_arch() {
   static std::string gpu_arch_ = get_var("MLX_METAL_GPU_ARCH", "");
   return gpu_arch_;
+}
+
+inline int trace_binary_multiply_general_limit() {
+  static int trace_binary_multiply_general_limit_ =
+      get_var("MLX_TRACE_BINARY_MULTIPLY_GENERAL", 0);
+  return trace_binary_multiply_general_limit_;
 }
 
 } // namespace env
