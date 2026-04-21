@@ -1,0 +1,73 @@
+{
+  "block_shapes": {
+    "asp": [
+      1,
+      6144,
+      1
+    ],
+    "asp_bn": [
+      1,
+      6144,
+      1
+    ],
+    "block_0": [
+      1,
+      1024,
+      301
+    ],
+    "block_1": [
+      1,
+      1024,
+      301
+    ],
+    "block_2": [
+      1,
+      1024,
+      301
+    ],
+    "block_3": [
+      1,
+      1024,
+      301
+    ],
+    "embedding": [
+      192
+    ],
+    "fc": [
+      1,
+      192,
+      1
+    ],
+    "input_channel_first": [
+      1,
+      80,
+      301
+    ],
+    "mfa": [
+      1,
+      3072,
+      301
+    ],
+    "pre_mfa_concat": [
+      1,
+      3072,
+      301
+    ]
+  },
+  "duration_seconds": 3.0,
+  "embedding_norm": 297.4644470214844,
+  "embedding_shape": [
+    192
+  ],
+  "fbank_norm_shape": [
+    301,
+    80
+  ],
+  "fbank_raw_shape": [
+    301,
+    80
+  ],
+  "format": "cmdspace-mlx-ecapa-tdnn-fixtures/v2",
+  "sample_rate": 16000,
+  "seed": 20251008
+}

@@ -40,3 +40,5 @@ export 'src/models/synthetic/synthetic.dart'
 export 'src/models/qwen3_asr/qwen3_asr.dart';
 export 'src/models/silero_vad/silero_vad.dart';
 export 'src/models/fsmn_vad/fsmn_vad.dart';
+export 'src/models/speaker_embedding/speaker_embedding.dart';
+export 'src/models/pyannote_seg/pyannote_seg.dart';

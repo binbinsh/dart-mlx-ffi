@@ -1,0 +1,251 @@
+{
+  "classes": [
+    "speaker#1",
+    "speaker#2",
+    "speaker#3"
+  ],
+  "format": "cmdspace-mlx-pyannote-seg/v1",
+  "linear_hidden_sizes": [
+    128,
+    128
+  ],
+  "lstm": {
+    "bidirectional": true,
+    "dropout": 0.0,
+    "hidden_size": 128,
+    "input_size": 60,
+    "num_layers": 4
+  },
+  "model_id": "pyannote/segmentation-3.0",
+  "num_classes": 7,
+  "num_speakers": 3,
+  "powerset_index_layout": [
+    [],
+    [
+      0
+    ],
+    [
+      1
+    ],
+    [
+      2
+    ],
+    [
+      0,
+      1
+    ],
+    [
+      0,
+      2
+    ],
+    [
+      1,
+      2
+    ]
+  ],
+  "powerset_max_classes": 2,
+  "sample_rate": 16000,
+  "sincnet": {
+    "kernel_size": 251,
+    "n_filters": [
+      80,
+      60,
+      60
+    ],
+    "sample_rate": 16000,
+    "stride": 10
+  },
+  "tensor_shapes": {
+    "classifier.bias": [
+      7
+    ],
+    "classifier.weight": [
+      7,
+      128
+    ],
+    "linear.0.bias": [
+      128
+    ],
+    "linear.0.weight": [
+      128,
+      256
+    ],
+    "linear.1.bias": [
+      128
+    ],
+    "linear.1.weight": [
+      128,
+      128
+    ],
+    "lstm.bias_hh_l0": [
+      512
+    ],
+    "lstm.bias_hh_l0_reverse": [
+      512
+    ],
+    "lstm.bias_hh_l1": [
+      512
+    ],
+    "lstm.bias_hh_l1_reverse": [
+      512
+    ],
+    "lstm.bias_hh_l2": [
+      512
+    ],
+    "lstm.bias_hh_l2_reverse": [
+      512
+    ],
+    "lstm.bias_hh_l3": [
+      512
+    ],
+    "lstm.bias_hh_l3_reverse": [
+      512
+    ],
+    "lstm.bias_ih_l0": [
+      512
+    ],
+    "lstm.bias_ih_l0_reverse": [
+      512
+    ],
+    "lstm.bias_ih_l1": [
+      512
+    ],
+    "lstm.bias_ih_l1_reverse": [
+      512
+    ],
+    "lstm.bias_ih_l2": [
+      512
+    ],
+    "lstm.bias_ih_l2_reverse": [
+      512
+    ],
+    "lstm.bias_ih_l3": [
+      512
+    ],
+    "lstm.bias_ih_l3_reverse": [
+      512
+    ],
+    "lstm.weight_hh_l0": [
+      512,
+      128
+    ],
+    "lstm.weight_hh_l0_reverse": [
+      512,
+      128
+    ],
+    "lstm.weight_hh_l1": [
+      512,
+      128
+    ],
+    "lstm.weight_hh_l1_reverse": [
+      512,
+      128
+    ],
+    "lstm.weight_hh_l2": [
+      512,
+      128
+    ],
+    "lstm.weight_hh_l2_reverse": [
+      512,
+      128
+    ],
+    "lstm.weight_hh_l3": [
+      512,
+      128
+    ],
+    "lstm.weight_hh_l3_reverse": [
+      512,
+      128
+    ],
+    "lstm.weight_ih_l0": [
+      512,
+      60
+    ],
+    "lstm.weight_ih_l0_reverse": [
+      512,
+      60
+    ],
+    "lstm.weight_ih_l1": [
+      512,
+      256
+    ],
+    "lstm.weight_ih_l1_reverse": [
+      512,
+      256
+    ],
+    "lstm.weight_ih_l2": [
+      512,
+      256
+    ],
+    "lstm.weight_ih_l2_reverse": [
+      512,
+      256
+    ],
+    "lstm.weight_ih_l3": [
+      512,
+      256
+    ],
+    "lstm.weight_ih_l3_reverse": [
+      512,
+      256
+    ],
+    "sincnet.conv1d.0.filterbank.band_hz_": [
+      40,
+      1
+    ],
+    "sincnet.conv1d.0.filterbank.low_hz_": [
+      40,
+      1
+    ],
+    "sincnet.conv1d.0.filterbank.n_": [
+      1,
+      125
+    ],
+    "sincnet.conv1d.0.filterbank.window_": [
+      125
+    ],
+    "sincnet.conv1d.1.bias": [
+      60
+    ],
+    "sincnet.conv1d.1.weight": [
+      60,
+      80,
+      5
+    ],
+    "sincnet.conv1d.2.bias": [
+      60
+    ],
+    "sincnet.conv1d.2.weight": [
+      60,
+      60,
+      5
+    ],
+    "sincnet.norm1d.0.bias": [
+      80
+    ],
+    "sincnet.norm1d.0.weight": [
+      80
+    ],
+    "sincnet.norm1d.1.bias": [
+      60
+    ],
+    "sincnet.norm1d.1.weight": [
+      60
+    ],
+    "sincnet.norm1d.2.bias": [
+      60
+    ],
+    "sincnet.norm1d.2.weight": [
+      60
+    ],
+    "sincnet.wav_norm1d.bias": [
+      1
+    ],
+    "sincnet.wav_norm1d.weight": [
+      1
+    ]
+  },
+  "weights": "weights.safetensors",
+  "window_duration_seconds": 10.0,
+  "window_samples": 160000
+}

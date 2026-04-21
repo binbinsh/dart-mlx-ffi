@@ -1,0 +1,35 @@
+{
+  "classes": [
+    "speaker#1",
+    "speaker#2",
+    "speaker#3"
+  ],
+  "duration_seconds": 10.0,
+  "format": "cmdspace-mlx-pyannote-seg-fixtures/v1",
+  "logits_shape": [
+    1,
+    589,
+    7
+  ],
+  "lstm_shape": [
+    1,
+    589,
+    256
+  ],
+  "powerset_max_classes": 2,
+  "powerset_shape": [
+    1,
+    589,
+    7
+  ],
+  "sample_rate": 16000,
+  "seed": 20251009,
+  "sincnet_shape": [
+    1,
+    60,
+    589
+  ],
+  "waveform_shape": [
+    160000
+  ]
+}
