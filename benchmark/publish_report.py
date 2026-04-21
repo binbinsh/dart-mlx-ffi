@@ -16,13 +16,9 @@ try:
         resolve_model_path,
         slug,
     )
+    from .fsmn_vad_audio_sweep import vad_audio_bench
+    from .fsmn_vad_sweep import vad_bench
     from .parakeet_tdt_sweep import asr_bench
-    from .vlm_export_sweep import export_model as export_vlm_model
-    from .vlm_export_sweep import extract_logits as vlm_extract_logits
-    from .vlm_export_sweep import prepare_model_inputs as prepare_vlm_inputs
-    from .tts_export_sweep import export_model as export_ming_tts_model
-    from .tts_export_sweep import python_forward as ming_python_forward
-    from .tts_export_sweep import dart_forward as ming_dart_forward
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from common import (
@@ -33,13 +29,9 @@ except ImportError:
         resolve_model_path,
         slug,
     )
+    from fsmn_vad_audio_sweep import vad_audio_bench
+    from fsmn_vad_sweep import vad_bench
     from parakeet_tdt_sweep import asr_bench
-    from vlm_export_sweep import export_model as export_vlm_model
-    from vlm_export_sweep import extract_logits as vlm_extract_logits
-    from vlm_export_sweep import prepare_model_inputs as prepare_vlm_inputs
-    from tts_export_sweep import export_model as export_ming_tts_model
-    from tts_export_sweep import python_forward as ming_python_forward
-    from tts_export_sweep import dart_forward as ming_dart_forward
 
 import mlx.core as mx
 from mlx_lm import load as load_lm
@@ -244,6 +236,15 @@ print(json.dumps(payload))
 
 
 def vlm_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, object]:
+    try:
+        from .vlm_export_sweep import export_model as export_vlm_model
+        from .vlm_export_sweep import extract_logits as vlm_extract_logits
+        from .vlm_export_sweep import prepare_model_inputs as prepare_vlm_inputs
+    except ImportError:
+        from vlm_export_sweep import export_model as export_vlm_model
+        from vlm_export_sweep import extract_logits as vlm_extract_logits
+        from vlm_export_sweep import prepare_model_inputs as prepare_vlm_inputs
+
     export_dir = ROOT / "benchmark" / "out" / "publish" / slug(model_id)
     export_path, input_path, input_names = export_vlm_model(model_id, export_dir)
 
@@ -303,85 +304,26 @@ def vlm_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, o
     }
 
 
-def ming_tts_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, object]:
-    export_dir = ROOT / "benchmark" / "out" / "publish" / slug(model_id)
-    export_path, input_path, input_names = export_ming_tts_model(model_id, export_dir)
-
-    model, inputs, _, _ = ming_python_forward(model_id)
-
-    def forward():
-        out = model.flowloss.cfm.model.forward_with_cfg(
-            inputs["x"],
-            inputs["t"],
-            inputs["c"],
-            cfg_scale=0.3,
-            latent_history=inputs["latent_history"],
-            patch_size=4,
-        ).astype(mx.float32)
-        mx.eval(out)
-        mx.synchronize()
-        return out
-
-    for _ in range(warmup):
-        forward()
-    started = time.perf_counter()
-    last = None
-    for _ in range(iters):
-        last = forward()
-    py_ms = (time.perf_counter() - started) * 1000.0 / iters
-    py_values = [float(v) for v in last.reshape([-1]).tolist()]
-    del model, inputs, last
-    cleanup_mlx(mx)
-
-    dart_values, dart_ms = ming_dart_forward(
-        export_path,
-        input_path,
-        input_names,
-        warmup=warmup,
-        iters=iters,
-    )
-    max_diff, mean_diff = compare_lists(py_values, dart_values)
-    cleanup_mlx(mx)
-    return {
-        "model_id": model_id,
-        "kind": "tts",
-        "input_desc": "deterministic DiT subgraph tensors",
-        "comparison": "forward_with_cfg output",
-        "python_ms": py_ms,
-        "dart_ms": dart_ms,
-        "max_abs_diff": max_diff,
-        "mean_abs_diff": mean_diff,
-    }
+def fsmn_vad_fixed_bench(
+    model_id: str,
+    *,
+    warmup: int = 3,
+    iters: int = 10,
+) -> dict[str, object]:
+    result = vad_bench(warmup=warmup, iters=iters)
+    result["model_id"] = model_id
+    return result
 
 
-def kitten_bench(*, warmup: int = 3, iters: int = 10) -> dict[str, object]:
-    completed = subprocess.run(
-        [
-            "uv",
-            "run",
-            "python",
-            "benchmark/kitten_tts/mlx_audio_compare.py",
-            "--warmup",
-            str(warmup),
-            "--iters",
-            str(iters),
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    payload = json.loads(completed.stdout)
-    return {
-        "model_id": "mlx-community/kitten-tts-nano-0.8-6bit",
-        "kind": "tts",
-        "input_desc": "fixed text + voice",
-        "comparison": "full waveform",
-        "python_ms": payload["python_ms"],
-        "dart_ms": payload["dart_ms"],
-        "max_abs_diff": payload["max_abs_diff"],
-        "mean_abs_diff": payload["mean_abs_diff"],
-    }
+def fsmn_vad_audio_bench(
+    model_id: str,
+    *,
+    warmup: int = 3,
+    iters: int = 10,
+) -> dict[str, object]:
+    result = vad_audio_bench(warmup=warmup, iters=iters)
+    result["model_id"] = model_id
+    return result
 
 
 def main() -> None:
@@ -400,18 +342,20 @@ def main() -> None:
             continue
         runner = item.get("runner")
         kind = item["kind"]
-        if runner == "kitten":
-            report.append(kitten_bench())
-        elif runner == "unsloth_mlx":
+        if runner == "unsloth_mlx":
             report.append(unsloth_mlx_text_bench(mid))
+        elif runner == "fsmn_vad_fixed":
+            report.append(fsmn_vad_fixed_bench(mid))
+        elif runner == "fsmn_vad_audio":
+            report.append(fsmn_vad_audio_bench(mid))
         elif kind == "text":
             report.append(text_bench(mid))
         elif kind == "vlm":
             report.append(vlm_bench(mid))
-        elif kind == "tts":
-            report.append(ming_tts_bench(mid))
         elif kind == "asr":
             report.append(asr_bench(mid))
+        elif kind == "vad":
+            raise ValueError(f"VAD benchmark requires explicit runner: {item}")
         else:
             raise ValueError(f"Unsupported benchmark spec: {item}")
         partial.write_text(json.dumps(report, indent=2), encoding="utf-8")

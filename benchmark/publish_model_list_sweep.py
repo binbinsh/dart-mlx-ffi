@@ -8,6 +8,8 @@ import mlx.core as mx
 
 try:
     from .common import benchmark_dart_export, compare_lists, slug
+    from .fsmn_vad_audio_sweep import vad_audio_bench
+    from .fsmn_vad_sweep import vad_bench
     from .parakeet_tdt_sweep import asr_bench
     from .text_export_sweep import benchmark_python as benchmark_text_python
     from .text_export_sweep import export_model as export_text_model
@@ -19,6 +21,8 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from common import benchmark_dart_export, compare_lists, slug
+    from fsmn_vad_audio_sweep import vad_audio_bench
+    from fsmn_vad_sweep import vad_bench
     from parakeet_tdt_sweep import asr_bench
     from text_export_sweep import benchmark_python as benchmark_text_python
     from text_export_sweep import export_model as export_text_model
@@ -109,6 +113,10 @@ def main() -> None:
         root = Path("benchmark/out/model_list") / slug(model_id)
         if item.get("runner") == "unsloth_mlx":
             extra = unsloth_mlx_text_bench(model_id, warmup=1, iters=1)
+        elif item.get("runner") == "fsmn_vad_fixed":
+            extra = vad_bench(warmup=1, iters=1)
+        elif item.get("runner") == "fsmn_vad_audio":
+            extra = vad_audio_bench(warmup=1, iters=1)
         elif kind == "text":
             extra = run_text(model_id, root)
         elif kind == "vlm":
@@ -117,6 +125,8 @@ def main() -> None:
             extra = run_tts(model_id, root)
         elif kind == "asr":
             extra = asr_bench(model_id)
+        elif kind == "vad":
+            extra = {"status": "pending", "note": "VAD benchmark requires explicit runner"}
         else:
             extra = {"status": "pending", "note": f"Unsupported kind: {kind}"}
         record = {**item, **extra}

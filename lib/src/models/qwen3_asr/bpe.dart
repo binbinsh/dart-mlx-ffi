@@ -28,25 +28,82 @@ final class Qwen3AsrBpeTokenizer {
     required this.specialTokens,
   });
 
-  /// Load from a bundle directory containing vocab.json and merges.txt.
+  /// Load from a bundle directory containing either:
+  /// - `vocab.json` + `merges.txt`, or
+  /// - a HuggingFace `tokenizer.json` with embedded BPE vocab/merges.
   factory Qwen3AsrBpeTokenizer.load(String dirPath) {
     final vocabFile = File('$dirPath/vocab.json');
     final mergesFile = File('$dirPath/merges.txt');
-    if (!vocabFile.existsSync()) {
-      throw StateError('vocab.json not found in $dirPath');
-    }
-    if (!mergesFile.existsSync()) {
-      throw StateError('merges.txt not found in $dirPath');
+    final tokenizerFile = File('$dirPath/tokenizer.json');
+
+    final encoder = <String, int>{};
+    final bpeRanks = <String, int>{};
+
+    if (vocabFile.existsSync() && mergesFile.existsSync()) {
+      final vocabJson =
+          jsonDecode(vocabFile.readAsStringSync()) as Map<String, Object?>;
+      for (final entry in vocabJson.entries) {
+        encoder[entry.key] = (entry.value as num).toInt();
+      }
+      _mergeAddedTokens(dirPath, encoder);
+
+      final mergesContent = mergesFile.readAsStringSync();
+      final lines = mergesContent.split('\n');
+      var rank = 0;
+      for (final line in lines) {
+        if (line.isEmpty || line.startsWith('#')) continue;
+        bpeRanks[line] = rank;
+        rank += 1;
+      }
+    } else if (tokenizerFile.existsSync()) {
+      final tokenizerJson =
+          jsonDecode(tokenizerFile.readAsStringSync()) as Map<String, Object?>;
+      final model = tokenizerJson['model'] as Map<String, Object?>?;
+      if (model == null) {
+        throw StateError('Invalid tokenizer.json in $dirPath: missing model');
+      }
+      final vocabJson = model['vocab'] as Map<String, Object?>?;
+      if (vocabJson == null) {
+        throw StateError('Invalid tokenizer.json in $dirPath: missing model.vocab');
+      }
+      for (final entry in vocabJson.entries) {
+        encoder[entry.key] = (entry.value as num).toInt();
+      }
+      final addedTokens = tokenizerJson['added_tokens'];
+      if (addedTokens is List) {
+        for (final item in addedTokens) {
+          if (item is Map) {
+            final content = item['content'];
+            final id = item['id'];
+            if (content is String && id is num) {
+              encoder.putIfAbsent(content, () => id.toInt());
+            }
+          }
+        }
+      }
+      final merges = model['merges'];
+      if (merges is List) {
+        var rank = 0;
+        for (final item in merges) {
+          if (item is String) {
+            if (item.isEmpty || item.startsWith('#')) continue;
+            bpeRanks[item] = rank;
+            rank += 1;
+          } else if (item is List && item.length >= 2) {
+            final left = item[0]?.toString() ?? '';
+            final right = item[1]?.toString() ?? '';
+            if (left.isEmpty || right.isEmpty) continue;
+            bpeRanks['$left $right'] = rank;
+            rank += 1;
+          }
+        }
+      }
+    } else {
+      throw StateError(
+        'No vocab.json/merges.txt or tokenizer.json found in $dirPath',
+      );
     }
 
-    // Parse vocab.json: {"token": id, ...}
-    final vocabJson =
-        jsonDecode(vocabFile.readAsStringSync()) as Map<String, Object?>;
-    final encoder = <String, int>{};
-    for (final entry in vocabJson.entries) {
-      encoder[entry.key] = (entry.value as num).toInt();
-    }
-    _mergeAddedTokens(dirPath, encoder);
     for (final entry in _fallbackAddedTokens.entries) {
       encoder.putIfAbsent(entry.key, () => entry.value);
     }
@@ -55,18 +112,6 @@ final class Qwen3AsrBpeTokenizer {
     final decoder = <int, String>{};
     for (final entry in encoder.entries) {
       decoder[entry.value] = entry.key;
-    }
-
-    // Parse merges.txt: skip header line starting with #version,
-    // then each line is "token1 token2".
-    final mergesContent = mergesFile.readAsStringSync();
-    final lines = mergesContent.split('\n');
-    final bpeRanks = <String, int>{};
-    var rank = 0;
-    for (final line in lines) {
-      if (line.isEmpty || line.startsWith('#')) continue;
-      bpeRanks[line] = rank;
-      rank += 1;
     }
 
     // Build byte <-> unicode mappings.
@@ -237,9 +282,15 @@ final class Qwen3AsrBpeTokenizer {
   static Map<int, String> _bytesToUnicode() {
     final bs = <int>[];
     // Printable ASCII ranges that map to themselves.
-    for (var i = 0x21; i <= 0x7E; i++) bs.add(i); // ! through ~
-    for (var i = 0xA1; i <= 0xAC; i++) bs.add(i); // ¡ through ¬
-    for (var i = 0xAE; i <= 0xFF; i++) bs.add(i); // ® through ÿ
+    for (var i = 0x21; i <= 0x7E; i++) {
+      bs.add(i); // ! through ~
+    }
+    for (var i = 0xA1; i <= 0xAC; i++) {
+      bs.add(i); // ¡ through ¬
+    }
+    for (var i = 0xAE; i <= 0xFF; i++) {
+      bs.add(i); // ® through ÿ
+    }
 
     final cs = List<int>.from(bs);
     var n = 0;

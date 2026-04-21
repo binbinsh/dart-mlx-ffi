@@ -42,8 +42,8 @@ def _load_runners() -> dict[str, object]:
     try:
         from .parakeet_tdt_sweep import asr_bench
         from .publish_report import (
-            kitten_bench,
-            ming_tts_bench,
+            fsmn_vad_audio_bench,
+            fsmn_vad_fixed_bench,
             text_bench,
             unsloth_mlx_text_bench,
             vlm_bench,
@@ -53,8 +53,8 @@ def _load_runners() -> dict[str, object]:
             sys.path.insert(0, benchmark_root)
         from parakeet_tdt_sweep import asr_bench
         from publish_report import (
-            kitten_bench,
-            ming_tts_bench,
+            fsmn_vad_audio_bench,
+            fsmn_vad_fixed_bench,
             text_bench,
             unsloth_mlx_text_bench,
             vlm_bench,
@@ -64,9 +64,9 @@ def _load_runners() -> dict[str, object]:
         "text": text_bench,
         "unsloth_mlx": unsloth_mlx_text_bench,
         "vlm": vlm_bench,
-        "tts": ming_tts_bench,
         "asr": asr_bench,
-        "kitten": kitten_bench,
+        "fsmn_vad_fixed": fsmn_vad_fixed_bench,
+        "fsmn_vad_audio": fsmn_vad_audio_bench,
     }
     return _RUNNERS
 
@@ -160,10 +160,12 @@ def benchmark_model(
     iters: int,
 ) -> dict[str, object]:
     runners = _load_runners()
-    if spec.get("runner") == "kitten":
-        return runners["kitten"](warmup=warmup, iters=iters)
     if spec.get("runner") == "unsloth_mlx":
         return runners["unsloth_mlx"](str(spec["model_id"]), warmup=warmup, iters=iters)
+    if spec.get("runner") == "fsmn_vad_fixed":
+        return runners["fsmn_vad_fixed"](str(spec["model_id"]), warmup=warmup, iters=iters)
+    if spec.get("runner") == "fsmn_vad_audio":
+        return runners["fsmn_vad_audio"](str(spec["model_id"]), warmup=warmup, iters=iters)
 
     model_id = str(spec["model_id"])
     match spec["kind"]:
@@ -171,10 +173,10 @@ def benchmark_model(
             return runners["text"](model_id, warmup=warmup, iters=iters)
         case "vlm":
             return runners["vlm"](model_id, warmup=warmup, iters=iters)
-        case "tts":
-            return runners["tts"](model_id, warmup=warmup, iters=iters)
         case "asr":
             return runners["asr"](model_id, warmup=warmup, iters=iters)
+        case "vad":
+            raise ValueError(f"VAD benchmark requires explicit runner: {spec}")
         case _:
             raise ValueError(f"Unsupported kind: {spec['kind']}")
 

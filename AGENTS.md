@@ -43,7 +43,7 @@
 
 - Refresh the publish benchmark report before releasing:
   - `uv sync`
-  - `uv run --no-project --with mlx-lm --with pillow --with mlx-vlm --with mlx-audio --with parakeet-mlx python benchmark/publish_report.py`
+  - `uv run --no-project --with mlx-lm --with pillow --with mlx-vlm --with parakeet-mlx python benchmark/publish_report.py`
 - Validate locally before release:
   - `dart analyze`
   - `dart test`

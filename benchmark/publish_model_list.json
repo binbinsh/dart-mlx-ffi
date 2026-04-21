@@ -36,20 +36,20 @@
     "published_at": "2026-04-01T00:00:00+00:00"
   },
   {
-    "model_id": "mlx-community/Ming-omni-tts-0.5B-4bit",
-    "kind": "tts",
-    "published_at": "2026-04-01T00:00:00+00:00"
-  },
-  {
-    "model_id": "mlx-community/kitten-tts-nano-0.8-6bit",
-    "kind": "tts",
-    "runner": "kitten",
-    "name": "kitten_tts_nano_08",
-    "published_at": "2026-04-01T00:00:00+00:00"
-  },
-  {
     "model_id": "mlx-community/parakeet-tdt-0.6b-v3",
     "kind": "asr",
     "published_at": "2026-04-01T00:00:00+00:00"
+  },
+  {
+    "model_id": "funasr/fsmn-vad (fixed-features)",
+    "kind": "vad",
+    "runner": "fsmn_vad_fixed",
+    "published_at": "2026-04-21T00:00:00+00:00"
+  },
+  {
+    "model_id": "funasr/fsmn-vad (real-audio)",
+    "kind": "vad",
+    "runner": "fsmn_vad_audio",
+    "published_at": "2026-04-21T00:00:00+00:00"
   }
 ]

@@ -138,6 +138,7 @@ There are three main model-workflow areas in this repository:
 Current stable Dart model implementations under [`lib/src/models/`](lib/src/models/)
 include:
 
+- `fsmn_vad`
 - `parakeet_tdt`
 - `qwen2_5`
 - `qwen3_5`
@@ -157,6 +158,7 @@ Recommended prepublish text coverage:
 
 Recommended prepublish multimodal / speech coverage:
 
+- `funasr/fsmn-vad`
 - `mlx-community/MiniCPM-o-4_5-4bit`
 - `mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit`
 - `mlx-community/Ming-omni-tts-0.5B-4bit`
@@ -219,9 +221,6 @@ Examples:
 - for text and VLM rows, the compared tensor is the final-token `logits[:16]`
 - for `parakeet-tdt-0.6b-v3`, the compared tensor is the first-step
   `token_logits[:16] + duration_logits`
-- for `Ming-omni-tts-0.5B-4bit`, the compared tensor is the deterministic
-  `forward_with_cfg` subgraph output
-- for `kitten-tts-nano-0.8-6bit`, the compared tensor is the full waveform
 
 ### Reproduce The Release Matrix Report
 
@@ -229,7 +228,7 @@ Generate the publish-time report with `warmup=3` and `iters=10`:
 
 ```sh
 uv sync
-HF_HUB_DISABLE_XET=1 uv run --no-project --with mlx-lm --with pillow --with mlx-vlm --with mlx-audio --with parakeet-mlx python benchmark/publish_report.py
+HF_HUB_DISABLE_XET=1 uv run --no-project --with mlx-lm --with pillow --with mlx-vlm --with parakeet-mlx python benchmark/publish_report.py
 ```
 
 The aggregated results are written to:
@@ -239,16 +238,23 @@ The aggregated results are written to:
 Useful focused runs:
 
 ```sh
-# full-waveform KittenTTS comparison
-uv run python benchmark/kitten_tts/mlx_audio_compare.py --warmup 3 --iters 10
-
 # fixed-mel Parakeet TDT comparison
 uv run --no-project --with parakeet-mlx --with numpy python - <<'PY'
 from benchmark.parakeet_tdt_sweep import asr_bench
 import json
 print(json.dumps(asr_bench('mlx-community/parakeet-tdt-0.6b-v3', warmup=1, iters=1), indent=2))
 PY
+
+# FSMN-VAD Dart/Python comparison on fixed features
+uv run --no-project --with torch --with safetensors python benchmark/fsmn_vad_sweep.py
+
+# FSMN-VAD Dart/Python comparison on real audio
+uv run --no-project --with torch --with safetensors --with numpy python benchmark/fsmn_vad_audio_sweep.py
 ```
+
+For `FSMN-VAD`, the current Python reference backend is the upstream PyTorch
+implementation, not a Python MLX runner. Treat those rows as correctness +
+relative reference checks, not as Python-MLX speed comparisons.
 
 ## Development
 
