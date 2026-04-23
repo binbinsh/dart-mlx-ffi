@@ -1,0 +1,102 @@
+[
+  {
+    "model_id": "unsloth/gemma-4-E2B-it-UD-MLX-4bit",
+    "kind": "text",
+    "input_desc": "13 text tokens",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 31.89386250160169,
+    "dart_ms": 33.5118,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/Qwen3.5-27B-4bit-DWQ",
+    "kind": "text",
+    "input_desc": "14 text tokens",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 177.8247833979549,
+    "dart_ms": 179.7949,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/translategemma-27b-it-4bit",
+    "kind": "text",
+    "input_desc": "14 text tokens",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 172.33974169939756,
+    "dart_ms": 178.535,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit",
+    "kind": "text",
+    "input_desc": "14 text tokens",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 40.53329169983044,
+    "dart_ms": 39.136,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/GLM-4.7-Flash-4bit",
+    "kind": "text",
+    "input_desc": "14 text tokens",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 50.03414579841774,
+    "dart_ms": 60.6298,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/MiniCPM-o-4_5-4bit",
+    "kind": "vlm",
+    "input_desc": "1 synthetic image + text prompt",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 382.10443330171984,
+    "dart_ms": 583.4992,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit",
+    "kind": "vlm",
+    "input_desc": "1 synthetic image + text prompt",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 3821.2808415992185,
+    "dart_ms": 2992.3142,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/PaddleOCR-VL-1.5-8bit",
+    "kind": "vlm",
+    "input_desc": "bundled OCR sample jpg + text prompt (1316x728, min/max_pixels=112896/1003520)",
+    "comparison": "last-token logits[:16]",
+    "python_ms": 2728.2914030074608,
+    "dart_ms": 2060.053,
+    "max_abs_diff": 0.08847808837890625,
+    "mean_abs_diff": 0.039363160729408264
+  },
+  {
+    "model_id": "mlx-community/Ming-omni-tts-0.5B-4bit",
+    "kind": "tts",
+    "input_desc": "deterministic DiT subgraph tensors",
+    "comparison": "forward_with_cfg output",
+    "python_ms": 5.4089332988951355,
+    "dart_ms": 4.7513,
+    "max_abs_diff": 0.0,
+    "mean_abs_diff": 0.0
+  },
+  {
+    "model_id": "mlx-community/kitten-tts-nano-0.8-6bit",
+    "kind": "tts",
+    "input_desc": "fixed text + voice",
+    "comparison": "full waveform",
+    "python_ms": 75.49305419961456,
+    "dart_ms": 69.0731,
+    "max_abs_diff": 1.1920928955078125e-07,
+    "mean_abs_diff": 2.059125596963964e-09
+  }
+]

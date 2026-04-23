@@ -5,6 +5,137 @@ part of 'paddle_ocr_vl.dart';
 // ---------------------------------------------------------------------------
 
 extension PaddleOcrVlVision on PaddleOcrVlRunner {
+  static const int _visionCacheEntryLimit = 2;
+
+  void _storeBoundedVisionArrayCache(
+    Map<String, MlxArray> cache,
+    String key,
+    MlxArray value,
+  ) {
+    if (!cache.containsKey(key) && cache.length >= _visionCacheEntryLimit) {
+      final oldestKey = cache.keys.first;
+      cache.remove(oldestKey)?.close();
+    }
+    cache[key] = value;
+  }
+
+  ({MlxArray value, bool owned}) _borrowVisionRotaryPosEmbedding(
+    int gridH,
+    int gridW,
+    MlxDType dtype,
+  ) {
+    if (Platform.isIOS) {
+      return (
+        value: _buildVisionRotaryPosEmbedding(gridH, gridW, dtype),
+        owned: true,
+      );
+    }
+    final key = '$gridH:$gridW:${dtype.name}';
+    final cached = _visionRotaryEmbeddingArrayCache[key];
+    if (cached != null) {
+      return (value: cached, owned: false);
+    }
+    final created = _buildVisionRotaryPosEmbedding(gridH, gridW, dtype);
+    _storeBoundedVisionArrayCache(_visionRotaryEmbeddingArrayCache, key, created);
+    return (value: created, owned: false);
+  }
+
+  ({MlxArray value, bool owned}) _borrowInterpolatedVisionPositionEmbedding(
+    int gridH,
+    int gridW,
+    MlxDType dtype,
+  ) {
+    if (Platform.isIOS) {
+      return (
+        value: _interpolateVisionPositionEmbedding(gridH, gridW, dtype),
+        owned: true,
+      );
+    }
+    final key = '$gridH:$gridW:${dtype.name}';
+    final cached = _visionInterpolatedPositionEmbeddingArrayCache[key];
+    if (cached != null) {
+      return (value: cached, owned: false);
+    }
+    final created = _interpolateVisionPositionEmbedding(gridH, gridW, dtype);
+    _storeBoundedVisionArrayCache(
+      _visionInterpolatedPositionEmbeddingArrayCache,
+      key,
+      created,
+    );
+    return (value: created, owned: false);
+  }
+
+  ({MlxArray hidden, int gridHeight, int gridWidth}) _encodeImageFromPatchHidden(
+    MlxArray hidden,
+    int gridH,
+    int gridW, {
+    void Function(String message)? onStage,
+  }) {
+    final vCfg = config._vision;
+
+    final posEmbedRef = _borrowInterpolatedVisionPositionEmbedding(
+      gridH,
+      gridW,
+      hidden.dtype,
+    );
+    final posEmbed = posEmbedRef.value;
+    final withPos = mx.add(hidden, posEmbed);
+    hidden.close();
+    if (posEmbedRef.owned) {
+      posEmbed.close();
+    }
+    hidden = withPos;
+    if (config.enableVisionLayerwiseEvalForCurrentPlatform) {
+      MlxRuntime.evalAll([hidden]);
+    }
+    onStage?.call('encodeImage: embeddings ready shape=${hidden.shape}');
+
+    final rotaryRef = _borrowVisionRotaryPosEmbedding(
+      gridH,
+      gridW,
+      MlxDType.MLX_FLOAT32,
+    );
+    final baseRotaryPosEmb = rotaryRef.value;
+
+    final evalBatch = config.visionEvalBatchSizeForCurrentPlatform;
+    for (var i = 0; i < _visionWeights.blocks.length; i++) {
+      hidden = _visionBlock(
+        _visionWeights.blocks[i],
+        hidden,
+        vCfg,
+        baseRotaryPosEmb,
+      );
+      final isLastLayer = i + 1 == _visionWeights.blocks.length;
+      if (config.enableVisionLayerwiseEvalForCurrentPlatform &&
+          (isLastLayer || (i + 1) % evalBatch == 0)) {
+        MlxRuntime.evalAll([hidden]);
+      }
+      if ((i + 1) % 3 == 0 || i + 1 == _visionWeights.blocks.length) {
+        onStage?.call(
+          'encodeImage: vision layer ${i + 1}/${_visionWeights.blocks.length}',
+        );
+      }
+    }
+    if (rotaryRef.owned) {
+      baseRotaryPosEmb.close();
+    }
+
+    final postNorm = _visionLayerNorm(
+      hidden,
+      weight: _visionWeights.postLayerNormWeight,
+      bias: _visionWeights.postLayerNormBias,
+      eps: vCfg.layerNormEps,
+    );
+    hidden.close();
+    if (config.enableVisionLayerwiseEvalForCurrentPlatform) {
+      MlxRuntime.evalAll([postNorm]);
+    }
+
+    final merged = _spatialMergeProject(postNorm, gridH, gridW, vCfg);
+    postNorm.close();
+    return (hidden: merged, gridHeight: gridH, gridWidth: gridW);
+  }
+
   /// Encode a pre-processed image tensor into LM-space hidden states.
   ///
   /// [pixels] has shape `[1, H, W, C]` (NHWC, float16/float32), already
@@ -51,66 +182,64 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
       hidden.close();
       hidden = cast;
     }
-
-    // 2. Interpolated position embedding
-    final posEmbed = _interpolateVisionPositionEmbedding(
-      gridH,
-      gridW,
-      hidden.dtype,
-    );
-    final withPos = mx.add(hidden, posEmbed);
-    hidden.close();
-    posEmbed.close();
-    hidden = withPos;
-    if (config.enableVisionLayerwiseEvalForCurrentPlatform) {
-      MlxRuntime.evalAll([hidden]);
-    }
-    onStage?.call('encodeImage: embeddings ready shape=${hidden.shape}');
-
-    // 3. Vision rotary positions depend on the current image grid.
-    final baseRotaryPosEmb = _buildVisionRotaryPosEmbedding(
-      gridH,
-      gridW,
-      MlxDType.MLX_FLOAT32,
-    );
-
-    // 4. ViT transformer blocks
-    final evalBatch = config.visionEvalBatchSizeForCurrentPlatform;
-    for (var i = 0; i < _visionWeights.blocks.length; i++) {
-      hidden = _visionBlock(
-        _visionWeights.blocks[i],
-        hidden,
-        vCfg,
-        baseRotaryPosEmb,
-      );
-      final isLastLayer = i + 1 == _visionWeights.blocks.length;
-      if (config.enableVisionLayerwiseEvalForCurrentPlatform &&
-          (isLastLayer || (i + 1) % evalBatch == 0)) {
-        MlxRuntime.evalAll([hidden]);
-      }
-      if ((i + 1) % 3 == 0 || i + 1 == _visionWeights.blocks.length) {
-        onStage?.call(
-          'encodeImage: vision layer ${i + 1}/${_visionWeights.blocks.length}',
-        );
-      }
-    }
-    baseRotaryPosEmb.close();
-
-    final postNorm = _visionLayerNorm(
+    return _encodeImageFromPatchHidden(
       hidden,
-      weight: _visionWeights.postLayerNormWeight,
-      bias: _visionWeights.postLayerNormBias,
-      eps: vCfg.layerNormEps,
+      gridH,
+      gridW,
+      onStage: onStage,
     );
-    hidden.close();
-    if (config.enableVisionLayerwiseEvalForCurrentPlatform) {
-      MlxRuntime.evalAll([postNorm]);
-    }
+  }
 
-    // 5. Spatial-merge projector
-    final merged = _spatialMergeProject(postNorm, gridH, gridW, vCfg);
-    postNorm.close();
-    return (hidden: merged, gridHeight: gridH, gridWidth: gridW);
+  ({MlxArray hidden, int gridHeight, int gridWidth}) _encodeImageFromPixelValues(
+    MlxArray pixelValues,
+    MlxArray imageGridThw, {
+    void Function(String message)? onStage,
+  }) {
+    final gridValues = imageGridThw.toList().cast<num>().map((n) => n.toInt()).toList();
+    if (gridValues.length != 3) {
+      throw ArgumentError('imageGridThw must have exactly 3 values [t, h, w].');
+    }
+    final temporal = gridValues[0];
+    final gridH = gridValues[1];
+    final gridW = gridValues[2];
+    final seqLen = temporal * gridH * gridW;
+    if (seqLen != pixelValues.shape[1]) {
+      throw ArgumentError(
+        'pixelValues/imageGridThw mismatch: seqLen=$seqLen shape=${pixelValues.shape}',
+      );
+    }
+    final patchSize = config.visionPatchSize;
+    final targetPixelDType = _visionWeights.patchEmbedWeight.dtype;
+    final visionPixels = pixelValues.dtype == targetPixelDType
+        ? pixelValues
+        : pixelValues.astype(targetPixelDType);
+    final flatPatches = visionPixels
+        .reshape([seqLen, visionPixels.shape[2], patchSize, patchSize])
+        .transposeAxes([0, 2, 3, 1]);
+    if (!identical(visionPixels, pixelValues)) {
+      visionPixels.close();
+    }
+    final patchOut = mx.conv2d(flatPatches, _visionWeights.patchEmbedWeight);
+    flatPatches.close();
+    var hidden = patchOut.reshape([seqLen, config._vision.hiddenSize]);
+    patchOut.close();
+    if (_visionWeights.patchEmbedBias != null) {
+      final biased = mx.add(hidden, _visionWeights.patchEmbedBias!);
+      hidden.close();
+      hidden = biased;
+    }
+    final targetPatchDType = _visionWeights.patchEmbedWeight.dtype;
+    if (hidden.dtype != targetPatchDType) {
+      final cast = hidden.astype(targetPatchDType);
+      hidden.close();
+      hidden = cast;
+    }
+    return _encodeImageFromPatchHidden(
+      hidden,
+      gridH,
+      gridW,
+      onStage: onStage,
+    );
   }
 
   ({MlxArray patches, int gridHeight, int gridWidth}) _patchifyVisionImage(
@@ -315,7 +444,9 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
                   try {
                     final cast = result.astype(dtype);
                     try {
-                      MlxRuntime.evalAll([cast]);
+                      if (Platform.isIOS) {
+                        MlxRuntime.evalAll([cast]);
+                      }
                       return cast.reshape([gridH * gridW, hiddenSize]);
                     } finally {
                       cast.close();
@@ -458,7 +589,9 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
       final right = rotated * sin2;
       final out = mx.add(left, right);
       try {
-        MlxRuntime.evalAll([out]);
+        if (Platform.isIOS) {
+          MlxRuntime.evalAll([out]);
+        }
         left.close();
         right.close();
         cos2.close();
@@ -466,7 +599,9 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
         if (out.dtype == tensor.dtype) return out;
         final cast = out.astype(tensor.dtype);
         try {
-          MlxRuntime.evalAll([cast]);
+          if (Platform.isIOS) {
+            MlxRuntime.evalAll([cast]);
+          }
           return cast;
         } finally {
           out.close();
@@ -499,7 +634,9 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
       final negX2 = x2.negative();
       try {
         final out = mx.concatenate([negX2, x1], axis: 3);
-        MlxRuntime.evalAll([out]);
+        if (Platform.isIOS) {
+          MlxRuntime.evalAll([out]);
+        }
         return out;
       } finally {
         negX2.close();
@@ -619,26 +756,13 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
             vForAttn,
             headDim: headDim,
             chunkSize: chunkSize,
-            dtype: input.dtype,
           )
-        : (() {
-            final mask = MlxArray.zeros([
-              1,
-              seqLen,
-              seqLen,
-            ], dtype: input.dtype);
-            try {
-              return mx.fast.scaledDotProductAttention(
-                qForAttn,
-                kForAttn,
-                vForAttn,
-                scale: 1.0 / math.sqrt(headDim.toDouble()),
-                mask: mask,
-              );
-            } finally {
-              mask.close();
-            }
-          })();
+        : mx.fast.scaledDotProductAttention(
+            qForAttn,
+            kForAttn,
+            vForAttn,
+            scale: 1.0 / math.sqrt(headDim.toDouble()),
+          );
     qForAttn.close();
     kForAttn.close();
     vForAttn.close();
@@ -662,7 +786,6 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
     MlxArray v, {
     required int headDim,
     required int chunkSize,
-    required MlxDType dtype,
   }) {
     final seqLen = q.shape[2];
     final numHeads = q.shape[1];
@@ -678,15 +801,12 @@ extension PaddleOcrVlVision on PaddleOcrVlRunner {
         start: [0, 0, start, 0],
         stop: [1, numHeads, end, headDim],
       );
-      final mask = MlxArray.zeros([1, end - start, seqLen], dtype: dtype);
       final chunkOut = mx.fast.scaledDotProductAttention(
         qChunk,
         k,
         v,
         scale: 1.0 / math.sqrt(headDim.toDouble()),
-        mask: mask,
       );
-      mask.close();
       qChunk.close();
       final updated = combined.sliceUpdate(
         chunkOut,

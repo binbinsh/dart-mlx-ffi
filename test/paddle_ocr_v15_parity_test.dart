@@ -3,13 +3,13 @@
 @TestOn('mac-os')
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:test/test.dart';
 
 import 'package:dart_mlx_ffi/dart_mlx_ffi.dart';
-import 'package:dart_mlx_ffi/models.dart';
 import 'package:dart_mlx_ffi/src/models/paddle_ocr_vl/paddle_ocr_vl.dart';
 
 /// Path to the PaddleOCR-VL-1.5 8-bit model snapshot.
@@ -22,6 +22,10 @@ final _snapshotPath = () {
 
 /// Path to Python reference .npy files.
 const _refDir = '/tmp/paddle_v15_ref';
+
+Map<String, Object?> _readMetadata() => jsonDecode(
+  File('$_refDir/metadata.json').readAsStringSync(),
+) as Map<String, Object?>;
 
 /// Load a reference .npy file as an MlxArray via the MLX C-level loader.
 MlxArray _loadRef(String name) => mx.io.load('$_refDir/$name.npy');
@@ -120,6 +124,7 @@ void main() {
       late MlxArray imageNhwc;
       late int gridH;
       late int gridW;
+      late Map<String, Object?> metadata;
 
       setUpAll(() {
         if (!refDirExists) {
@@ -142,6 +147,29 @@ void main() {
           '  hiddenSize=${runner.config.hiddenSize} '
           'numLayers=${runner.config.numHiddenLayers} '
           'vocabSize=${runner.config.vocabSize}',
+        );
+
+        metadata = _readMetadata();
+        expect(
+          metadata['generation_source'],
+          'mlx_vlm.generate.stream_generate',
+          reason:
+              'Reference metadata must come from the canonical '
+              'stream_generate path. Re-run tool/dump_paddle_v15_reference.py.',
+        );
+        expect(
+          metadata['generation_processor_min_pixels'],
+          metadata['min_pixels'],
+          reason:
+              'Reference generation min_pixels must match the stored image '
+              'preprocessing bounds.',
+        );
+        expect(
+          metadata['generation_processor_max_pixels'],
+          metadata['max_pixels'],
+          reason:
+              'Reference generation max_pixels must match the stored image '
+              'preprocessing bounds.',
         );
 
         imageNhwc = _loadRef('image_nhwc');
@@ -171,6 +199,11 @@ void main() {
         expect(runner.config.mropeSection, [16, 24, 24]);
         expect(runner.config.visionPatchSize, 14);
         expect(runner.config.visionSpatialMergeSize, 2);
+      });
+
+      test('reference metadata records canonical generation path', () {
+        expect(metadata['generation_source'], 'mlx_vlm.generate.stream_generate');
+        expect(metadata['generation_token_count'], greaterThan(0));
       });
 
       test('vision embeddings match Python reference', () {

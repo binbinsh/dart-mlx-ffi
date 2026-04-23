@@ -316,8 +316,8 @@ def paddle_ocr_vl_bench(
     # PaddleOCR-VL currently benchmarks through the Dart runner debug path
     # instead of an exported shapeless function, so keep the iteration count
     # smaller than the generic VLM matrix to avoid very long release runs.
-    local_warmup = min(warmup, 1)
-    local_iters = 1
+    local_warmup = min(warmup, 3)
+    local_iters = min(iters, 3)
     export_dir = ROOT / "benchmark" / "out" / "publish" / slug(model_id)
     export_dir.mkdir(parents=True, exist_ok=True)
     python_cmd = [
@@ -342,6 +342,8 @@ def paddle_ocr_vl_bench(
         "benchmark/paddle_ocr_vl/dart_bench.dart",
         f"--snapshot={python_payload['snapshot_path']}",
         f"--input-ids={python_payload['input_ids_path']}",
+        f"--pixel-values={python_payload['pixel_values_path']}",
+        f"--image-grid-thw={python_payload['image_grid_thw_path']}",
         f"--image={python_payload['image_path']}",
         f"--warmup={local_warmup}",
         f"--iters={local_iters}",
@@ -355,7 +357,11 @@ def paddle_ocr_vl_bench(
     return {
         "model_id": model_id,
         "kind": "vlm",
-        "input_desc": "1 synthetic OCR image + text prompt",
+        "input_desc": (
+            "bundled OCR sample jpg + text prompt "
+            f"({python_payload['resized_width']}x{python_payload['resized_height']}, "
+            f"min/max_pixels={python_payload['min_pixels']}/{python_payload['max_pixels']})"
+        ),
         "comparison": "last-token logits[:16]",
         "python_ms": float(python_payload["python_ms"]),
         "dart_ms": float(dart_payload["per_iter_ms"]),

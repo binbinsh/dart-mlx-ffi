@@ -6,6 +6,13 @@ part of 'paddle_ocr_vl.dart';
 
 int _nextTokenFromLogits(MlxArray logits) {
   final flat = logits.reshape([logits.size]);
+  if (!Platform.isIOS) {
+    try {
+      return flat.argmaxFlatScalarInt();
+    } finally {
+      flat.close();
+    }
+  }
   final flatF32 = flat.dtype == MlxDType.MLX_FLOAT32
       ? flat
       : flat.astype(MlxDType.MLX_FLOAT32);

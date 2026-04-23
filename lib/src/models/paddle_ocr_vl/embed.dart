@@ -17,7 +17,9 @@ extension PaddleOcrVlEmbed on PaddleOcrVlRunner {
             bits: q.quantSpec.bits,
             mode: q.quantSpec.mode,
           );
-          MlxRuntime.evalAll([out]);
+          if (Platform.isIOS) {
+            MlxRuntime.evalAll([out]);
+          }
           return out.reshape([1, seqLen, config.hiddenSize]);
         } finally {
           rowsB?.close();
@@ -51,12 +53,12 @@ extension PaddleOcrVlEmbed on PaddleOcrVlRunner {
 
   MlxArray _buildMultimodalEmbedding(List<int> tokenIds, MlxArray imageHidden) {
     final totalLen = tokenIds.length;
-    final ids = MlxArray.fromInt32List(tokenIds, shape: [1, totalLen]);
-    final textEmbed = _embed(ids);
     final imagePositions = <int>[];
     for (var i = 0; i < tokenIds.length; i++) {
       if (tokenIds[i] == config.imageTokenId) imagePositions.add(i);
     }
+    final ids = MlxArray.fromInt32List(tokenIds, shape: [1, totalLen]);
+    final textEmbed = _embed(ids);
     MlxArray? result;
     try {
       if (imagePositions.isEmpty) {

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 try:
     from ..common import cleanup_mlx, find_cached_snapshot
@@ -24,18 +24,21 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--out-dir", required=True, type=Path)
+    parser.add_argument("--image", type=Path)
+    parser.add_argument("--min-pixels", type=int, default=None)
+    parser.add_argument("--max-pixels", type=int, default=None)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--iters", type=int, default=10)
     return parser.parse_args()
 
 
-def sample_image() -> Image.Image:
-    image = Image.new("RGB", (224, 224), "white")
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((20, 20, 204, 204), outline="black", width=3)
-    draw.text((56, 84), "MLX OCR", fill="black")
-    draw.text((76, 124), "42", fill="black")
-    return image
+def default_image_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "benchmark"
+        / "assets"
+        / "paddle_ocr_vl_test.jpg"
+    ).resolve()
 
 
 def build_prompt() -> str:
@@ -58,8 +61,16 @@ def main() -> None:
         raise RuntimeError(f"Model snapshot not found for {args.model_id}")
 
     model, processor = vlm_load(str(snapshot))
-    image = sample_image()
+    image_path = args.image or default_image_path()
+    if not image_path.exists():
+        raise RuntimeError(f"Benchmark image not found: {image_path}")
+    image = Image.open(image_path).convert("RGB")
     prompt = build_prompt()
+    ip = processor.image_processor
+    if args.min_pixels is not None:
+        ip.min_pixels = args.min_pixels
+    if args.max_pixels is not None:
+        ip.max_pixels = args.max_pixels
     inputs = processor(images=[image], text=[prompt], return_tensors="np")
 
     input_ids = mx.array(inputs["input_ids"])
@@ -70,7 +81,6 @@ def main() -> None:
         dtype=model.visual.embeddings.patch_embedding.weight.dtype,
     )
 
-    ip = processor.image_processor
     resized_h, resized_w = smart_resize(
         image.height,
         image.width,
@@ -86,6 +96,11 @@ def main() -> None:
     img_nhwc = img_arr[np.newaxis, :, :, :]
 
     np.save(args.out_dir / "input_ids.npy", np.array(input_ids.tolist(), dtype=np.int32))
+    np.save(args.out_dir / "pixel_values.npy", np.array(pixel_values.tolist(), dtype=np.float32))
+    np.save(
+        args.out_dir / "image_grid_thw.npy",
+        np.array(image_grid_thw.tolist(), dtype=np.int32),
+    )
     np.save(args.out_dir / "image_nhwc.npy", img_nhwc)
 
     def forward():
@@ -117,7 +132,15 @@ def main() -> None:
                 "model_id": args.model_id,
                 "snapshot_path": str(snapshot),
                 "input_ids_path": str(args.out_dir / "input_ids.npy"),
+                "pixel_values_path": str(args.out_dir / "pixel_values.npy"),
+                "image_grid_thw_path": str(args.out_dir / "image_grid_thw.npy"),
                 "image_path": str(args.out_dir / "image_nhwc.npy"),
+                "source_image_path": str(image_path),
+                "min_pixels": int(ip.min_pixels),
+                "max_pixels": int(ip.max_pixels),
+                "resized_height": int(resized_h),
+                "resized_width": int(resized_w),
+                "comparison_source": "prefill_last_token_full_logits_slice",
                 "python_ms": py_ms,
                 "values": values,
             }

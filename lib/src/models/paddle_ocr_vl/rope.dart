@@ -103,6 +103,21 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
     }
   }
 
+  ({MlxArray cos, MlxArray sin}) _buildAppliedMropeCosSin(
+    MlxArray positionIds,
+    MlxDType dtype,
+  ) {
+    final pair = _buildMropeCosSin(positionIds, dtype);
+    try {
+      final cos = _applyMultimodalRotarySections(pair.cos);
+      final sin = _applyMultimodalRotarySections(pair.sin);
+      return (cos: cos, sin: sin);
+    } finally {
+      pair.cos.close();
+      pair.sin.close();
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Apply RoPE to Q and K
   // -----------------------------------------------------------------------
@@ -150,11 +165,23 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
         );
       }
     }
-    final pair = _buildMropeCosSin(positionIds, q.dtype);
-    final cos = _applyMultimodalRotarySections(pair.cos);
-    final sin = _applyMultimodalRotarySections(pair.sin);
-    pair.cos.close();
-    pair.sin.close();
+    final pair = _buildAppliedMropeCosSin(positionIds, q.dtype);
+    final cos = pair.cos;
+    final sin = pair.sin;
+    try {
+      return _applyMropeWithCosSin(q, k, cos, sin);
+    } finally {
+      cos.close();
+      sin.close();
+    }
+  }
+
+  ({MlxArray q, MlxArray k}) _applyMropeWithCosSin(
+    MlxArray q,
+    MlxArray k,
+    MlxArray cos,
+    MlxArray sin,
+  ) {
     final rotaryDim = cos.shape[3];
     final qRotPart = q.slice(
       start: [0, 0, 0, 0],
@@ -176,8 +203,6 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
     final kEmbed = _rotaryEmbed(kRotPart, cos, sin);
     qRotPart.close();
     kRotPart.close();
-    cos.close();
-    sin.close();
     final qRot = mx.concatenate([qEmbed, qPass], axis: 3);
     final kRot = mx.concatenate([kEmbed, kPass], axis: 3);
     qEmbed.close();
@@ -320,9 +345,12 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
           .slice(
             start: [i % 3, 0, 0, start],
             stop: [i % 3 + 1, 1, x.shape[2], end],
-          )
-          .reshape([1, 1, x.shape[2], end - start]);
-      parts.add(part);
+          );
+      try {
+        parts.add(part.reshape([1, 1, x.shape[2], end - start]));
+      } finally {
+        part.close();
+      }
       start = end;
     }
     final out = mx.concatenate(parts, axis: 3);
@@ -381,7 +409,6 @@ extension PaddleOcrVlRope on PaddleOcrVlRunner {
   /// Returns shape `[3, 1, seqLen]`.
   MlxArray _textPositionIds(int seqLen, {int offset = 0}) {
     final ids = <int>[for (var i = 0; i < seqLen; i++) offset + i];
-    // Repeat for 3 streams
     final flat = <int>[...ids, ...ids, ...ids];
     return MlxArray.fromInt32List(flat, shape: [3, 1, seqLen]);
   }

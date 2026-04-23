@@ -165,6 +165,29 @@ Recommended prepublish multimodal / audio coverage:
 - `mlx-community/Ming-omni-tts-0.5B-4bit`
 - `mlx-community/kitten-tts-nano-0.8-6bit`
 
+### PaddleOCR-VL Reference Workflow
+
+For `PaddleOCR-VL-1.5`, regenerate local parity fixtures with:
+
+```sh
+uv run --no-project --with mlx-vlm --with pillow \
+  python tool/dump_paddle_v15_reference.py
+```
+
+That tool now writes a canonical upstream reference:
+
+- `full_output.txt` and `py_generated_ids.txt` come from the same fresh
+  `mlx_vlm.generate.stream_generate()` run
+- generation uses the same `min_pixels` / `max_pixels` bounds that were used
+  to build the saved image tensors
+- by default it uses the repo-local image
+  `benchmark/assets/paddle_ocr_vl_test.jpg`, so the workflow works from a
+  clean checkout without a sibling workspace
+- `metadata.json` records the generation source and the effective resize bounds
+
+If `test/paddle_ocr_v15_parity_test.dart` fails on metadata assertions, refresh
+`/tmp/paddle_v15_ref` with that tool before trusting token mismatches.
+
 ## Validation
 
 Deterministic operator parity currently covers `114` checks across arithmetic,
@@ -173,21 +196,21 @@ APIs, with `0` failures on the benchmark machine.
 
 ### Benchmark Environment
 
-- Date: `2026-04-14`
+- Date: `2026-04-16`
 - Machine: `MacBook Pro (Mac16,5)`
 - Chip: `Apple M4 Max`
 - CPU cores: `16` (`12` performance + `4` efficiency)
 - Memory: `128 GB`
-- OS: `macOS 26.4 (25E5223i)`
+- OS: `macOS 26.4.1 (25E253)`
 - Kernel: `Darwin 25.4.0`
-- Dart SDK: `3.11.1`
-- Python: `3.12` via `uv`
+- Dart SDK: `3.11.4`
+- Python: `3.12.9` via `uv`
 - MLX runtime: `0.31.1`
 
 ### Latest Runtime Snapshot
 
 Latest measured runtime snapshot on the benchmark machine, refreshed on
-`2026-04-14`:
+`2026-04-16`:
 
 Text models:
 
@@ -205,7 +228,7 @@ Non-text models:
 | --- | --- | ---: | ---: | ---: | --- |
 | `MiniCPM-o-4_5-4bit` | `vlm` | `216.37` | `171.69` | `0` | synthetic image + prompt |
 | `Gemma-SEA-LION-v4-4B-VL-mlx-3bit` | `vlm` | `1151.80` | `1187.94` | `0` | synthetic image + prompt |
-| `PaddleOCR-VL-1.5-8bit` | `vlm` | `85.62` | `120.62` | `0.163` | synthetic OCR image + prompt, direct runner `warmup=1/iters=1` |
+| `PaddleOCR-VL-1.5-8bit` | `vlm` | `1056.92` | `1019.21` | `0.08848` | `benchmark/assets/paddle_ocr_vl_test.jpg` + prompt, processor-default resize bounds `(1316x728, min/max_pixels=112896/1003520)`, direct runner `warmup=3/iters=3` |
 | `Ming-omni-tts-0.5B-4bit` | `tts` | `4.98` | `4.78` | `0` | deterministic `forward_with_cfg` |
 | `kitten-tts-nano-0.8-6bit` | `tts` | `70.69` | `75.57` | `1.19e-07` | full waveform |
 
@@ -234,7 +257,13 @@ HF_HUB_DISABLE_XET=1 uv run --no-project --with mlx-lm --with pillow --with mlx-
 
 `PaddleOCR-VL-1.5-8bit` is the one exception in the current matrix: its
 publish-time benchmark uses the direct Dart runner path and internally clamps
-to `warmup=1` / `iters=1` so the release report can complete reliably.
+to `warmup=3` / `iters=3` so the release report can complete reliably while
+still letting the non-iOS vision caches settle before the timed pass.
+
+When you want a case-specific `PaddleOCR-VL` benchmark instead of the default
+processor bounds, `benchmark/paddle_ocr_vl/python_ref.py` also accepts
+`--min-pixels` and `--max-pixels` so the Python payload can match a deployment
+resize target such as the iPhone `501760` path.
 
 The aggregated results are written to:
 

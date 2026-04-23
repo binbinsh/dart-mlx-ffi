@@ -19,6 +19,7 @@ extension PaddleOcrVlLayers on PaddleOcrVlRunner {
     MlxArray input,
     int seqLen,
     MlxArray positionIds, {
+    ({MlxArray cos, MlxArray sin})? positionEmbeddings,
     required int layerIndex,
     _LayerCache? cache,
   }) {
@@ -55,6 +56,7 @@ extension PaddleOcrVlLayers on PaddleOcrVlRunner {
       norm1,
       seqLen,
       positionIds,
+      positionEmbeddings: positionEmbeddings,
       layerIndex: layerIndex,
       cache: cache,
     );
@@ -159,6 +161,7 @@ extension PaddleOcrVlLayers on PaddleOcrVlRunner {
     MlxArray input,
     int seqLen,
     MlxArray positionIds, {
+    ({MlxArray cos, MlxArray sin})? positionEmbeddings,
     required int layerIndex,
     _LayerCache? cache,
   }) {
@@ -238,7 +241,14 @@ extension PaddleOcrVlLayers on PaddleOcrVlRunner {
       cache,
       'attn_rope',
     );
-    final rope = _applyMrope(q, k, positionIds);
+    final rope = positionEmbeddings == null
+        ? _applyMrope(q, k, positionIds)
+        : _applyMropeWithCosSin(
+            q,
+            k,
+            positionEmbeddings.cos,
+            positionEmbeddings.sin,
+          );
     q.close();
     k.close();
     final qRope = rope.q;

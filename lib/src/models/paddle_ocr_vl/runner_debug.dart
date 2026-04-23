@@ -1,6 +1,232 @@
 part of 'paddle_ocr_vl.dart';
 
 extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
+  ({MlxArray weight, MlxArray scales, MlxArray? biases}) _debugLmHeadPrefixQuant(
+    _QuantLinear quant,
+    int width,
+  ) {
+    final cached = _debugLmHeadPrefixQuantCache[width];
+    if (cached != null) return cached;
+    final slicedWeight = quant.weight.slice(
+      start: [0, 0],
+      stop: [width, quant.weight.shape[1]],
+    );
+    final slicedScales = quant.scales.slice(
+      start: [0, 0],
+      stop: [width, quant.scales.shape[1]],
+    );
+    final slicedBiases = quant.biases?.slice(
+      start: [0, 0],
+      stop: [width, quant.biases!.shape[1]],
+    );
+    final packed = (
+      weight: slicedWeight,
+      scales: slicedScales,
+      biases: slicedBiases,
+    );
+    _debugLmHeadPrefixQuantCache[width] = packed;
+    return packed;
+  }
+
+  MlxArray _debugPrefillLastHiddenFromEmbeddings(
+    MlxArray embeddings,
+    MlxArray posIds,
+  ) {
+    final seqLen = embeddings.shape[1];
+    final positionEmbeddings = seqLen > 1
+        ? _buildAppliedMropeCosSin(posIds, embeddings.dtype)
+        : null;
+    var h = embeddings;
+    try {
+      for (var i = 0; i < _lmLayers.length; i++) {
+        final next = _decoderLayer(
+          _lmLayers[i],
+          h,
+          seqLen,
+          posIds,
+          positionEmbeddings: positionEmbeddings,
+          layerIndex: i,
+          cache: null,
+        );
+        if (h != embeddings) h.close();
+        h = next;
+      }
+      final last = h
+          .slice(start: [0, seqLen - 1, 0], stop: [1, seqLen, config.hiddenSize])
+          .reshape([1, config.hiddenSize]);
+      h.close();
+      final norm = _lmRmsNormCompat(last, weight: _finalNorm, eps: config.rmsNormEps);
+      last.close();
+      try {
+        return norm.reshape([1, config.hiddenSize]);
+      } finally {
+        norm.close();
+      }
+    } catch (_) {
+      if (h != embeddings) h.close();
+      rethrow;
+    } finally {
+      positionEmbeddings?.cos.close();
+      positionEmbeddings?.sin.close();
+    }
+  }
+
+  MlxArray _debugPrefillLogitsPrefixFromEmbeddings(
+    MlxArray embeddings,
+    MlxArray posIds, {
+    int width = 16,
+  }) {
+    final last = _debugPrefillLastHiddenFromEmbeddings(embeddings, posIds);
+    try {
+      final linear = config.tieWordEmbeddings ? _embedWeights : _lmHead!;
+      if (linear case final _QuantLinear quant) {
+        final prefix = _debugLmHeadPrefixQuant(quant, width);
+        final logits = mx.quant.matmul(
+          last,
+          MlxQuantizedMatrix(prefix.weight, prefix.scales, prefix.biases),
+          transpose: true,
+          groupSize: quant.quantSpec.groupSize,
+          bits: quant.quantSpec.bits,
+          mode: quant.quantSpec.mode,
+        );
+        try {
+          return logits
+              .reshape([1, width])
+              .astype(MlxDType.MLX_FLOAT32);
+        } finally {
+          logits.close();
+        }
+      }
+      final logits = linear.apply(last);
+      try {
+        return logits
+            .slice(start: [0, 0], stop: [1, width])
+            .reshape([1, width])
+            .astype(MlxDType.MLX_FLOAT32);
+      } finally {
+        logits.close();
+      }
+    } finally {
+      last.close();
+    }
+  }
+
+  MlxArray debugPrefillLogitsPrefixFromPixelValues(
+    List<int> promptIds,
+    MlxArray pixelValues,
+    MlxArray imageGridThw, {
+    int width = 16,
+  }) {
+    final imageEncoding = _encodeImageFromPixelValues(pixelValues, imageGridThw);
+    final imageHidden = imageEncoding.hidden;
+    final numImageTokens = imageHidden.shape[0];
+    final imageTokenCountInPrompt = promptIds
+        .where((id) => id == config.imageTokenId)
+        .length;
+    final expandedIds = imageTokenCountInPrompt == numImageTokens
+        ? List<int>.from(promptIds)
+        : _expandImageTokens(promptIds, numImageTokens);
+    final positionInfo = _multimodalPositionIds(
+      expandedIds,
+      imageEncoding.gridHeight,
+      imageEncoding.gridWidth,
+    );
+    final posIds = positionInfo.ids;
+    final embeddings = _buildMultimodalEmbedding(expandedIds, imageHidden);
+    imageHidden.close();
+    try {
+      return _debugPrefillLogitsPrefixFromEmbeddings(
+        embeddings,
+        posIds,
+        width: width,
+      );
+    } finally {
+      embeddings.close();
+      posIds.close();
+    }
+  }
+
+  MlxArray debugEncodeImageFeaturesFromPixelValues(
+    MlxArray pixelValues,
+    MlxArray imageGridThw,
+  ) {
+    final imageEncoding = _encodeImageFromPixelValues(pixelValues, imageGridThw);
+    return imageEncoding.hidden;
+  }
+
+  MlxArray debugPrefillFinalHiddenFromPixelValues(
+    List<int> promptIds,
+    MlxArray pixelValues,
+    MlxArray imageGridThw,
+  ) {
+    final imageEncoding = _encodeImageFromPixelValues(pixelValues, imageGridThw);
+    final imageHidden = imageEncoding.hidden;
+    final numImageTokens = imageHidden.shape[0];
+    final imageTokenCountInPrompt = promptIds
+        .where((id) => id == config.imageTokenId)
+        .length;
+    final expandedIds = imageTokenCountInPrompt == numImageTokens
+        ? List<int>.from(promptIds)
+        : _expandImageTokens(promptIds, numImageTokens);
+    final positionInfo = _multimodalPositionIds(
+      expandedIds,
+      imageEncoding.gridHeight,
+      imageEncoding.gridWidth,
+    );
+    final posIds = positionInfo.ids;
+    final embeddings = _buildMultimodalEmbedding(expandedIds, imageHidden);
+    imageHidden.close();
+    try {
+      final hidden = _debugPrefillLastHiddenFromEmbeddings(embeddings, posIds);
+      try {
+        return hidden.astype(MlxDType.MLX_FLOAT32);
+      } finally {
+        hidden.close();
+      }
+    } finally {
+      embeddings.close();
+      posIds.close();
+    }
+  }
+
+  MlxArray debugPrefillLogitsFromPixelValues(
+    List<int> promptIds,
+    MlxArray pixelValues,
+    MlxArray imageGridThw,
+  ) {
+    final imageEncoding = _encodeImageFromPixelValues(pixelValues, imageGridThw);
+    final imageHidden = imageEncoding.hidden;
+    final numImageTokens = imageHidden.shape[0];
+    final imageTokenCountInPrompt = promptIds
+        .where((id) => id == config.imageTokenId)
+        .length;
+    final expandedIds = imageTokenCountInPrompt == numImageTokens
+        ? List<int>.from(promptIds)
+        : _expandImageTokens(promptIds, numImageTokens);
+    final positionInfo = _multimodalPositionIds(
+      expandedIds,
+      imageEncoding.gridHeight,
+      imageEncoding.gridWidth,
+    );
+    final posIds = positionInfo.ids;
+    final embeddings = _buildMultimodalEmbedding(expandedIds, imageHidden);
+    imageHidden.close();
+
+    final cache = _ModelCache.create(config: config);
+    try {
+      final logits = _prefillFromEmbeddingWithCache(embeddings, posIds, cache);
+      try {
+        return logits.reshape([1, config.vocabSize]);
+      } finally {
+        logits.close();
+      }
+    } finally {
+      embeddings.close();
+      posIds.close();
+      cache.close();
+    }
+  }
+
   MlxArray debugPrefillLogitsFromImage(
     List<int> promptIds,
     MlxArray imagePixels,
@@ -265,6 +491,7 @@ extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
     }
     return hidden;
   }
+
 
   /// Return patchified image tensor `[1, seq, C, patch, patch]`.
   MlxArray encodeImagePatchesOnly(MlxArray imagePixels) {
@@ -727,7 +954,12 @@ extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
       );
       var hidden = input;
       for (var i = 0; i < clampedIndex; i++) {
-        hidden = _visionBlock(_visionWeights.blocks[i], hidden, vCfg, rotary32);
+        hidden = _visionBlock(
+          _visionWeights.blocks[i],
+          hidden,
+          vCfg,
+          rotary32,
+        );
       }
       final block = _visionWeights.blocks[clampedIndex];
       final norm1 = _visionLayerNorm(
@@ -771,7 +1003,12 @@ extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
       );
       var hidden = input;
       for (var i = 0; i < clampedIndex; i++) {
-        hidden = _visionBlock(_visionWeights.blocks[i], hidden, vCfg, rotary);
+        hidden = _visionBlock(
+          _visionWeights.blocks[i],
+          hidden,
+          vCfg,
+          rotary,
+        );
       }
       final block = _visionWeights.blocks[clampedIndex];
       final norm1 = _visionLayerNorm(
@@ -1772,6 +2009,7 @@ extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
     }
   }
 
+
   MlxArray debugLmAttentionOutputFromVisionFeatures(
     List<int> promptIds,
     MlxArray imageHidden, {
@@ -1878,9 +2116,10 @@ extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
       );
       embeddings.close();
       try {
-        final flat = norm1.reshape([norm1.shape[1], config.hiddenSize]);
+        final seqLen = norm1.shape[1];
+        final flat = norm1.reshape([seqLen, config.hiddenSize]);
         norm1.close();
-        final qkv = _debugApplyQkvFlat(layer.attention, flat, norm1.shape[1]);
+        final qkv = _debugApplyQkvFlat(layer.attention, flat, seqLen);
         flat.close();
         return qkv;
       } catch (_) {
@@ -2129,6 +2368,7 @@ extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
   MlxArray debugLmMlpApply(MlxArray hidden, int layerIndex, int seqLen) {
     return _lmMlp(_lmLayers[layerIndex].mlp, hidden, seqLen);
   }
+
 
   MlxArray debugLmPostNormWeight(int layerIndex) => _lmLayers[layerIndex].postNorm;
 

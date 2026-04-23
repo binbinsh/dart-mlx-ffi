@@ -30,6 +30,13 @@ MlxArray _lmRmsNormCompat(
   required MlxArray weight,
   required double eps,
 }) {
+  if (!Platform.isIOS) {
+    return mx.fast.rmsNorm(
+      input,
+      weight: weight,
+      eps: eps,
+    );
+  }
   final seqLen = input.shape.length >= 2 ? input.shape[1] : 1;
   if (seqLen == 1) {
     return mx.fast.rmsNorm(

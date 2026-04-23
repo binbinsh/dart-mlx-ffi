@@ -28,15 +28,26 @@ void main(List<String> args) {
   final snapshotPath = _arg(args, '--snapshot');
   final inputIdsPath = _arg(args, '--input-ids');
   final imagePath = _arg(args, '--image');
+  final pixelValuesPath = args.any((arg) => arg.startsWith('--pixel-values='))
+      ? _arg(args, '--pixel-values')
+      : '';
+  final imageGridThwPath = args.any((arg) => arg.startsWith('--image-grid-thw='))
+      ? _arg(args, '--image-grid-thw')
+      : '';
   final warmup = _intArg(args, '--warmup', 0);
   final iters = _intArg(args, '--iters', 1);
 
   final runner = PaddleOcrVlRunner.load(snapshotPath);
   final inputIds = mx.io.load(inputIdsPath);
   final image = mx.io.load(imagePath);
+  final pixelValues = pixelValuesPath.isEmpty ? null : mx.io.load(pixelValuesPath);
+  final imageGridThw = imageGridThwPath.isEmpty ? null : mx.io.load(imageGridThwPath);
   String? output;
   try {
-    MlxRuntime.evalAll([inputIds, image]);
+    final preloaded = <MlxArray>[inputIds, image];
+    if (pixelValues != null) preloaded.add(pixelValues);
+    if (imageGridThw != null) preloaded.add(imageGridThw);
+    MlxRuntime.evalAll(preloaded);
     final promptIds = inputIds
         .toList()
         .cast<num>()
@@ -44,7 +55,22 @@ void main(List<String> args) {
         .toList(growable: false);
 
     MlxArray runOnce() {
-      final logits = runner.debugPrefillLogitsFromImage(promptIds, image);
+      final logits = (pixelValues != null && imageGridThw != null)
+          ? (() {
+              final full = runner.debugPrefillLogitsFromPixelValues(
+                promptIds,
+                pixelValues,
+                imageGridThw,
+              );
+              try {
+                return full
+                    .slice(start: [0, 0], stop: [1, 16])
+                    .reshape([1, 16]);
+              } finally {
+                full.close();
+              }
+            })()
+          : runner.debugPrefillLogitsFromImage(promptIds, image);
       MlxRuntime.evalAll([logits]);
       return logits;
     }
@@ -71,7 +97,6 @@ void main(List<String> args) {
         .slice(start: [0], stop: [16])
         .astype(MlxDType.MLX_FLOAT32);
     try {
-      MlxRuntime.evalAll([preview]);
       output = jsonEncode(<String, Object?>{
           'per_iter_ms': watch.elapsedMicroseconds / 1000.0 / iters,
           'values': List<double>.from(preview.toList().cast<double>()),
@@ -81,6 +106,8 @@ void main(List<String> args) {
       last.close();
     }
   } finally {
+    imageGridThw?.close();
+    pixelValues?.close();
     image.close();
     inputIds.close();
     runner.close();

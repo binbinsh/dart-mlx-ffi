@@ -43,6 +43,10 @@ final class PaddleOcrVlRunner {
   final _LinearBase? _lmHead;
   MlxArray? _ropeInvFreq;
   Float32List? _visionPositionEmbeddingCache;
+  final Map<String, MlxArray> _visionInterpolatedPositionEmbeddingArrayCache = {};
+  final Map<String, MlxArray> _visionRotaryEmbeddingArrayCache = {};
+  final Map<int, ({MlxArray weight, MlxArray scales, MlxArray? biases})>
+      _debugLmHeadPrefixQuantCache = {};
 
   MlxDType get visionInputDType => config.forceFloat32VisionForCurrentPlatform
       ? MlxDType.MLX_FLOAT32
@@ -444,6 +448,20 @@ final class PaddleOcrVlRunner {
   void close() {
     _ropeInvFreq?.close();
     _ropeInvFreq = null;
+    for (final tensor in _visionInterpolatedPositionEmbeddingArrayCache.values) {
+      tensor.close();
+    }
+    _visionInterpolatedPositionEmbeddingArrayCache.clear();
+    for (final tensor in _visionRotaryEmbeddingArrayCache.values) {
+      tensor.close();
+    }
+    _visionRotaryEmbeddingArrayCache.clear();
+    for (final quant in _debugLmHeadPrefixQuantCache.values) {
+      quant.weight.close();
+      quant.scales.close();
+      quant.biases?.close();
+    }
+    _debugLmHeadPrefixQuantCache.clear();
     for (final tensor in _tensors.values) {
       tensor.close();
     }
@@ -496,6 +514,9 @@ final class PaddleOcrVlRunner {
     bool maybeQuantizeAfter = true,
   }) {
     final seqLen = hidden.shape[1];
+    final positionEmbeddings = seqLen > 1
+        ? _buildAppliedMropeCosSin(positionIds, hidden.dtype)
+        : null;
     var h = hidden;
     try {
       for (var i = 0; i < _lmLayers.length; i++) {
@@ -505,6 +526,7 @@ final class PaddleOcrVlRunner {
           h,
           seqLen,
           positionIds,
+          positionEmbeddings: positionEmbeddings,
           layerIndex: i,
           cache: cache.layers[i],
         );
@@ -560,41 +582,42 @@ final class PaddleOcrVlRunner {
         _endDecoderLayerTrace(trace, cache, cache.layers[i]);
       }
 
-      // Final norm
-      final norm = _traceDecoderTailArray(
-        this,
-        seqLen,
-        cache,
-        'final_norm',
-        () => _lmRmsNormCompat(h, weight: _finalNorm, eps: config.rmsNormEps),
-      );
-      h.close();
-
-      // LM head — only last token
       final last = _traceDecoderTailArray(
         this,
         seqLen,
         cache,
         'last_slice',
-        () => norm.slice(
+        () => h.slice(
           start: [0, seqLen - 1, 0],
           stop: [1, seqLen, config.hiddenSize],
         ),
       );
-      norm.close();
+      h.close();
+
+      // Final norm on the last token only.
+      final norm = _traceDecoderTailArray(
+        this,
+        seqLen,
+        cache,
+        'final_norm',
+        () => _lmRmsNormCompat(last, weight: _finalNorm, eps: config.rmsNormEps),
+      );
+      last.close();
 
       final last2d = _traceDecoderTailArray(
         this,
         seqLen,
         cache,
         'last_reshape',
-        () => last.reshape([1, config.hiddenSize]),
+        () => norm.reshape([1, config.hiddenSize]),
       );
-      last.close();
+      norm.close();
 
       final linear = config.tieWordEmbeddings ? _embedWeights : _lmHead!;
-      final lmHeadInput =
-          seqLen == 1 && config.forceDecodeLmHeadFloat32ForCurrentPlatform
+      final shouldCastLmHeadInput =
+          (seqLen == 1 && config.forceDecodeLmHeadFloat32ForCurrentPlatform) ||
+          (!Platform.isIOS && linear is _QuantLinear && last2d.dtype != MlxDType.MLX_FLOAT32);
+      final lmHeadInput = shouldCastLmHeadInput
           ? _traceDecoderTailArray(
               this,
               seqLen,
@@ -673,6 +696,9 @@ final class PaddleOcrVlRunner {
     } catch (_) {
       if (h != hidden) h.close();
       rethrow;
+    } finally {
+      positionEmbeddings?.cos.close();
+      positionEmbeddings?.sin.close();
     }
   }
 }

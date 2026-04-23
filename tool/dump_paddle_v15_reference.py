@@ -3,12 +3,21 @@
 Dump intermediate values from PaddleOCR-VL-1.5 (8-bit) via mlx-vlm for
 Dart parity checking.
 
+The reference generation path is intentionally canonical:
+- use a fresh model/processor pair for generation
+- force the generation processor to the requested min/max pixel bounds
+- derive both `full_output.txt` and `py_generated_ids.txt` from the same
+  `stream_generate()` run
+
+This avoids mixing multiple upstream generation entrypoints that can produce
+different token streams when image resize bounds differ.
+
 Usage:
     source /tmp/mlx-test-env/bin/activate
     python tool/dump_paddle_v15_reference.py
 
-Writes .npy files to /tmp/paddle_v15_ref/ for the test image
-    /Users/binbinsh/Projects/Personal/chef-de-mise/test-ocr-input.jpg
+Writes .npy files to /tmp/paddle_v15_ref/ for the default test image
+    benchmark/assets/paddle_ocr_vl_test.jpg
 """
 
 import argparse
@@ -30,7 +39,12 @@ MODEL_PATH = Path(
         "snapshots/37d4c85284434b6e6fd4c03f8b719b1aefaa013c"
     )
 )
-IMAGE_PATH = Path("/Users/binbinsh/Projects/Personal/chef-de-mise/test-ocr-input.jpg")
+IMAGE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "benchmark"
+    / "assets"
+    / "paddle_ocr_vl_test.jpg"
+).resolve()
 OUT_DIR = Path("/tmp/paddle_v15_ref")
 OUT_DIR.mkdir(exist_ok=True)
 
@@ -140,21 +154,19 @@ img_arr = (img_arr - mean) / std
 img_nhwc = img_arr[np.newaxis, :, :, :]
 print(f"  NHWC image: shape={img_nhwc.shape}")
 np.save(OUT_DIR / "image_nhwc.npy", img_nhwc)
+metadata = {
+    "image_path": str(IMAGE_PATH),
+    "min_pixels": int(ip.min_pixels),
+    "max_pixels": int(ip.max_pixels),
+    "resized_height": int(resized_h),
+    "resized_width": int(resized_w),
+    "grid_h": int(grid_h),
+    "grid_w": int(grid_w),
+    "merged_h": int(merged_h),
+    "merged_w": int(merged_w),
+}
 (OUT_DIR / "metadata.json").write_text(
-    json.dumps(
-        {
-            "image_path": str(IMAGE_PATH),
-            "min_pixels": int(ip.min_pixels),
-            "max_pixels": int(ip.max_pixels),
-            "resized_height": int(resized_h),
-            "resized_width": int(resized_w),
-            "grid_h": int(grid_h),
-            "grid_w": int(grid_w),
-            "merged_h": int(merged_h),
-            "merged_w": int(merged_w),
-        },
-        indent=2,
-    ),
+    json.dumps(metadata, indent=2),
     encoding="utf-8",
 )
 
@@ -360,77 +372,64 @@ print(
 
 # ─── step 11: full generation ────────────────────────────────────────────────
 print("\n=== Full Generation ===")
-from mlx_vlm import generate as vlm_generate
+from mlx_vlm.generate import stream_generate
 
-# Reset state
-model.language_model._position_ids = None
-model.language_model._rope_deltas = None
+# Use a fresh model/processor pair so earlier diagnostic forwards cannot leak
+# state into the canonical generation reference.
+gen_model, gen_processor = vlm_load(str(MODEL_PATH))
+mx.eval(gen_model.parameters())
+gen_model.language_model._position_ids = None
+gen_model.language_model._rope_deltas = None
+gen_ip = gen_processor.image_processor
+gen_ip.min_pixels = int(ip.min_pixels)
+gen_ip.max_pixels = int(ip.max_pixels)
 
 prompt = "<|begin_of_sentence|>User: <|IMAGE_START|><|IMAGE_PLACEHOLDER|><|IMAGE_END|>Extract all text from this image.\nAssistant:\n"
 t0 = time.time()
-output = vlm_generate(
-    model,
-    processor,
+output_parts = []
+gen_tokens = []
+last_generation_count = 0
+for response in stream_generate(
+    gen_model,
+    gen_processor,
+    prompt,
     image=str(IMAGE_PATH),
-    prompt=prompt,
     max_tokens=1024,
-    verbose=False,
-    min_pixels=int(ip.min_pixels),
-    max_pixels=int(ip.max_pixels),
-)
+):
+    if response.text:
+        output_parts.append(response.text)
+    if response.generation_tokens > last_generation_count:
+        token = response.token
+        token_id = int(token.item()) if hasattr(token, "item") else int(token)
+        gen_tokens.append(token_id)
+        last_generation_count = response.generation_tokens
 t1 = time.time()
+output_text = "".join(output_parts)
 print(f"  Generation time: {t1 - t0:.2f}s")
-# Handle both str and GenerationResult
-if hasattr(output, "text"):
-    output_text = output.text
-elif isinstance(output, str):
-    output_text = output
-else:
-    output_text = str(output)
 print(f"  Output length: {len(output_text)} chars")
 print(f"  Output:\n---\n{output_text}\n---")
 
-# Save full output text
+# Save full output text and token ids from the same canonical stream.
 (OUT_DIR / "full_output.txt").write_text(output_text, encoding="utf-8")
-
-print("\n=== Full Generation (token ids) ===")
-from mlx_vlm.generate import generate_step
-
-# Reset state
-model.language_model._position_ids = None
-model.language_model._rope_deltas = None
-
-gen_inputs = processor(
-    images=[image],
-    text=[prompt],
-    return_tensors="np",
-    min_pixels=int(ip.min_pixels),
-    max_pixels=int(ip.max_pixels),
-)
-gen_input_ids = mx.array(gen_inputs["input_ids"])
-gen_pixel_values = mx.array(gen_inputs["pixel_values"])
-gen_extra = {}
-for key, value in gen_inputs.items():
-    if key in {"input_ids", "pixel_values", "attention_mask"}:
-        continue
-    gen_extra[key] = mx.array(value) if hasattr(value, "shape") else value
-
-gen_tokens = []
-for token, _logprobs in generate_step(
-    gen_input_ids,
-    model,
-    gen_pixel_values,
-    None,
-    max_tokens=1024,
-    **gen_extra,
-):
-    gen_tokens.append(int(token))
-
 (OUT_DIR / "py_generated_ids.txt").write_text(
     ",".join(map(str, gen_tokens)),
     encoding="utf-8",
 )
 print(f"  Saved {len(gen_tokens)} generated ids")
+
+metadata.update(
+    {
+        "generation_source": "mlx_vlm.generate.stream_generate",
+        "generation_processor_min_pixels": int(gen_ip.min_pixels),
+        "generation_processor_max_pixels": int(gen_ip.max_pixels),
+        "generation_max_tokens": 1024,
+        "generation_token_count": len(gen_tokens),
+    }
+)
+(OUT_DIR / "metadata.json").write_text(
+    json.dumps(metadata, indent=2),
+    encoding="utf-8",
+)
 
 # ─── summary ─────────────────────────────────────────────────────────────────
 print(f"\nAll reference files saved to {OUT_DIR}/")
