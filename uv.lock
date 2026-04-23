@@ -270,6 +270,7 @@ dependencies = [
     { name = "requests" },
     { name = "safetensors" },
     { name = "soundfile" },
+    { name = "tokenizers" },
     { name = "transformers" },
 ]
 
@@ -286,6 +287,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31.0" },
     { name = "safetensors", specifier = ">=0.4.3" },
     { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "tokenizers", specifier = ">=0.22.0" },
     { name = "transformers", specifier = ">=5.1.0" },
 ]
 
