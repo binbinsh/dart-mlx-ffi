@@ -163,12 +163,7 @@ final class SileroVadRuntime {
   MlxArray _stft(MlxArray input) {
     // input: (1, frameSamples=576)
     // v6: reflect pad only 64 on the RIGHT (matching tinygrad reference).
-    final padded = input.pad(
-      axes: [1],
-      lowPads: [0],
-      highPads: [_manifest.contextSamples], // 64
-      mode: 'reflect',
-    );
+    final padded = _rightReflectPad(input, _manifest.contextSamples);
 
     // Unsqueeze to (1, 1, padded_len) for 1D conv.
     final x3d = padded.reshape([1, 1, padded.shape[1]]);
@@ -210,6 +205,29 @@ final class SileroVadRuntime {
     sum.close();
 
     return mag; // (1, 129, T_frames=4)
+  }
+
+  MlxArray _rightReflectPad(MlxArray input, int padWidth) {
+    if (padWidth <= 0) return input;
+    final inputWidth = input.shape[1];
+    if (padWidth >= inputWidth) {
+      throw ArgumentError.value(
+        padWidth,
+        'padWidth',
+        'Must be smaller than the input width for reflect padding.',
+      );
+    }
+    final indices = MlxArray.fromInt32List(
+      List<int>.generate(padWidth, (i) => inputWidth - 2 - i),
+      shape: [padWidth],
+    );
+    final reflected = input.take(indices, axis: 1);
+    indices.close();
+    try {
+      return mx.concatenate([input, reflected], axis: 1);
+    } finally {
+      reflected.close();
+    }
   }
 
   // -------------------------------------------------------------------------
