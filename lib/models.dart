@@ -28,7 +28,13 @@ export 'src/models/cosyvoice2/cosyvoice2.dart'
         CosyVoice2UpperRunner,
         CosyVoice2VocoderBundle;
 export 'src/models/qwen3_tts/qwen3_tts.dart'
-    show Qwen3TtsChunk, Qwen3TtsDebug, Qwen3TtsEngine, Qwen3TtsPreparedReference;
+    show
+        Qwen3TtsChunk,
+        Qwen3TtsDebug,
+        Qwen3TtsEngine,
+        Qwen3TtsPreparedReference,
+        Qwen3TtsSpeakerEncoder,
+        Qwen3TtsTokenizerEncoder;
 export 'src/models/qwen2_5/qwen2_5.dart' show QwenRunner, QwenConfig;
 export 'src/models/paddle_ocr_vl/paddle_ocr_vl.dart'
     show PaddleOcrVlRunner, PaddleOcrVlConfig;

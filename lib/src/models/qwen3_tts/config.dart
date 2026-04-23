@@ -15,6 +15,30 @@ final class Qwen3TtsQuantConfig {
   final String mode;
 }
 
+final class Qwen3TtsSpeakerConfig {
+  const Qwen3TtsSpeakerConfig({
+    required this.melDim,
+    required this.encDim,
+    required this.encChannels,
+    required this.encKernelSizes,
+    required this.encDilations,
+    required this.encAttentionChannels,
+    required this.encRes2netScale,
+    required this.encSeChannels,
+    required this.sampleRate,
+  });
+
+  final int melDim;
+  final int encDim;
+  final List<int> encChannels;
+  final List<int> encKernelSizes;
+  final List<int> encDilations;
+  final int encAttentionChannels;
+  final int encRes2netScale;
+  final int encSeChannels;
+  final int sampleRate;
+}
+
 final class Qwen3TtsCodePredictorConfig {
   const Qwen3TtsCodePredictorConfig({
     required this.hiddenSize,
@@ -152,6 +176,8 @@ final class Qwen3TtsManifest {
     required this.ttsPadTokenId,
     required this.imStartTokenId,
     required this.imEndTokenId,
+    required this.speaker,
+    required this.tokenizerEncoder,
     required this.talker,
     required this.quantization,
     required this.decoder,
@@ -233,6 +259,9 @@ final class Qwen3TtsManifest {
       throw StateError('Qwen3-TTS manifest missing talker.code_predictor config.');
     }
     final quantJson = decoded['quantization'] as Map<String, Object?>? ?? const {};
+    final rootConfig = jsonDecode(File(p.join(rootPath, 'config.json')).readAsStringSync())
+        as Map<String, Object?>;
+    final speakerJson = rootConfig['speaker_encoder_config'] as Map<String, Object?>? ?? const {};
     final decoderJson = jsonDecode(
           File(p.join(rootPath, 'speech_tokenizer', 'config.json')).readAsStringSync(),
         )
@@ -255,6 +284,44 @@ final class Qwen3TtsManifest {
       ttsPadTokenId: requireInt(decoded['tts_pad_token_id'], 'tts_pad_token_id'),
       imStartTokenId: requireInt(decoded['im_start_token_id'], 'im_start_token_id'),
       imEndTokenId: requireInt(decoded['im_end_token_id'], 'im_end_token_id'),
+      speaker: Qwen3TtsSpeakerConfig(
+        melDim: requireInt(speakerJson['mel_dim'] ?? 128, 'speaker_encoder_config.mel_dim'),
+        encDim: requireInt(speakerJson['enc_dim'] ?? 1024, 'speaker_encoder_config.enc_dim'),
+        encChannels: requireIntList(
+          speakerJson['enc_channels'] ?? const <int>[512, 512, 512, 512, 1536],
+          'speaker_encoder_config.enc_channels',
+        ),
+        encKernelSizes: requireIntList(
+          speakerJson['enc_kernel_sizes'] ?? const <int>[5, 3, 3, 3, 1],
+          'speaker_encoder_config.enc_kernel_sizes',
+        ),
+        encDilations: requireIntList(
+          speakerJson['enc_dilations'] ?? const <int>[1, 2, 3, 4, 1],
+          'speaker_encoder_config.enc_dilations',
+        ),
+        encAttentionChannels: requireInt(
+          speakerJson['enc_attention_channels'] ?? 128,
+          'speaker_encoder_config.enc_attention_channels',
+        ),
+        encRes2netScale: requireInt(
+          speakerJson['enc_res2net_scale'] ?? 8,
+          'speaker_encoder_config.enc_res2net_scale',
+        ),
+        encSeChannels: requireInt(
+          speakerJson['enc_se_channels'] ?? 128,
+          'speaker_encoder_config.enc_se_channels',
+        ),
+        sampleRate: requireInt(
+          speakerJson['sample_rate'] ?? 24000,
+          'speaker_encoder_config.sample_rate',
+        ),
+      ),
+      tokenizerEncoder: _buildTokenizerEncConfig(
+        decoderJson['encoder_config'] as Map<String, Object?>? ?? const {},
+        requireInt: requireInt,
+        requireDouble: requireDouble,
+        requireIntList: requireIntList,
+      ),
       talker: Qwen3TtsTalkerConfig(
         hiddenSize: requireInt(talkerJson['hidden_size'], 'talker.hidden_size'),
         textHiddenSize: requireInt(
@@ -440,6 +507,8 @@ final class Qwen3TtsManifest {
   final int ttsPadTokenId;
   final int imStartTokenId;
   final int imEndTokenId;
+  final Qwen3TtsSpeakerConfig speaker;
+  final Qwen3TtsTokenizerEncConfig tokenizerEncoder;
   final Qwen3TtsTalkerConfig talker;
   final Qwen3TtsQuantConfig quantization;
   final Qwen3TtsDecoderConfig decoder;
@@ -449,6 +518,7 @@ final class Qwen3TtsBundle {
   Qwen3TtsBundle._({
     required this.manifest,
     required this.tensors,
+    required this.encoderTensors,
     required this.decoderTensors,
     required this.generationConfig,
   });
@@ -459,18 +529,20 @@ final class Qwen3TtsBundle {
     final generationConfig =
         jsonDecode(File(manifest.generationConfigPath).readAsStringSync())
             as Map<String, Object?>;
-    final rawDecoder = loadTensorMap(manifest.speechTokenizerDir);
-    final decoderTensors = _sanitizeDecoderTensors(rawDecoder);
+    final rawSpeech = loadTensorMap(manifest.speechTokenizerDir);
+    final split = _splitSpeechTensors(rawSpeech);
     return Qwen3TtsBundle._(
       manifest: manifest,
       tensors: tensors,
-      decoderTensors: decoderTensors,
+      encoderTensors: split.$1,
+      decoderTensors: split.$2,
       generationConfig: generationConfig,
     );
   }
 
   final Qwen3TtsManifest manifest;
   final Map<String, MlxArray> tensors;
+  final Map<String, MlxArray> encoderTensors;
   final Map<String, MlxArray> decoderTensors;
   final Map<String, Object?> generationConfig;
 
@@ -490,14 +562,43 @@ final class Qwen3TtsBundle {
     return value;
   }
 
+  MlxArray requireEncoder(String key) {
+    final value = encoderTensors[key];
+    if (value == null) {
+      throw StateError('Missing Qwen3-TTS encoder tensor: $key');
+    }
+    return value;
+  }
+
   void close() {
     for (final tensor in tensors.values) {
+      tensor.close();
+    }
+    for (final tensor in encoderTensors.values) {
       tensor.close();
     }
     for (final tensor in decoderTensors.values) {
       tensor.close();
     }
   }
+}
+
+(Map<String, MlxArray>, Map<String, MlxArray>) _splitSpeechTensors(
+  Map<String, MlxArray> raw,
+) {
+  final encoder = <String, MlxArray>{};
+  final decoderInput = <String, MlxArray>{};
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    if (key.startsWith('encoder.')) {
+      encoder[key] = entry.value;
+    } else if (key.startsWith('decoder.')) {
+      decoderInput[key] = entry.value;
+    } else {
+      entry.value.close();
+    }
+  }
+  return (encoder, _sanitizeDecoderTensors(decoderInput));
 }
 
 Map<String, MlxArray> _sanitizeDecoderTensors(Map<String, MlxArray> raw) {
