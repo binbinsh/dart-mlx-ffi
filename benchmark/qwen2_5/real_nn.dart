@@ -21,10 +21,10 @@ void main(List<String> args) {
   final engine = readStringArg(args, '--engine', fallback: 'direct');
   final modelName = tryReadStringArg(args, '--model-name');
 
-  final manifest = jsonDecode(File(manifestPath).readAsStringSync())
-      as Map<String, Object?>;
-  final allModelSpecs =
-      (manifest['models'] as List<Object?>).cast<Map<String, Object?>>();
+  final manifest =
+      jsonDecode(File(manifestPath).readAsStringSync()) as Map<String, Object?>;
+  final allModelSpecs = (manifest['models'] as List<Object?>)
+      .cast<Map<String, Object?>>();
   final modelSpecs = modelName == null
       ? allModelSpecs
       : allModelSpecs.where((spec) => spec['name'] == modelName).toList();
@@ -53,6 +53,7 @@ void main(List<String> args) {
   file.parent.createSync(recursive: true);
   file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(report));
   stdout.writeln(file.path);
+  exit(0);
 }
 
 Map<String, Object?> benchModel(
@@ -61,8 +62,10 @@ Map<String, Object?> benchModel(
   required int iters,
 }) {
   final snapshotPath = spec['snapshot_path'] as String;
-  final tokens =
-      (spec['tokens'] as List<Object?>).cast<num>().map((v) => v.toInt()).toList();
+  final tokens = (spec['tokens'] as List<Object?>)
+      .cast<num>()
+      .map((v) => v.toInt())
+      .toList();
   final runner = QwenRunner.load(snapshotPath);
 
   try {
@@ -86,7 +89,15 @@ Map<String, Object?> benchModel(
       reportOut.close();
       final afterPeak = MlxMemory.peakBytes();
       final totalMs = stopwatch.elapsedMicroseconds / 1000.0;
-      return modelReport(spec, tokens, last.shape, flat, totalMs, iters, afterPeak - beforePeak);
+      return modelReport(
+        spec,
+        tokens,
+        last.shape,
+        flat,
+        totalMs,
+        iters,
+        afterPeak - beforePeak,
+      );
     } finally {
       last?.close();
     }
@@ -101,8 +112,10 @@ Map<String, Object?> benchCompiledModel(
   required int iters,
 }) {
   final snapshotPath = spec['snapshot_path'] as String;
-  final tokens =
-      (spec['tokens'] as List<Object?>).cast<num>().map((v) => v.toInt()).toList();
+  final tokens = (spec['tokens'] as List<Object?>)
+      .cast<num>()
+      .map((v) => v.toInt())
+      .toList();
   final runner = QwenRunner.load(snapshotPath);
   final input = MlxArray.fromInt32List(tokens, shape: [1, tokens.length]);
   final fn = MlxFunction.fromCallback((args) => [runner.buildGraph(args[0])]);

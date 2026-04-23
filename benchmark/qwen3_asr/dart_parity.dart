@@ -29,8 +29,7 @@ void main(List<String> args) {
   if (!Directory(refDir).existsSync()) {
     stderr.writeln('Reference data not found at $refDir');
     stderr.writeln('Run python_ref.py first to generate reference data.');
-    exitCode = 1;
-    return;
+    exit(1);
   }
 
   final home = Platform.environment['HOME'] ?? '';
@@ -39,8 +38,7 @@ void main(List<String> args) {
       '$home/.cmdspace/models/qwen3-asr/default';
   if (!Directory(modelPath).existsSync()) {
     stderr.writeln('Model not found at $modelPath');
-    exitCode = 1;
-    return;
+    exit(1);
   }
 
   stderr.writeln('Loading reference data from $refDir');
@@ -383,6 +381,7 @@ void main(List<String> args) {
       textMatch;
   stderr.writeln(allPass ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
   exitCode = allPass ? 0 : 1;
+  exit(exitCode);
 }
 
 /// Build prompt tokens matching moona3k reference (exposed for testing).

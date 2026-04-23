@@ -25,8 +25,7 @@ void main(List<String> args) {
     stderr.writeln(
       'Usage: dart run benchmark/qwen3_asr/stream_test.dart <wav>',
     );
-    exitCode = 1;
-    return;
+    exit(1);
   }
 
   final audio = _parseWav(File(args[0]).readAsBytesSync());
@@ -132,6 +131,7 @@ void main(List<String> args) {
   exitCode = pass ? 0 : 1;
 
   runner.close();
+  exit(exitCode);
 }
 
 Float32List _parseWav(Uint8List data) {

@@ -19,6 +19,7 @@ void main(List<String> args) {
     );
   }
   stdout.writeln(jsonEncode(results));
+  exit(0);
 }
 
 Map<String, Object?> parityCases() {

@@ -17,8 +17,7 @@ void main(List<String> args) {
     stderr.writeln(
       'Usage: dart run benchmark/qwen3_asr/speed_bench.dart <wav> [iters]',
     );
-    exitCode = 1;
-    return;
+    exit(1);
   }
 
   final wavPath = args[0];
@@ -102,6 +101,7 @@ void main(List<String> args) {
   stdout.writeln(jsonEncode(summary));
 
   runner.close();
+  exit(0);
 }
 
 Float32List _parseWav(Uint8List data) {
