@@ -66,8 +66,12 @@ void _assertClose(
 
 void main() {
   test('pyannote-seg-3.0 MLX parity vs PyTorch reference', () async {
-    expect(File('$_bundleDir/weights.safetensors').existsSync(), isTrue,
-        reason: 'bundle missing at $_bundleDir');
+    expect(
+      File('$_bundleDir/weights.safetensors').existsSync(),
+      isTrue,
+      reason:
+          'bundle missing at $_bundleDir. Run `uv run --no-project python tool/prepare_speaker_models.py` first.',
+    );
 
     final bundle = await loadPyannoteSegBundle(_bundleDir);
     addTearDown(bundle.close);

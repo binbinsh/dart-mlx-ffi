@@ -177,6 +177,11 @@ void main() {
         reason: 'embedding cosine=$cosine vs SpeechBrain reference');
 
     // Quick sanity: the file fixtures exist on disk.
-    expect(File('$_bundleDir/weights.safetensors').existsSync(), isTrue);
+    expect(
+      File('$_bundleDir/weights.safetensors').existsSync(),
+      isTrue,
+      reason:
+          'bundle missing at $_bundleDir. Run `uv run --no-project python tool/prepare_speaker_models.py` first.',
+    );
   });
 }
