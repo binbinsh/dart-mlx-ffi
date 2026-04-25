@@ -1,0 +1,521 @@
+version: 1
+cache_root: benchmark/artifacts/huggingface
+
+support_policy:
+  production_requires:
+    platforms: [ios, macos, windows, linux, android]
+
+defaults:
+  task: text
+  input_json: benchmark/runtime/fixtures/tiny_input.json
+  prompt_file: benchmark/runtime/fixtures/text_prompt.txt
+  image_file: benchmark/runtime/fixtures/image.png
+  audio_file: benchmark/runtime/fixtures/audio.wav
+  baseline_publish_report: benchmark/out/publish_report.json
+  warmup: 1
+  iters: 5
+  max_tokens: 64
+  platforms:
+    ios:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    macos:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    windows:
+      provider: dml
+    linux:
+      provider: cpu
+    android:
+      delegate: xnnpack
+
+engine_platforms:
+  mlx: [ios, macos]
+  coreml: [ios, macos]
+  onnx: [ios, macos, windows, linux, android]
+  litert: [android]
+
+engine_order:
+  ios: [coreml, mlx, onnx]
+  macos: [coreml, mlx, onnx]
+  windows: [onnx]
+  linux: [onnx]
+  android: [litert, onnx]
+
+models:
+  qwen2_5:
+    family: Qwen2.5
+    source_model: Qwen/Qwen2.5-0.5B-Instruct
+    task: text
+    coreml_llm_baseline: true
+    artifacts:
+      mlx:
+        repo: mlx-community/Qwen2.5-0.5B-Instruct-4bit
+        artifact: .
+        allow_patterns: &mlx_snapshot
+          - "*.json"
+          - "*.safetensors"
+          - "*.txt"
+          - "*.model"
+          - "tokenizer*"
+          - "vocab*"
+          - "merges.txt"
+          - "chat_template*"
+      coreml:
+        repo: finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit
+        artifact: Qwen2.5-0.5B-Instruct-4bit.mlmodelc
+        allow_patterns:
+          - "Qwen2.5-0.5B-Instruct-4bit.mlmodelc/**"
+          - "*.json"
+          - "tokenizer*"
+      onnx:
+        repo: onnx-community/Qwen2.5-0.5B-Instruct
+        artifact: onnx/model_q4f16.onnx
+        allow_patterns:
+          - "onnx/model_q4f16.onnx*"
+          - "*.json"
+          - "*.jinja"
+          - "tokenizer*"
+      litert:
+        repo: litert-community/Qwen2.5-0.5B-Instruct
+        artifact: Qwen2.5-0.5B-Instruct_seq128_q8_ekv1280.tflite
+        allow_patterns:
+          - "Qwen2.5-0.5B-Instruct_seq128_q8_ekv1280.tflite"
+          - "*.json"
+          - "tokenizer*"
+
+  qwen3_5:
+    family: Qwen3.5
+    source_model: Qwen/Qwen3.5-0.8B
+    task: text
+    coreml_llm_baseline: true
+    artifacts:
+      mlx:
+        repo: mlx-community/Qwen3.5-0.8B-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: mlboydaisuke/qwen3.5-0.8B-CoreML
+        artifact: qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        allow_patterns:
+          - "qwen3_5_0_8b_decode_int8_mseq128.mlpackage/**"
+          - "*.json"
+          - "tokenizer*"
+      onnx:
+        repo: onnx-community/Qwen3.5-0.8B-ONNX
+        artifact: onnx/decoder_model_merged_q4f16.onnx
+        allow_patterns:
+          - "onnx/decoder_model_merged_q4f16.onnx*"
+          - "onnx/*embed*"
+          - "*.json"
+          - "*.jinja"
+          - "tokenizer*"
+      litert:
+        repo: Yoursmiling/Qwen3.5-0.8B-LiteRT
+        artifact: model_multimodal.litertlm
+        allow_patterns:
+          - "model_multimodal.litertlm"
+          - "*.json"
+          - "tokenizer*"
+
+  paddle_ocr_vl:
+    family: PaddleOCR-VL
+    source_model: PaddlePaddle/PaddleOCR-VL-1.5
+    task: vlm
+    coreml_llm_baseline: false
+    artifact_coverage: partial
+    required_fixtures: [text_prompt, image]
+    artifacts:
+      mlx:
+        repo: mlx-community/PaddleOCR-VL-1.5-8bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      onnx:
+        repo: lbm364dl/PaddleOCR-VL-1.5-ONNX
+        artifact: onnx/decoder_model_merged.onnx
+        component_artifacts:
+          embed_tokens: onnx/embed_tokens.onnx
+          vision_encoder: onnx/vision_encoder.onnx
+          decoder: onnx/decoder_model_merged.onnx
+        pipeline:
+          format: dart_mlx_ffi.onnx_pipeline.v1
+          stages:
+            - name: embed_tokens
+              model: "{component:embed_tokens}"
+              outputs:
+                inputs_embeds: text_inputs_embeds
+            - name: vision_encoder
+              model: "{component:vision_encoder}"
+              outputs:
+                image_embeds: image_embeds
+            - name: merge_image_embeds
+              op: scatter_embeddings
+              inputs:
+                base: text_inputs_embeds
+                updates: image_embeds
+                indices: image_token_indices
+              outputs:
+                output: inputs_embeds
+            - name: decoder
+              model: "{component:decoder}"
+          outputs:
+            - logits
+        allow_patterns:
+          - "onnx/embed_tokens.onnx*"
+          - "onnx/vision_encoder.onnx*"
+          - "onnx/decoder_model_merged.onnx*"
+          - "*.json"
+          - "*.jinja"
+          - "tokenizer*"
+
+  qwen3_asr:
+    family: Qwen3-ASR
+    source_model: Qwen/Qwen3-ASR-0.6B
+    task: audio
+    coreml_llm_baseline: false
+    required_fixtures: [audio]
+    artifacts:
+      mlx:
+        repo: mlx-community/Qwen3-ASR-1.7B-8bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: FluidInference/qwen3-asr-0.6b-coreml
+        artifact: int8/qwen3_asr_decoder_stateful.mlmodelc
+        allow_patterns:
+          - "int8/**"
+          - "*.json"
+          - "tokenizer*"
+      onnx:
+        repo: Daumee/Qwen3-ASR-0.6B-ONNX-CPU
+        artifact: onnx_models/decoder_step.int8.onnx
+        allow_patterns:
+          - "onnx_models/*.onnx"
+          - "onnx_models/*.onnx_data*"
+          - "*.json"
+          - "tokenizer*"
+      litert:
+        repo: litert-community/Qwen3-ASR-0.6B
+        artifact: qwen3_asr_0.6b_5s_i8.tflite
+        allow_patterns:
+          - "qwen3_asr_0.6b_5s_i8.tflite"
+          - "*.json"
+          - "tokenizer*"
+
+  kitten_tts:
+    family: KittenTTS
+    source_model: KittenML/kitten-tts-nano-0.1
+    task: tts
+    coreml_llm_baseline: false
+    artifact_coverage: partial
+    required_fixtures: [text_prompt]
+    artifacts:
+      mlx:
+        repo: mlx-community/kitten-tts-nano-0.8-6bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: alexwengg/kittentts-coreml
+        artifact: nano/kittentts_5s.mlmodelc
+        allow_patterns:
+          - "nano/kittentts_5s.mlmodelc/**"
+          - "nano/voices*"
+          - "nano/voices/**"
+          - "*.json"
+      onnx:
+        repo: onnx-community/KittenTTS-Mini-v0.8-ONNX
+        artifact: onnx/model.onnx
+        allow_patterns:
+          - "onnx/model.onnx*"
+          - "*.json"
+          - "*.npz"
+          - "voices*"
+
+  silero_vad:
+    family: Silero VAD
+    source_model: snakers4/silero-vad
+    task: vad
+    coreml_llm_baseline: false
+    artifact_coverage: partial
+    required_fixtures: [audio]
+    artifacts:
+      mlx:
+        repo: aufklarer/Silero-VAD-v5-MLX
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: FluidInference/silero-vad-coreml
+        artifact: silero-vad-unified-v6.0.0.mlmodelc
+        allow_patterns:
+          - "silero-vad-unified-v6.0.0.mlmodelc/**"
+          - "config.json"
+      onnx:
+        repo: onnx-community/silero-vad
+        artifact: onnx/model.onnx
+        allow_patterns:
+          - "onnx/model.onnx*"
+          - "*.json"
+
+  qwen3_vl:
+    family: Qwen3-VL
+    source_model: Qwen/Qwen3-VL-2B-Instruct
+    task: vlm
+    coreml_llm_baseline: true
+    artifact_coverage: partial
+    required_fixtures: [text_prompt, image]
+    artifacts:
+      mlx:
+        repo: mlx-community/Qwen3-VL-2B-Instruct-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: mlboydaisuke/qwen3-vl-2b-coreml
+        artifact: qwen3_vl_2b_decode_chunks
+        allow_patterns:
+          - "qwen3_vl_2b_decode_chunks/**"
+          - "qwen3_vl_2b_vision/**"
+          - "*.json"
+          - "tokenizer*"
+      onnx:
+        repo: onnx-community/Qwen3-VL-2B-Instruct-ONNX
+        artifact: onnx/decoder_model_merged_q4f16.onnx
+        allow_patterns:
+          - "onnx/*q4f16*"
+          - "onnxruntime/cpu_and_mobile/cpu-int4-rtn-block-32/**"
+          - "*.json"
+          - "*.jinja"
+          - "tokenizer*"
+
+  gemma4:
+    family: Gemma 4
+    source_model: google/gemma-4-E2B-it
+    task: text
+    coreml_llm_baseline: true
+    artifacts:
+      mlx:
+        repo: unsloth/gemma-4-E2B-it-UD-MLX-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: mlboydaisuke/gemma-4-E2B-coreml
+        artifact: lite-chunks
+        allow_patterns:
+          - "lite-chunks/**"
+          - "hf_model/**"
+          - "*.bin"
+          - "*.npy"
+          - "model_config.json"
+      onnx:
+        repo: onnx-community/gemma-4-E2B-it-ONNX
+        artifact: onnx/decoder_model_merged_q4f16.onnx
+        allow_patterns:
+          - "onnx/decoder_model_merged_q4f16.onnx*"
+          - "onnx/*embed*"
+          - "*.json"
+          - "*.jinja"
+          - "tokenizer*"
+      litert:
+        repo: litert-community/gemma-4-E2B-it-litert-lm
+        artifact: gemma-4-E2B-it.litertlm
+        allow_patterns:
+          - "gemma-4-E2B-it.litertlm"
+          - "*.task"
+          - "*.json"
+
+  function_gemma:
+    family: FunctionGemma
+    source_model: google/functiongemma-270m-it
+    task: function
+    coreml_llm_baseline: true
+    required_fixtures: [text_prompt, tool_schema]
+    tools_file: benchmark/runtime/fixtures/tool_schema.json
+    artifacts:
+      mlx:
+        repo: mlx-community/functiongemma-270m-it-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: mlboydaisuke/functiongemma-270m-coreml
+        artifact: .
+        allow_patterns:
+          - "model.mlmodelc/**"
+          - "prefill_t32.mlmodelc/**"
+          - "hf_model/**"
+          - "*.npy"
+          - "model_config.json"
+      onnx:
+        repo: onnx-community/functiongemma-270m-it-ONNX-GQA
+        artifact: onnx/model_q4f16.onnx
+        allow_patterns:
+          - "onnx/model_q4f16.onnx*"
+          - "*.json"
+          - "*.jinja"
+          - "tokenizer*"
+      litert:
+        repo: litert-community/functiongemma-270m-ft-mobile-actions
+        artifact: mobile_actions_q8_ekv1024.litertlm
+        allow_patterns:
+          - "mobile_actions_q8_ekv1024.litertlm"
+          - "*.json"
+
+  embedding_gemma:
+    family: EmbeddingGemma
+    source_model: google/embeddinggemma-300m
+    task: embedding
+    coreml_llm_baseline: true
+    required_fixtures: [embedding_query]
+    embedding_query_file: benchmark/runtime/fixtures/embedding_query.txt
+    embedding_dim: 768
+    artifacts:
+      mlx:
+        repo: mlx-community/embeddinggemma-300m-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      coreml:
+        repo: mlboydaisuke/embeddinggemma-300m-coreml
+        artifact: encoder.mlmodelc
+        allow_patterns:
+          - "encoder.mlmodelc/**"
+          - "hf_model/**"
+          - "model_config.json"
+      onnx:
+        repo: onnx-community/embeddinggemma-300m-ONNX
+        artifact: onnx/model_q4f16.onnx
+        allow_patterns:
+          - "onnx/model_q4f16.onnx*"
+          - "*.json"
+          - "tokenizer*"
+          - "sentencepiece.model"
+      litert:
+        repo: litert-community/embeddinggemma-300m
+        artifact: embeddinggemma-300M_seq512_mixed-precision.tflite
+        allow_patterns:
+          - "embeddinggemma-300M_seq512_mixed-precision.tflite"
+          - "sentencepiece.model"
+          - "*.json"
+
+  qwen3_5_27b_dwq:
+    family: Qwen3.5 27B DWQ
+    source_model: Qwen/Qwen3.5-27B
+    task: text
+    coreml_llm_baseline: false
+    artifact_coverage: partial
+    platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+    artifacts:
+      mlx:
+        repo: mlx-community/Qwen3.5-27B-4bit-DWQ
+        artifact: .
+        allow_patterns: *mlx_snapshot
+
+  translategemma_27b_it:
+    family: TranslateGemma 27B IT
+    source_model: google/translategemma-27b-it
+    task: text
+    coreml_llm_baseline: false
+    artifact_coverage: partial
+    platforms: [ios, macos, android]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+    artifacts:
+      mlx:
+        repo: mlx-community/translategemma-27b-it-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+      litert:
+        repo: litert-community/TranslateGemma-27B-IT
+        artifact: translategemma-27b-it-int8-web.task
+        allow_patterns:
+          - "translategemma-27b-it-int8-web.task"
+
+  nemotron3_nano_30b:
+    family: NVIDIA Nemotron 3 Nano 30B A3B
+    source_model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+    task: text
+    coreml_llm_baseline: false
+    artifact_coverage: partial
+    platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+    artifacts:
+      mlx:
+        repo: mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+
+  glm4_7_flash:
+    family: GLM-4.7-Flash
+    source_model: zai-org/GLM-4.7-Flash
+    task: text
+    coreml_llm_baseline: false
+    artifact_coverage: partial
+    platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+    artifacts:
+      mlx:
+        repo: mlx-community/GLM-4.7-Flash-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+
+  minicpm_o_4_5:
+    family: MiniCPM-o 4.5
+    source_model: openbmb/MiniCPM-o-4_5
+    task: vlm
+    coreml_llm_baseline: false
+    required_fixtures: [text_prompt, image, audio]
+    artifact_coverage: partial
+    platforms: [ios, macos]
+    blocked_platforms:
+      windows: Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.
+      linux: Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.
+      android: No directly loadable LiteRT artifact found on Hugging Face; only non-LiteRT component sidecars were found.
+    artifacts:
+      mlx:
+        repo: mlx-community/MiniCPM-o-4_5-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+
+  gemma_sea_lion_v4_4b_vl:
+    family: Gemma SEA-LION v4 4B VL
+    source_model: aisingapore/Gemma-SEA-LION-v4-4B-VL
+    task: vlm
+    coreml_llm_baseline: false
+    required_fixtures: [text_prompt, image]
+    artifact_coverage: partial
+    platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+    artifacts:
+      mlx:
+        repo: mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit
+        artifact: .
+        allow_patterns: *mlx_snapshot
+
+  ming_omni_tts_0_5b:
+    family: Ming-omni TTS 0.5B
+    source_model: inclusionAI/Ming-omni-tts-0.5B
+    task: tts
+    coreml_llm_baseline: false
+    required_fixtures: [text_prompt]
+    artifact_coverage: partial
+    platforms: [ios, macos]
+    blocked_platforms:
+      windows: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.
+      linux: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.
+      android: No directly loadable LiteRT artifact found on Hugging Face; only campplus.onnx component sidecar was found.
+    artifacts:
+      mlx:
+        repo: mlx-community/Ming-omni-tts-0.5B-4bit
+        artifact: .
+        allow_patterns: *mlx_snapshot

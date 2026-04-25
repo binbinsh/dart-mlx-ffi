@@ -1,0 +1,40 @@
+version: 1
+source_catalog: benchmark/runtime/conversion_recipes.yaml
+defaults:
+  task: text
+  input_json: benchmark/runtime/fixtures/tiny_input.json
+  prompt_file: benchmark/runtime/fixtures/text_prompt.txt
+  image_file: benchmark/runtime/fixtures/image.png
+  audio_file: benchmark/runtime/fixtures/audio.wav
+  baseline_publish_report: benchmark/out/publish_report.json
+  warmup: 1
+  iters: 5
+  max_tokens: 64
+  platforms:
+    ios:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    macos:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    windows:
+      provider: dml
+    linux:
+      provider: cpu
+    android:
+      delegate: xnnpack
+models:
+  gemma_sea_lion_v4_4b_vl:
+    source_model: aisingapore/Gemma-SEA-LION-v4-4B-VL
+    task: vlm
+    artifact_coverage: partial
+    platforms: {}
+    blocked_platforms:
+      windows: Converter exited with code 1. See benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log.
+      linux: Converter exited with code 1. See benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log.
+    blocked_platform_reports:
+      windows: benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion_record.json
+      linux: benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion_record.json
+    blocked_platform_logs:
+      windows: benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log
+      linux: benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log

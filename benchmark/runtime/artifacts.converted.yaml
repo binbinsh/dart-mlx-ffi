@@ -1,0 +1,71 @@
+version: 1
+source_catalog: benchmark/runtime/conversion_recipes.yaml
+defaults:
+  task: text
+  input_json: benchmark/runtime/fixtures/tiny_input.json
+  prompt_file: benchmark/runtime/fixtures/text_prompt.txt
+  image_file: benchmark/runtime/fixtures/image.png
+  audio_file: benchmark/runtime/fixtures/audio.wav
+  baseline_publish_report: benchmark/out/publish_report.json
+  warmup: 1
+  iters: 5
+  max_tokens: 64
+  platforms:
+    ios:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    macos:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    windows:
+      provider: dml
+    linux:
+      provider: cpu
+    android:
+      delegate: xnnpack
+models:
+  paddle_ocr_vl:
+    source_model: PaddlePaddle/PaddleOCR-VL-1.5
+    task: vlm
+    artifact_coverage: partial
+    platforms: {}
+    blocked_platforms:
+      android: Converter exited with code 134. See benchmark/artifacts/converted/paddle_ocr_vl/litert/conversion.log.
+    blocked_platform_reports:
+      android: benchmark/artifacts/converted/paddle_ocr_vl/litert/conversion_record.json
+    blocked_platform_failure_classes:
+      android: exporter_runtime_crash
+    blocked_platform_failure_reasons:
+      android: Exporter crashed due to LLVM command-line option collision.
+    blocked_platform_logs:
+      android: benchmark/artifacts/converted/paddle_ocr_vl/litert/conversion.log
+  silero_vad:
+    source_model: snakers4/silero-vad
+    task: vad
+    artifact_coverage: converted
+    platforms:
+      android:
+        engine: litert
+        artifact: benchmark/artifacts/converted/silero_vad/litert/model.tflite
+        artifact_source: converted
+        source_uri: converted://silero_vad/litert
+        converted_from: snakers4/silero-vad
+        conversion_report: benchmark/artifacts/converted/silero_vad/litert/conversion_record.json
+        unblock_platform: true
+        task: vad
+        delegate: xnnpack
+  kitten_tts:
+    source_model: KittenML/kitten-tts-nano-0.1
+    task: tts
+    artifact_coverage: partial
+    platforms: {}
+    blocked_platforms:
+      android: Converter exited with code 1. See benchmark/artifacts/converted/kitten_tts/litert/conversion.log.
+    blocked_platform_reports:
+      android: benchmark/artifacts/converted/kitten_tts/litert/conversion_record.json
+    blocked_platform_failure_classes:
+      android: onnx2tf_unsupported_operator_loop
+    blocked_platform_failure_reasons:
+      android: onnx2tf does not implement Loop op conversion.
+    blocked_platform_logs:
+      android: benchmark/artifacts/converted/kitten_tts/litert/conversion.log

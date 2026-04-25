@@ -1,0 +1,61 @@
+version: 1
+source_catalog: benchmark/runtime/hf_artifacts.yaml
+
+support_policy:
+  production_requires:
+    platforms: [ios, macos, windows, linux, android]
+
+# Generate a concrete local artifact map from Hugging Face:
+#
+#   uv run python benchmark/runtime/resolve_hf_artifacts.py \
+#     --out benchmark/runtime/artifacts.local.yaml
+#
+# The generated file contains local cache paths under
+# benchmark/artifacts/huggingface and is the file to pass to run_all.py.
+#
+# Platform-ready fallback cells expose fallback_from. For example, PaddleOCR-VL
+# currently resolves Apple through MLX while Core ML is missing. Inspect those
+# gaps with:
+#
+#   uv run python benchmark/runtime/engine_gap_report.py \
+#     --model-id paddle_ocr_vl
+#
+# If Hugging Face does not publish a directly loadable runtime artifact yet,
+# generate a converted overlay instead:
+#
+#   uv run python benchmark/runtime/convert_artifacts.py \
+#     --model-id glm4_7_flash \
+#     --engine onnx \
+#     --base-artifacts benchmark/runtime/artifacts.local.yaml \
+#     --out benchmark/runtime/artifacts.converted.yaml
+#
+# Converted cells set artifact_source: converted and unblock_platform: true, so
+# run_all.py/audit.py/promote.py can use the generated artifact while still
+# requiring the normal correctness, speed, peak-memory, and device-profile
+# verdicts before production promotion.
+
+defaults:
+  task: text
+  input_json: benchmark/runtime/fixtures/tiny_input.json
+  prompt_file: benchmark/runtime/fixtures/text_prompt.txt
+  image_file: benchmark/runtime/fixtures/image.png
+  audio_file: benchmark/runtime/fixtures/audio.wav
+  baseline_publish_report: benchmark/out/publish_report.json
+  warmup: 1
+  iters: 5
+  max_tokens: 64
+  platforms:
+    ios:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    macos:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    windows:
+      provider: dml
+    linux:
+      provider: cpu
+    android:
+      delegate: xnnpack
+
+models: {}

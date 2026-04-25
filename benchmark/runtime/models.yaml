@@ -1,0 +1,197 @@
+version: 1
+support_policy:
+  production_requires:
+    platforms: [ios, macos, windows, linux, android]
+    correctness: true
+    speed: true
+    peak_memory: true
+  thresholds:
+    min_speed_ratio: 0.90
+    max_ttft_ratio: 1.10
+    max_peak_memory_ratio: 1.10
+    min_embedding_cosine: 0.999
+    max_embedding_l2: 0.001
+    max_abs_diff: 0.0001
+    require_device_profile: true
+    required_coreml_preferred_device: ane
+
+first_wave:
+  - id: qwen2_5
+    family: Qwen2.5
+    task: text
+    source_model: Qwen/Qwen2.5-0.5B-Instruct
+    source_artifacts: huggingface
+    support_level: staging
+    coreml_llm_baseline: true
+  - id: qwen3_5
+    family: Qwen3.5
+    task: text
+    source_model: Qwen/Qwen3.5-0.8B
+    source_artifacts: huggingface
+    support_level: staging
+    coreml_llm_baseline: true
+  - id: paddle_ocr_vl
+    family: PaddleOCR-VL
+    task: vlm
+    source_model: PaddlePaddle/PaddleOCR-VL-1.5
+    source_artifacts: huggingface
+    required_fixtures: [text_prompt, image]
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/PaddleOCR-VL-1.5-8bit
+  - id: qwen3_asr
+    family: Qwen3-ASR
+    task: audio
+    source_model: Qwen/Qwen3-ASR-0.6B
+    source_artifacts: huggingface
+    required_fixtures: [audio]
+    support_level: staging
+    coreml_llm_baseline: false
+  - id: kitten_tts
+    family: KittenTTS
+    task: tts
+    source_model: KittenML/kitten-tts-nano-0.1
+    source_artifacts: huggingface
+    required_fixtures: [text_prompt]
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/kitten-tts-nano-0.8-6bit
+  - id: silero_vad
+    family: Silero VAD
+    task: vad
+    source_model: snakers4/silero-vad
+    source_artifacts: huggingface
+    required_fixtures: [audio]
+    support_level: staging
+    coreml_llm_baseline: false
+  - id: qwen3_vl
+    family: Qwen3-VL
+    task: vlm
+    source_model: Qwen/Qwen3-VL-2B-Instruct
+    source_artifacts: huggingface
+    required_fixtures: [text_prompt, image]
+    support_level: staging
+    coreml_llm_baseline: true
+  - id: gemma4
+    family: Gemma 4
+    task: text
+    source_model: google/gemma-4-E2B-it
+    source_artifacts: huggingface
+    support_level: staging
+    coreml_llm_baseline: true
+  - id: function_gemma
+    family: FunctionGemma
+    task: function
+    source_model: google/functiongemma-270m-it
+    source_artifacts: huggingface
+    required_fixtures: [text_prompt, tool_schema]
+    support_level: staging
+    coreml_llm_baseline: true
+  - id: embedding_gemma
+    family: EmbeddingGemma
+    task: embedding
+    source_model: google/embeddinggemma-300m
+    source_artifacts: huggingface
+    required_fixtures: [embedding_query]
+    support_level: staging
+    coreml_llm_baseline: true
+  - id: qwen3_5_27b_dwq
+    family: Qwen3.5 27B DWQ
+    task: text
+    source_model: Qwen/Qwen3.5-27B
+    source_artifacts: huggingface
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/Qwen3.5-27B-4bit-DWQ
+    artifact_coverage: partial
+    migrated_platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+  - id: translategemma_27b_it
+    family: TranslateGemma 27B IT
+    task: text
+    source_model: google/translategemma-27b-it
+    source_artifacts: huggingface
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/translategemma-27b-it-4bit
+    artifact_coverage: partial
+    migrated_platforms: [ios, macos, android]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+  - id: nemotron3_nano_30b
+    family: NVIDIA Nemotron 3 Nano 30B A3B
+    task: text
+    source_model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+    source_artifacts: huggingface
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit
+    artifact_coverage: partial
+    migrated_platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+  - id: glm4_7_flash
+    family: GLM-4.7-Flash
+    task: text
+    source_model: zai-org/GLM-4.7-Flash
+    source_artifacts: huggingface
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/GLM-4.7-Flash-4bit
+    artifact_coverage: partial
+    migrated_platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+  - id: minicpm_o_4_5
+    family: MiniCPM-o 4.5
+    task: vlm
+    source_model: openbmb/MiniCPM-o-4_5
+    source_artifacts: huggingface
+    required_fixtures: [text_prompt, image, audio]
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/MiniCPM-o-4_5-4bit
+    artifact_coverage: partial
+    migrated_platforms: [ios, macos]
+    blocked_platforms:
+      windows: Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.
+      linux: Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.
+      android: No directly loadable LiteRT artifact found on Hugging Face; only non-LiteRT component sidecars were found.
+  - id: gemma_sea_lion_v4_4b_vl
+    family: Gemma SEA-LION v4 4B VL
+    task: vlm
+    source_model: aisingapore/Gemma-SEA-LION-v4-4B-VL
+    source_artifacts: huggingface
+    required_fixtures: [text_prompt, image]
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit
+    artifact_coverage: partial
+    migrated_platforms: [ios, macos]
+    blocked_platforms:
+      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
+      android: No directly loadable LiteRT artifact found on Hugging Face.
+  - id: ming_omni_tts_0_5b
+    family: Ming-omni TTS 0.5B
+    task: tts
+    source_model: inclusionAI/Ming-omni-tts-0.5B
+    source_artifacts: huggingface
+    required_fixtures: [text_prompt]
+    support_level: staging
+    coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/Ming-omni-tts-0.5B-4bit
+    artifact_coverage: partial
+    migrated_platforms: [ios, macos]
+    blocked_platforms:
+      windows: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.
+      linux: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.
+      android: No directly loadable LiteRT artifact found on Hugging Face; only campplus.onnx component sidecar was found.

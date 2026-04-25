@@ -1,0 +1,507 @@
+version: 1
+output_root: benchmark/artifacts/converted
+tools_root: benchmark/artifacts/tools
+source_artifact_catalog: benchmark/runtime/hf_artifacts.yaml
+
+presets:
+  coreml_coremlllm:
+    engine: coreml
+    exporter: coreml-llm
+    tool_repo: https://github.com/john-rocky/CoreML-LLM.git
+    tool_name: coreml-llm
+    platforms: [ios, macos]
+    context_length: 2048
+    quantize: int4
+    command:
+      - uv
+      - run
+      - --with-requirements
+      - "{tool_dir}/conversion/requirements.txt"
+      - python
+      - "{tool_dir}/conversion/convert.py"
+      - --model
+      - "{source_model}"
+      - --context-length
+      - "{context_length}"
+      - --quantize
+      - "{quantize}"
+      - --output
+      - "{output_dir}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/*.mlmodelc"
+      - "*.mlmodelc"
+      - "**/*.mlpackage"
+      - "*.mlpackage"
+
+  coreml_paddleocr_vl:
+    engine: coreml
+    exporter: coremltools-paddleocr-vl
+    platforms: [ios, macos]
+    sequence_length: 160
+    command:
+      - uv
+      - run
+      - --group
+      - coreml-convert
+      - --with
+      - transformers==4.55.0
+      - python
+      - benchmark/runtime/converters/paddleocr_vl_coreml.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --prompt-file
+      - benchmark/runtime/fixtures/text_prompt.txt
+      - --image-file
+      - benchmark/runtime/fixtures/image.png
+      - --sequence-length
+      - "{sequence_length}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "pipeline.json"
+      - "**/pipeline.json"
+      - "*.mlpackage"
+      - "**/*.mlpackage"
+
+  onnx_text_generation:
+    engine: onnx
+    exporter: optimum-cli
+    export_task: text-generation-with-past
+    opset: 18
+    platforms: [windows, linux]
+    provider_by_platform:
+      windows: dml
+      linux: cpu
+    command:
+      - uv
+      - run
+      - --group
+      - onnx-convert
+      - --with
+      - "transformers<5"
+      - --with
+      - "torch>=2.11.0"
+      - --with
+      - "torchvision>=0.26.0"
+      - optimum-cli
+      - export
+      - onnx
+      - --model
+      - "{source_model}"
+      - --task
+      - "{export_task}"
+      - --opset
+      - "{opset}"
+      - "{extra_args}"
+      - "{output_dir}"
+    artifact_candidates:
+      - "**/decoder_model_merged*.onnx"
+      - "decoder_model_merged*.onnx"
+      - "**/model*.onnx"
+      - "model*.onnx"
+      - "**/*.onnx"
+      - "*.onnx"
+
+  onnx_vlm:
+    engine: onnx
+    exporter: optimum-cli
+    export_task: image-to-text
+    opset: 18
+    platforms: [windows, linux]
+    provider_by_platform:
+      windows: dml
+      linux: cpu
+    command:
+      - uv
+      - run
+      - --group
+      - onnx-convert
+      - --with
+      - "transformers<5"
+      - --with
+      - "torch>=2.11.0"
+      - --with
+      - "torchvision>=0.26.0"
+      - optimum-cli
+      - export
+      - onnx
+      - --model
+      - "{source_model}"
+      - --task
+      - "{export_task}"
+      - --opset
+      - "{opset}"
+      - "{extra_args}"
+      - "{output_dir}"
+    artifact_candidates:
+      - "**/decoder_model_merged*.onnx"
+      - "decoder_model_merged*.onnx"
+      - "**/model*.onnx"
+      - "model*.onnx"
+      - "**/*.onnx"
+      - "*.onnx"
+
+  onnx_text_to_audio:
+    engine: onnx
+    exporter: optimum-cli
+    export_task: text-to-audio
+    opset: 18
+    platforms: [windows, linux]
+    provider_by_platform:
+      windows: dml
+      linux: cpu
+    command:
+      - uv
+      - run
+      - --group
+      - onnx-convert
+      - --with
+      - "transformers<5"
+      - --with
+      - "torch>=2.11.0"
+      - --with
+      - "torchvision>=0.26.0"
+      - optimum-cli
+      - export
+      - onnx
+      - --model
+      - "{source_model}"
+      - --task
+      - "{export_task}"
+      - --opset
+      - "{opset}"
+      - "{extra_args}"
+      - "{output_dir}"
+    artifact_candidates:
+      - "**/model*.onnx"
+      - "model*.onnx"
+      - "**/*.onnx"
+      - "*.onnx"
+
+  litert_hf_text_generation:
+    engine: litert
+    exporter: litert-torch
+    litert_task: text_generation
+    platforms: [android]
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - litert-convert
+      - python
+      - benchmark/runtime/converters/litert_hf_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{litert_task}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/*.litertlm"
+      - "*.litertlm"
+      - "**/*.tflite"
+      - "*.tflite"
+      - "**/*.task"
+      - "*.task"
+
+  litert_hf_vlm:
+    engine: litert
+    exporter: litert-torch
+    litert_task: image_text_to_text
+    platforms: [android]
+    timeout_seconds: 10800
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - litert-convert
+      - python
+      - benchmark/runtime/converters/litert_hf_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{litert_task}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/*.litertlm"
+      - "*.litertlm"
+      - "**/*.tflite"
+      - "*.tflite"
+      - "**/*.task"
+      - "*.task"
+
+  litert_hf_vlm_legacy_transformers:
+    engine: litert
+    exporter: litert-torch
+    litert_task: image_text_to_text
+    platforms: [android]
+    timeout_seconds: 10800
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - litert-convert
+      - --with
+      - transformers==4.55.0
+      - python
+      - benchmark/runtime/converters/litert_hf_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{litert_task}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/*.litertlm"
+      - "*.litertlm"
+      - "**/*.tflite"
+      - "*.tflite"
+      - "**/*.task"
+      - "*.task"
+
+  litert_hf_text_to_audio:
+    engine: litert
+    exporter: litert-torch
+    litert_task: text_to_audio
+    platforms: [android]
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - litert-convert
+      - python
+      - benchmark/runtime/converters/litert_hf_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{litert_task}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/*.litertlm"
+      - "*.litertlm"
+      - "**/*.tflite"
+      - "*.tflite"
+      - "**/*.task"
+      - "*.task"
+
+  litert_onnx2tf:
+    engine: litert
+    exporter: onnx2tf
+    platforms: [android]
+    timeout_seconds: 7200
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - onnx2tf-convert
+      - python
+      - benchmark/runtime/converters/onnx_to_litert.py
+      - --repo
+      - "{onnx_repo}"
+      - --artifact
+      - "{onnx_artifact}"
+      - --output-dir
+      - "{output_dir}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "model.tflite"
+      - "**/*.tflite"
+
+models:
+  paddle_ocr_vl:
+    source_model: PaddlePaddle/PaddleOCR-VL-1.5
+    task: vlm
+    recipes:
+      coreml:
+        preset: coreml_paddleocr_vl
+        extra_args: [--trust-remote-code]
+      litert:
+        preset: litert_hf_vlm_legacy_transformers
+        extra_args:
+          - --trust-remote-code
+          - --auto-model-override
+          - AutoModelForCausalLM
+          - --bundle-litert-lm
+          - --export-vision-encoder
+          - --prefill-lengths
+          - "64,128"
+          - --cache-length
+          - "1024"
+
+  qwen3_vl:
+    source_model: Qwen/Qwen3-VL-2B-Instruct
+    task: vlm
+    recipes:
+      litert:
+        preset: litert_hf_vlm
+        extra_args:
+          - --trust-remote-code
+          - --bundle-litert-lm
+          - --export-vision-encoder
+          - --prefill-lengths
+          - "64,128"
+          - --cache-length
+          - "1024"
+
+  silero_vad:
+    source_model: snakers4/silero-vad
+    task: vad
+    recipes:
+      litert:
+        preset: litert_onnx2tf
+        onnx_repo: onnx-community/silero-vad
+        onnx_artifact: onnx/model.onnx
+        extra_args:
+          - --source-candidate
+          - runanywhere/silero-vad-v5::silero_vad.onnx
+          - --source-candidate
+          - istupakov/silero-vad-onnx::silero_vad_16k_op15.onnx
+          - --source-candidate
+          - istupakov/silero-vad-onnx::silero_vad_op18_ifless.onnx
+
+  kitten_tts:
+    source_model: KittenML/kitten-tts-nano-0.1
+    task: tts
+    recipes:
+      litert:
+        preset: litert_onnx2tf
+        onnx_repo: onnx-community/KittenTTS-Mini-v0.8-ONNX
+        onnx_artifact: onnx/model.onnx
+        extra_args:
+          - --source-candidate
+          - KittenML/kitten-tts-nano-0.1::kitten_tts_nano_v0_1.onnx
+          - --source-candidate
+          - KittenML/kitten-tts-micro-0.8::kitten_tts_micro_v0_8.onnx
+
+  qwen3_5_27b_dwq:
+    source_model: Qwen/Qwen3.5-27B
+    task: text
+    recipes:
+      coreml:
+        preset: coreml_coremlllm
+      onnx:
+        preset: onnx_text_generation
+      litert:
+        preset: litert_hf_text_generation
+        extra_args:
+          - --bundle-litert-lm
+          - --prefill-lengths
+          - "64,128"
+          - --cache-length
+          - "1024"
+
+  translategemma_27b_it:
+    source_model: google/translategemma-27b-it
+    task: text
+    recipes:
+      coreml:
+        preset: coreml_coremlllm
+      onnx:
+        preset: onnx_text_generation
+
+  nemotron3_nano_30b:
+    source_model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+    task: text
+    recipes:
+      coreml:
+        preset: coreml_coremlllm
+      onnx:
+        preset: onnx_text_generation
+        extra_args: [--trust-remote-code]
+      litert:
+        preset: litert_hf_text_generation
+        extra_args:
+          - --trust-remote-code
+          - --bundle-litert-lm
+          - --prefill-lengths
+          - "64,128"
+          - --cache-length
+          - "1024"
+
+  glm4_7_flash:
+    source_model: zai-org/GLM-4.7-Flash
+    task: text
+    recipes:
+      coreml:
+        preset: coreml_coremlllm
+      onnx:
+        preset: onnx_text_generation
+        extra_args: [--trust-remote-code]
+      litert:
+        preset: litert_hf_text_generation
+        extra_args:
+          - --trust-remote-code
+          - --bundle-litert-lm
+          - --prefill-lengths
+          - "64,128"
+          - --cache-length
+          - "1024"
+
+  minicpm_o_4_5:
+    source_model: openbmb/MiniCPM-o-4_5
+    task: vlm
+    recipes:
+      onnx:
+        preset: onnx_vlm
+        extra_args: [--trust-remote-code]
+      litert:
+        preset: litert_hf_vlm
+        extra_args:
+          - --trust-remote-code
+          - --bundle-litert-lm
+          - --export-vision-encoder
+          - --prefill-lengths
+          - "64,128"
+          - --cache-length
+          - "1024"
+
+  gemma_sea_lion_v4_4b_vl:
+    source_model: aisingapore/Gemma-SEA-LION-v4-4B-VL
+    task: vlm
+    recipes:
+      coreml:
+        preset: coreml_coremlllm
+      onnx:
+        preset: onnx_vlm
+        extra_args: [--trust-remote-code]
+      litert:
+        preset: litert_hf_vlm
+        extra_args:
+          - --trust-remote-code
+          - --bundle-litert-lm
+          - --export-vision-encoder
+          - --prefill-lengths
+          - "64,128"
+          - --cache-length
+          - "1024"
+
+  ming_omni_tts_0_5b:
+    source_model: inclusionAI/Ming-omni-tts-0.5B
+    task: tts
+    recipes:
+      onnx:
+        preset: onnx_text_to_audio
+        extra_args: [--trust-remote-code]
+      litert:
+        preset: litert_hf_text_to_audio
+        extra_args:
+          - --trust-remote-code
+          - --bundle-litert-lm

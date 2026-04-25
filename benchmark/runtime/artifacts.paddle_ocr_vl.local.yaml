@@ -1,0 +1,101 @@
+version: 1
+source_catalog: benchmark/runtime/hf_artifacts.yaml
+cache_root: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface
+defaults:
+  task: text
+  input_json: benchmark/runtime/fixtures/tiny_input.json
+  prompt_file: benchmark/runtime/fixtures/text_prompt.txt
+  image_file: benchmark/runtime/fixtures/image.png
+  audio_file: benchmark/runtime/fixtures/audio.wav
+  baseline_publish_report: benchmark/out/publish_report.json
+  warmup: 1
+  iters: 5
+  max_tokens: 64
+  platforms:
+    ios:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    macos:
+      baseline_engine: coreml-llm
+      coreml_mode: decode
+    windows:
+      provider: dml
+    linux:
+      provider: cpu
+    android:
+      delegate: xnnpack
+models:
+  paddle_ocr_vl:
+    family: PaddleOCR-VL
+    source_model: PaddlePaddle/PaddleOCR-VL-1.5
+    task: vlm
+    required_fixtures:
+    - text_prompt
+    - image
+    platforms:
+      android:
+        engine: onnx
+        artifact: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/_pipelines/lbm364dl_PaddleOCR-VL-1.5-ONNX/onnx_decoder_model_merged.onnx.pipeline.json
+        source_uri: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        delegate: xnnpack
+        fallback_from:
+        - litert
+        component_artifacts: &id001
+          embed_tokens: onnx/embed_tokens.onnx
+          vision_encoder: onnx/vision_encoder.onnx
+          decoder: onnx/decoder_model_merged.onnx
+        pipeline: &id002
+          format: dart_mlx_ffi.onnx_pipeline.v1
+          stages:
+          - name: embed_tokens
+            model: '{component:embed_tokens}'
+            outputs:
+              inputs_embeds: text_inputs_embeds
+          - name: vision_encoder
+            model: '{component:vision_encoder}'
+            outputs:
+              image_embeds: image_embeds
+          - name: merge_image_embeds
+            op: scatter_embeddings
+            inputs:
+              base: text_inputs_embeds
+              updates: image_embeds
+              indices: image_token_indices
+            outputs:
+              output: inputs_embeds
+          - name: decoder
+            model: '{component:decoder}'
+          outputs:
+          - logits
+        component_artifacts_resolved:
+          embed_tokens: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/embed_tokens.onnx
+          vision_encoder: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/vision_encoder.onnx
+          decoder: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/decoder_model_merged.onnx
+        task: vlm
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/_pipelines/lbm364dl_PaddleOCR-VL-1.5-ONNX/onnx_decoder_model_merged.onnx.pipeline.json
+        source_uri: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        provider: cpu
+        component_artifacts: *id001
+        pipeline: *id002
+        component_artifacts_resolved:
+          embed_tokens: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/embed_tokens.onnx
+          vision_encoder: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/vision_encoder.onnx
+          decoder: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/decoder_model_merged.onnx
+        task: vlm
+        baseline_engine: onnx
+      windows:
+        engine: onnx
+        artifact: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/_pipelines/lbm364dl_PaddleOCR-VL-1.5-ONNX/onnx_decoder_model_merged.onnx.pipeline.json
+        source_uri: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        provider: dml
+        component_artifacts: *id001
+        pipeline: *id002
+        component_artifacts_resolved:
+          embed_tokens: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/embed_tokens.onnx
+          vision_encoder: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/vision_encoder.onnx
+          decoder: /Users/binbinsh/Projects/Personal/dart-mlx-ffi/benchmark/artifacts/huggingface/models--lbm364dl--PaddleOCR-VL-1.5-ONNX/snapshots/213c67b21d0a26d4a5eb364fb20fab55cee2dbff/onnx/decoder_model_merged.onnx
+        task: vlm
+        baseline_engine: onnx

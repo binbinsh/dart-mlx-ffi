@@ -12,6 +12,7 @@ dependencies = [
   "phonemizer-fork>=3.3.2",
   "pillow>=10.3.0",
   "pydantic>=2.0.0",
+  "pyyaml>=6.0.2",
   "requests>=2.31.0",
   "safetensors>=0.4.3",
   "soundfile>=0.13.1",
@@ -21,3 +22,39 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+gguf-tools = [
+    "gguf>=0.18.0",
+]
+coreml-convert = [
+    "accelerate>=1.13.0",
+    "coremltools>=9.0",
+    "einops>=0.8.1",
+    "sentencepiece>=0.2.1",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+]
+litert-convert = [
+    "litert-torch>=0.8.0",
+    "sentencepiece>=0.2.1",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+]
+onnx2tf-convert = [
+    "onnx2tf>=1.28.3",
+    "onnx-graphsurgeon>=0.5.8",
+    "onnxsim>=0.4.36",
+    "sng4onnx>=1.0.4",
+    "tensorflow>=2.20.0",
+    "tf-keras>=2.20.0",
+]
+onnx-convert = [
+    "accelerate>=1.13.0",
+    "onnx>=1.21.0",
+    "onnxruntime>=1.25.0",
+    "optimum[onnxruntime]>=1.17.1",
+]
+vlm-prepare = [
+    "torchvision>=0.24.0",
+]

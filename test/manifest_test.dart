@@ -9,9 +9,9 @@ import 'package:dart_mlx_ffi/models.dart';
 
 void main() {
   group('ModelManifest', () {
-    test('builtIn contains all 6 model families', () {
+    test('builtIn contains all runtime model families', () {
       final manifest = ModelManifest.builtIn();
-      expect(manifest.models.length, 6);
+      expect(manifest.models.length, 17);
 
       final ids = manifest.models.map((m) => m.id).toSet();
       expect(
@@ -23,6 +23,17 @@ void main() {
           'qwen3_asr',
           'kitten_tts',
           'silero_vad',
+          'qwen3_vl',
+          'gemma4',
+          'function_gemma',
+          'embedding_gemma',
+          'qwen3_5_27b_dwq',
+          'translategemma_27b_it',
+          'nemotron3_nano_30b',
+          'glm4_7_flash',
+          'minicpm_o_4_5',
+          'gemma_sea_lion_v4_4b_vl',
+          'ming_omni_tts_0_5b',
         ]),
       );
     });
@@ -46,12 +57,16 @@ void main() {
       expect(textGen.length, greaterThanOrEqualTo(2)); // qwen2_5, qwen3_5
 
       final stt = manifest.byModality(ModelModality.speechToText);
-      expect(stt.length, 1);
-      expect(stt.first.id, 'qwen3_asr');
+      expect(
+        stt.map((model) => model.id),
+        containsAll(['qwen3_asr', 'minicpm_o_4_5']),
+      );
 
       final tts = manifest.byModality(ModelModality.textToSpeech);
-      expect(tts.length, 1);
-      expect(tts.first.id, 'kitten_tts');
+      expect(
+        tts.map((model) => model.id),
+        containsAll(['kitten_tts', 'ming_omni_tts_0_5b']),
+      );
 
       final vad = manifest.byModality(ModelModality.voiceActivityDetection);
       expect(vad.length, 1);
@@ -86,6 +101,58 @@ void main() {
       expect(json['models'], isList);
     });
 
+    test('builtIn models default to staging until full matrix passes', () {
+      final manifest = ModelManifest.builtIn();
+      expect(manifest.bySupportLevel(SupportLevel.staging), hasLength(17));
+      expect(manifest.productionModels, isEmpty);
+    });
+
+    test('builtIn artifacts use Hugging Face sources without placeholders', () {
+      final manifest = ModelManifest.builtIn();
+      for (final spec in manifest.models) {
+        expect(spec.platformArtifacts, isNotEmpty, reason: spec.id);
+        for (final artifact in spec.platformArtifacts.values) {
+          expect(artifact.path, startsWith('hf://'), reason: spec.id);
+          expect(artifact.sourceUri, artifact.path, reason: spec.id);
+          expect(artifact.metadata['source'], 'huggingface', reason: spec.id);
+          expect(artifact.path, isNot(contains('/absolute/path')));
+          expect(artifact.path, isNot(contains('C:/models')));
+          expect(artifact.path, isNot(contains('/models/')));
+        }
+      }
+    });
+
+    test(
+      'builtIn artifacts cover production target platforms or record blockers',
+      () {
+        const requiredPlatforms = {
+          'ios',
+          'macos',
+          'windows',
+          'linux',
+          'android',
+        };
+        final manifest = ModelManifest.builtIn();
+        for (final spec in manifest.models) {
+          final covered = <String>{};
+          for (final artifact in spec.platformArtifacts.values) {
+            covered.addAll(artifact.targetPlatforms);
+          }
+          final missing = requiredPlatforms.difference(covered);
+          if (missing.isEmpty) {
+            continue;
+          }
+          final migration = spec.metadata['runtimeMigration'];
+          expect(migration, isA<Map>(), reason: spec.id);
+          final migrationMap = (migration as Map).cast<String, Object?>();
+          expect(migrationMap['status'], 'partial', reason: spec.id);
+          final blockers = (migrationMap['blockedPlatforms'] as Map)
+              .cast<String, Object?>();
+          expect(blockers.keys, containsAll(missing), reason: spec.id);
+        }
+      },
+    );
+
     test('fromJson with minimal spec', () {
       final json = {
         'version': 1,
@@ -101,6 +168,36 @@ void main() {
       expect(manifest.models.length, 1);
       expect(manifest.models.first.id, 'test');
       expect(manifest.models.first.requiredFiles, ['config.json']);
+      expect(manifest.models.first.supportLevel, SupportLevel.staging);
+    });
+
+    test('applies runtime promotion patch', () {
+      final manifest = ModelManifest.builtIn().withRuntimeValidation({
+        'version': 1,
+        'models': [
+          {
+            'id': 'qwen3_5',
+            'supportLevel': 'production',
+            'validationStatus': {
+              'macos': {
+                'platform': 'macos',
+                'engine': 'coreml',
+                'correctnessPassed': true,
+                'speedPassed': true,
+                'peakMemoryPassed': true,
+                'deviceProfilePassed': true,
+                'peakMemoryRatio': 1.05,
+              },
+            },
+          },
+        ],
+      });
+
+      final promoted = manifest['qwen3_5']!;
+      expect(promoted.supportLevel, SupportLevel.production);
+      expect(promoted.validationStatus['macos']?.engine, RuntimeEngine.coreml);
+      expect(promoted.validationStatus['macos']?.passed, isTrue);
+      expect(manifest.productionModels.map((model) => model.id), ['qwen3_5']);
     });
   });
 }

@@ -26,6 +26,8 @@ migrate_working_dir/
 # https://dart.dev/guides/libraries/private-files#pubspeclock.
 /pubspec.lock
 .dart_tool/
+.claude/
+.dart_mlx_runtime_env.json
 .flutter-plugins-dependencies
 /coverage/
 **/doc/api/
@@ -39,9 +41,10 @@ __pycache__/
 .ruff_cache/
 
 # Benchmark outputs
-/benchmark/out/
-/output/
-/tmp/
+/benchmark/out
+/benchmark/artifacts
+/output
+/tmp
 /vendors/
 
 # Native build outputs

@@ -3,6 +3,7 @@ library;
 // ── Shared abstractions ──
 export 'src/models/shared/model_spec.dart';
 export 'src/models/shared/manifest.dart';
+export 'src/models/shared/runtime_metadata.dart';
 export 'src/models/shared/cache.dart';
 export 'src/models/shared/session.dart';
 export 'src/models/shared/tuning.dart';

@@ -9,6 +9,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'runtime_metadata.dart';
+
 // ---------------------------------------------------------------------------
 // Model capabilities
 // ---------------------------------------------------------------------------
@@ -67,6 +69,9 @@ final class ModelSpec {
     this.requiredTags = const <String>[],
     this.sizeHint,
     this.metadata = const <String, Object?>{},
+    this.supportLevel = SupportLevel.staging,
+    this.platformArtifacts = const <RuntimeEngine, RuntimeArtifact>{},
+    this.validationStatus = const <String, RuntimeValidationStatus>{},
   });
 
   /// Machine-readable identifier, e.g. `qwen3_5`, `paddle_ocr_vl`.
@@ -104,6 +109,66 @@ final class ModelSpec {
   /// Arbitrary extra metadata for tooling / manifests.
   final Map<String, Object?> metadata;
 
+  /// Stability level for default model discovery and runtime selection.
+  final SupportLevel supportLevel;
+
+  /// Runtime artifacts keyed by engine.
+  final Map<RuntimeEngine, RuntimeArtifact> platformArtifacts;
+
+  /// Validation evidence keyed by platform name.
+  final Map<String, RuntimeValidationStatus> validationStatus;
+
+  /// Whether this spec has complete production evidence for the target set.
+  bool hasProductionValidation({
+    Set<String> requiredPlatforms = const {
+      'ios',
+      'macos',
+      'windows',
+      'linux',
+      'android',
+    },
+  }) {
+    if (supportLevel != SupportLevel.production) return false;
+    for (final platform in requiredPlatforms) {
+      final status = validationStatus[platform];
+      if (status == null || !status.passed) return false;
+    }
+    return true;
+  }
+
+  /// Return a copy with selected manifest/runtime metadata replaced.
+  ModelSpec copyWith({
+    String? id,
+    String? family,
+    List<ModelModality>? modalities,
+    String? description,
+    String? version,
+    List<String>? requiredFiles,
+    List<String>? optionalFiles,
+    List<String>? requiredTags,
+    int? sizeHint,
+    Map<String, Object?>? metadata,
+    SupportLevel? supportLevel,
+    Map<RuntimeEngine, RuntimeArtifact>? platformArtifacts,
+    Map<String, RuntimeValidationStatus>? validationStatus,
+  }) {
+    return ModelSpec(
+      id: id ?? this.id,
+      family: family ?? this.family,
+      modalities: modalities ?? this.modalities,
+      description: description ?? this.description,
+      version: version ?? this.version,
+      requiredFiles: requiredFiles ?? this.requiredFiles,
+      optionalFiles: optionalFiles ?? this.optionalFiles,
+      requiredTags: requiredTags ?? this.requiredTags,
+      sizeHint: sizeHint ?? this.sizeHint,
+      metadata: metadata ?? this.metadata,
+      supportLevel: supportLevel ?? this.supportLevel,
+      platformArtifacts: platformArtifacts ?? this.platformArtifacts,
+      validationStatus: validationStatus ?? this.validationStatus,
+    );
+  }
+
   /// Serialise to a JSON-friendly map.
   Map<String, Object?> toJson() => {
     'id': id,
@@ -116,6 +181,15 @@ final class ModelSpec {
     if (requiredTags.isNotEmpty) 'requiredTags': requiredTags,
     if (sizeHint != null) 'sizeHint': sizeHint,
     if (metadata.isNotEmpty) 'metadata': metadata,
+    'supportLevel': supportLevel.name,
+    if (platformArtifacts.isNotEmpty)
+      'platformArtifacts': platformArtifacts.map(
+        (engine, artifact) => MapEntry(engine.name, artifact.toJson()),
+      ),
+    if (validationStatus.isNotEmpty)
+      'validationStatus': validationStatus.map(
+        (platform, status) => MapEntry(platform, status.toJson()),
+      ),
   };
 
   @override
