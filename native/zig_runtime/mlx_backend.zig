@@ -233,6 +233,8 @@ pub fn sessionDiagnosticsJson(
             .has_config = session.metadata.config_path != null,
             .has_tokenizer = session.metadata.tokenizer_path != null,
             .has_generation_config = session.metadata.generation_config_path != null,
+            .has_inputs_json = session.metadata.inputs_json_path != null,
+            .input_order = session.metadata.input_names,
             .model_type = session.metadata.model_type,
             .architecture = session.metadata.architecture,
             .quantization_mode = session.metadata.quantization_mode,
@@ -411,6 +413,7 @@ pub const ExecutionError = mlx_output.OutputError || error{
     WeightsUnavailable,
     FunctionUnavailable,
     InvalidInput,
+    MissingInput,
     MissingWeight,
     UnsupportedArchitecture,
     ExecutorNotImplemented,
@@ -444,6 +447,7 @@ pub fn executionErrorMessage(err: ExecutionError) []const u8 {
         error.WeightsUnavailable => "Zig-owned MLX backend has no loaded weight maps for execution.",
         error.FunctionUnavailable => "Zig-owned MLX backend has no loaded imported function for execution.",
         error.InvalidInput => "Zig-owned MLX backend received no usable executor input.",
+        error.MissingInput => "Zig-owned MLX backend could not match runtime inputs to the imported function input order.",
         error.MissingWeight => "Zig-owned MLX backend could not find a required executor weight.",
         error.UnsupportedArchitecture => "Zig-owned MLX backend could not identify a supported model architecture.",
         error.ExecutorNotImplemented => "Zig-owned MLX backend has not registered an executor for this model architecture yet.",
@@ -492,7 +496,10 @@ fn executeImportedFunction(
         return error.FunctionUnavailable;
     }
 
-    const args = native.mlx_vector_array_new_data(batch.arrays.ptr, batch.arrays.len);
+    const ordered = try orderedFunctionArgs(allocator, session, batch);
+    defer ordered.deinit(allocator);
+
+    const args = native.mlx_vector_array_new_data(ordered.arrays.ptr, ordered.arrays.len);
     if (args.ctx == null) {
         return error.MlxCallFailed;
     }
@@ -529,6 +536,50 @@ fn executeImportedFunction(
         tensors[produced] = try mlx_output.materializeArray(allocator, name, output);
     }
     return .{ .allocator = allocator, .tensors = tensors };
+}
+
+const FunctionArgs = struct {
+    arrays: []const MlxArray,
+    owned: bool,
+
+    fn deinit(self: FunctionArgs, allocator: std.mem.Allocator) void {
+        if (self.owned) {
+            allocator.free(self.arrays);
+        }
+    }
+};
+
+fn orderedFunctionArgs(
+    allocator: std.mem.Allocator,
+    session: *const Session,
+    batch: InputBatch,
+) ExecutionError!FunctionArgs {
+    const input_names = session.metadata.input_names orelse {
+        return .{ .arrays = batch.arrays, .owned = false };
+    };
+    if (input_names.len == 0) {
+        return .{ .arrays = batch.arrays, .owned = false };
+    }
+    if (input_names.len != batch.arrays.len or batch.names.len != batch.arrays.len) {
+        return error.MissingInput;
+    }
+
+    const arrays = allocator.alloc(MlxArray, input_names.len) catch return error.OutOfMemory;
+    errdefer allocator.free(arrays);
+    for (input_names, 0..) |name, index| {
+        const input_index = findInputIndex(batch.names, name) orelse return error.MissingInput;
+        arrays[index] = batch.arrays[input_index];
+    }
+    return .{ .arrays = arrays, .owned = true };
+}
+
+fn findInputIndex(names: []const []const u8, wanted: []const u8) ?usize {
+    for (names, 0..) |name, index| {
+        if (std.mem.eql(u8, name, wanted)) {
+            return index;
+        }
+    }
+    return null;
 }
 
 fn outputName(allocator: std.mem.Allocator, index: usize, count: usize) ExecutionError![]u8 {
@@ -617,4 +668,42 @@ test "MLX status remains Zig-owned" {
     try std.testing.expectEqualStrings("zig", owner);
     try std.testing.expectEqualStrings("mlx-c", api);
     try std.testing.expectEqual(linked, enabled);
+}
+
+test "MLX imported function arguments follow parsed input order" {
+    const allocator = std.testing.allocator;
+    var input_names = try allocator.alloc([]u8, 2);
+    input_names[0] = try allocator.dupe(u8, "input_ids");
+    input_names[1] = try allocator.dupe(u8, "pixel_values");
+    var metadata = ModelMetadata.empty();
+    metadata.input_names = input_names;
+    defer metadata.deinit(allocator);
+
+    var arrays = [_]MlxArray{
+        .{ .ctx = @ptrFromInt(0x11) },
+        .{ .ctx = @ptrFromInt(0x22) },
+    };
+    var names = [_][]const u8{ "pixel_values", "input_ids" };
+    const batch = InputBatch{
+        .allocator = allocator,
+        .names = names[0..],
+        .arrays = arrays[0..],
+    };
+    const session = Session{
+        .allocator = allocator,
+        .model_path = &.{},
+        .primary_artifact_path = &.{},
+        .function_path = null,
+        .weight_paths = &.{},
+        .artifact_kind = .directory_mlx_function,
+        .weight_file_count = 0,
+        .weights = Weights.empty(),
+        .imported_function = .{ .ctx = null },
+        .metadata = metadata,
+    };
+
+    const ordered = try orderedFunctionArgs(allocator, &session, batch);
+    defer ordered.deinit(allocator);
+    try std.testing.expectEqual(arrays[1].ctx, ordered.arrays[0].ctx);
+    try std.testing.expectEqual(arrays[0].ctx, ordered.arrays[1].ctx);
 }

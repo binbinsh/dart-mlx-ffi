@@ -71,6 +71,7 @@ def main() -> None:
     sample_inputs_json_path.write_text(
         json.dumps(
             {
+                "input_order": ["input_ids"],
                 "inputs": {
                     "input_ids": {
                         "dtype": "int32",

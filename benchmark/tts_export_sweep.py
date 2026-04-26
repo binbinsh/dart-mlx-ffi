@@ -56,8 +56,13 @@ def export_model(model_id: str, export_dir: Path):
     input_path = export_dir / "inputs.safetensors"
     input_names = ["x", "t", "c", "latent_history"]
     input_names_path = export_dir / "input_names.json"
+    inputs_json_path = export_dir / "inputs.json"
     if export_path.exists() and input_path.exists() and input_names_path.exists():
         cached_names = json.loads(input_names_path.read_text(encoding="utf-8"))
+        inputs_json_path.write_text(
+            json.dumps({"input_order": cached_names}),
+            encoding="utf-8",
+        )
         return export_path, input_path, cached_names
 
     model_path = resolve_model_path(model_id, get_model_path)
@@ -83,6 +88,7 @@ def export_model(model_id: str, export_dir: Path):
     )
     mx.save_safetensors(str(input_path), {name: inputs[name] for name in input_names})
     input_names_path.write_text(json.dumps(input_names), encoding="utf-8")
+    inputs_json_path.write_text(json.dumps({"input_order": input_names}), encoding="utf-8")
     cleanup_mlx(mx)
     return export_path, input_path, input_names
 

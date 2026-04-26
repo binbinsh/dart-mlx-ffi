@@ -153,7 +153,10 @@ def _write_runtime_input_json(
             "shape": [int(dim) for dim in array.shape],
             "values": array.reshape([-1]).tolist(),
         }
-    output_path.write_text(json.dumps({"inputs": inputs}), encoding="utf-8")
+    output_path.write_text(
+        json.dumps({"input_order": names, "inputs": inputs}),
+        encoding="utf-8",
+    )
 
 
 def _runtime_dtype_name(dtype) -> str:

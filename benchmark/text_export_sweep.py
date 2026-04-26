@@ -71,7 +71,12 @@ def export_model(model_id: str, token_ids: list[int], export_dir: Path) -> Path:
     export_dir.mkdir(parents=True, exist_ok=True)
     export_path = export_dir / "function.mlxfn"
     input_path = export_dir / "inputs.safetensors"
+    inputs_json_path = export_dir / "inputs.json"
     if export_path.exists() and input_path.exists():
+        inputs_json_path.write_text(
+            json.dumps({"input_order": ["input_ids"]}),
+            encoding="utf-8",
+        )
         return input_path
 
     model, _tokenizer = load(model_id, lazy=False)
@@ -85,6 +90,10 @@ def export_model(model_id: str, token_ids: list[int], export_dir: Path) -> Path:
         export_path.unlink()
     mx.export_function(str(export_path), forward, tokens)
     mx.save_safetensors(str(input_path), {"input_ids": tokens})
+    inputs_json_path.write_text(
+        json.dumps({"input_order": ["input_ids"]}),
+        encoding="utf-8",
+    )
     del model, _tokenizer
     cleanup_mlx(mx)
     return input_path

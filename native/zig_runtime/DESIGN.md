@@ -115,13 +115,14 @@ The ABI is synchronous today because every target can support it. Zig remains
 - MLX calls move behind Zig. Default runtime resolution may select MLX only
   for artifact kinds with implemented Zig executors; explicit MLX sessions are
   created by Zig, validate local safetensors and `.mlxfn` artifact layouts,
-  parse MLX metadata and quantization fields, load Apple `mlx-c` weight maps or
-  imported functions into Zig-owned session state, materialize `mlx_array`
-  outputs into the runtime tensor ABI, and execute registered Zig MLX
-  architectures directly. Exported `.mlxfn` bundles are the generic
-  imported-function path; `dart_inference_linear` is the first safetensors
-  executor template; unregistered architectures must fail from the Zig-owned
-  `mlx-c` path rather than the C/C++ adapter.
+  parse MLX metadata, quantization fields, and `.mlxfn` input order, load Apple
+  `mlx-c` weight maps or imported functions into Zig-owned session state,
+  reorder named Dart runtime tensors into positional MLX function arguments,
+  materialize `mlx_array` outputs into the runtime tensor ABI, and execute
+  registered Zig MLX architectures directly. Exported `.mlxfn` bundles are the
+  generic imported-function path; `dart_inference_linear` is the first
+  safetensors executor template; unregistered architectures must fail from the
+  Zig-owned `mlx-c` path rather than the C/C++ adapter.
 - The Apple build hook produces `dart_inference_mlx_c` as a private `mlx-c`
   dependency for Zig. It is not a Dart-facing code asset API.
 - The former Dart-facing MLX raw/shim/stable APIs and C++ bridge are removed

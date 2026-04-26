@@ -90,6 +90,7 @@ def text_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, 
     export_dir.mkdir(parents=True, exist_ok=True)
     export_path = export_dir / "function.mlxfn"
     input_path = export_dir / "inputs.safetensors"
+    inputs_json_path = export_dir / "inputs.json"
     model2, _tokenizer2 = load_lm(model_id, lazy=False, **load_kwargs)
     tokens2 = mx.array([token_ids], dtype=mx.int32)
 
@@ -101,6 +102,10 @@ def text_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, 
         export_path.unlink()
     mx.export_function(str(export_path), export_forward, tokens2)
     mx.save_safetensors(str(input_path), {"input_ids": tokens2})
+    inputs_json_path.write_text(
+        json.dumps({"input_order": ["input_ids"]}),
+        encoding="utf-8",
+    )
     del model, tokenizer, tokens, last
     del model2, _tokenizer2, tokens2
     cleanup_mlx(mx)

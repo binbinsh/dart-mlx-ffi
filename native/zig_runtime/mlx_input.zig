@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const c = @import("mlx_c.zig");
 
 pub const InputTensor = extern struct {
+    name: [*c]const u8,
     dtype: i32,
     rank: i32,
     shape: [*c]const i64,
@@ -36,6 +37,7 @@ const native = if (c.linked and !builtin.is_test) struct {
 
 pub const InputBatch = struct {
     allocator: std.mem.Allocator,
+    names: [][]const u8,
     arrays: []c.MlxArray,
 
     pub fn deinit(self: InputBatch) void {
@@ -46,6 +48,7 @@ pub const InputBatch = struct {
                 }
             }
         }
+        self.allocator.free(self.names);
         self.allocator.free(self.arrays);
     }
 };
@@ -63,6 +66,8 @@ pub fn prepareInputBatch(
     }
     const arrays = allocator.alloc(c.MlxArray, count) catch return error.OutOfMemory;
     errdefer allocator.free(arrays);
+    const names = allocator.alloc([]const u8, count) catch return error.OutOfMemory;
+    errdefer allocator.free(names);
     var produced: usize = 0;
     errdefer {
         var index: usize = 0;
@@ -73,9 +78,10 @@ pub fn prepareInputBatch(
         }
     }
     while (produced < count) : (produced += 1) {
+        names[produced] = tensorName(tensors[produced]);
         arrays[produced] = try createArray(allocator, tensors[produced]);
     }
-    return .{ .allocator = allocator, .arrays = arrays };
+    return .{ .allocator = allocator, .names = names, .arrays = arrays };
 }
 
 fn createArray(
@@ -137,6 +143,13 @@ fn validTensor(tensor: InputTensor) bool {
         return false;
     }
     return true;
+}
+
+fn tensorName(tensor: InputTensor) []const u8 {
+    if (tensor.name == null) {
+        return "";
+    }
+    return tensor.name[0..std.mem.len(tensor.name)];
 }
 
 fn expectedByteLength(tensor: InputTensor, item_size: usize) TensorError!usize {
@@ -205,6 +218,7 @@ test "runtime dtype maps to mlx-c dtype" {
 test "runtime tensor byte length is validated before mlx-c conversion" {
     const shape = [_]i64{ 2, 3 };
     const tensor = InputTensor{
+        .name = "input",
         .dtype = 1,
         .rank = 2,
         .shape = &shape,
@@ -215,6 +229,7 @@ test "runtime tensor byte length is validated before mlx-c conversion" {
     try validateInputTensor(tensor);
 
     const bad = InputTensor{
+        .name = "input",
         .dtype = 1,
         .rank = 2,
         .shape = &shape,

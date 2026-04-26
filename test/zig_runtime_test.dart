@@ -110,6 +110,13 @@ void main() {
         File(
           '${artifactDir.path}${Platform.pathSeparator}inputs.safetensors',
         ).writeAsBytesSync(const []);
+        File(
+          '${artifactDir.path}${Platform.pathSeparator}inputs.json',
+        ).writeAsStringSync(
+          '{"inputs":{"pixel_values":{"dtype":"float32"},'
+          '"input_ids":{"dtype":"int32"}},'
+          '"input_order":["input_ids","pixel_values"]}',
+        );
         const spec = ModelSpec(
           id: 'zig_mlxfn',
           family: 'Zig MLX function',
@@ -134,6 +141,8 @@ void main() {
             expect(mlxSession['weight_file_count'], 0);
             expect(mlxSession['weights_loaded'], isFalse);
             expect(mlxSession['executor_kind'], 'imported_function');
+            expect(mlxSession['has_inputs_json'], isTrue);
+            expect(mlxSession['input_order'], ['input_ids', 'pixel_values']);
           } finally {
             session.close();
           }

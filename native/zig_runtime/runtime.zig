@@ -485,6 +485,7 @@ fn runMlxSession(
             return 1;
         }
         views[index] = .{
+            .name = inputs[index].name,
             .dtype = tensor.dtype,
             .rank = tensor.rank,
             .shape = @ptrCast(tensor.shape),
