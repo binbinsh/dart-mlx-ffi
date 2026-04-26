@@ -136,32 +136,10 @@ Float32List float32View(RuntimeTensor tensor) => Float32List.view(
   tensor.bytes.lengthInBytes ~/ 4,
 );
 
-const List<String> onnxCudaPreloadLibraryNames = [
-  'libcudart.so.12',
-  'libcublas.so.12',
-  'libcublasLt.so.12',
-  'libcurand.so.10',
-  'libcufft.so.11',
-  'libcudnn.so.9',
-  'libcudnn_ops.so.9',
-  'libcudnn_cnn.so.9',
-  'libcudnn_adv.so.9',
-  'libcudnn_graph.so.9',
-  'libcudnn_heuristic.so.9',
-  'libcudnn_engines_precompiled.so.9',
-  'libcudnn_engines_runtime_compiled.so.9',
-  'libnvinfer.so.10',
-  'libnvinfer_plugin.so.10',
-  'libnvonnxparser.so.10',
-  'libnvinfer.so.9',
-  'libnvinfer_plugin.so.9',
-  'libnvonnxparser.so.9',
-];
-
 List<String> discoverDefaultOnnxRuntimePreloadLibraries({
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
-  Iterable<String> libraryNames = onnxCudaPreloadLibraryNames,
+  Iterable<String> libraryNames = const [],
   String? runtimeEnvFile,
   Iterable<String> runtimeEnvSearchRoots = const [],
 }) {
@@ -177,7 +155,7 @@ List<String> discoverDefaultOnnxRuntimePreloadLibraries({
 List<String> discoverOnnxRuntimePreloadLibraries({
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
-  Iterable<String> libraryNames = onnxCudaPreloadLibraryNames,
+  Iterable<String> libraryNames = const [],
 }) => _ortLibs(
   explicitLibraries: explicitLibraries,
   libraryDirectories: libraryDirectories,
@@ -193,7 +171,7 @@ List<String> _ortLibs({
   Iterable<String> runtimeEnvSearchRoots = const [],
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
-  Iterable<String> libraryNames = onnxCudaPreloadLibraryNames,
+  Iterable<String> libraryNames = const [],
 }) {
   final envFile = _nativeText(runtimeEnvFile ?? '');
   final roots = _nativeText(_pack(runtimeEnvSearchRoots));

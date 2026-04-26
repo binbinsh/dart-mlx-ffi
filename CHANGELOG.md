@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.57`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.58`.
+- Moved the default ONNX Runtime CUDA/TensorRT preload library list out of Dart so `dinf_ort_libs_json` owns the default names.
 - Routed registered-runtime fallback artifact compatibility through Zig policy matching.
 - Moved model bundle artifact path resolution into Zig through `dinf_artifact_path`.
 - Moved runtime artifact platform compatibility and MLX preview gating into Zig through `dinf_artifact_matches`.
