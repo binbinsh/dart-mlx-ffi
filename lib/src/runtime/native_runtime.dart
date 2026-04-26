@@ -277,7 +277,7 @@ final class NativeModelRuntime implements ModelRuntime {
         'runtime ${engine.name}.',
       );
     }
-    if (bundle.artifact.path.startsWith('hf://')) {
+    if (_artifactRemote(bundle.artifact.path)) {
       throw StateError(
         'Runtime artifact ${bundle.artifact.path} must be resolved to a local '
         'path before native execution. Use RuntimeRegistry.loadAsync(), '
@@ -634,6 +634,15 @@ int _engineId(RuntimeEngine engine) => switch (engine) {
   RuntimeEngine.onnx => 2,
   RuntimeEngine.litert => 3,
 };
+
+bool _artifactRemote(String path) {
+  final value = path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  try {
+    return native.artifactRemote(value) != 0;
+  } finally {
+    calloc.free(value);
+  }
+}
 
 RuntimeCapabilities _caps(RuntimeEngine engine) {
   final ptr = native.capsJson(_engineId(engine));

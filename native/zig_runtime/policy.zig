@@ -121,6 +121,14 @@ pub fn artifactPath(
         return error.OutOfMemory;
 }
 
+pub fn artifactRemote(artifact_path: ?[]const u8) bool {
+    const value = artifact_path orelse return false;
+    if (std.mem.startsWith(u8, value, "zig://")) {
+        return false;
+    }
+    return std.mem.indexOf(u8, value, "://") != null;
+}
+
 fn platformAllowed(platform: i32, target_platforms: ?[]const u8) bool {
     const raw = target_platforms orelse return true;
     const trimmed = std.mem.trim(u8, raw, separators());
@@ -214,4 +222,13 @@ test "runtime policy resolves artifact paths like Dart did" {
     const trailing = try artifactPath(allocator, "/models/", "model.onnx");
     defer allocator.free(trailing);
     try std.testing.expectEqualStrings("/models/model.onnx", trailing);
+}
+
+test "runtime policy identifies remote artifacts" {
+    try std.testing.expect(artifactRemote("hf://org/repo/model.onnx"));
+    try std.testing.expect(artifactRemote("s3://bucket/model.onnx"));
+    try std.testing.expect(!artifactRemote("zig://echo"));
+    try std.testing.expect(!artifactRemote("/models/model.onnx"));
+    try std.testing.expect(!artifactRemote("model.onnx"));
+    try std.testing.expect(!artifactRemote(null));
 }

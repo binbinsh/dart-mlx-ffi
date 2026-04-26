@@ -529,6 +529,10 @@ export fn dinf_artifact_matches(
     )) 1 else 0;
 }
 
+export fn dinf_artifact_remote(artifact_path: [*c]const u8) i32 {
+    return if (policy.artifactRemote(optionalCString(artifact_path))) 1 else 0;
+}
+
 export fn dinf_artifact_path(
     root_path: [*c]const u8,
     artifact_path: [*c]const u8,

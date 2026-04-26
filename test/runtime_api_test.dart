@@ -241,6 +241,35 @@ void main() {
       expect(outputs.diagnostics['artifactPath'], '/tmp/model.onnx');
       session.close();
     });
+
+    test('native load rejects unresolved remote artifacts through Zig', () {
+      const spec = ModelSpec(
+        id: 'remote_demo',
+        family: 'Remote demo',
+        modalities: [ModelModality.textGeneration],
+        platformArtifacts: {
+          RuntimeEngine.onnx: RuntimeArtifact(
+            engine: RuntimeEngine.onnx,
+            path: 'hf://acme/demo/onnx/model.onnx',
+            targetPlatforms: ['linux'],
+          ),
+        },
+      );
+      final registry = RuntimeRegistry.native(
+        resolver: const RuntimeResolver(hostPlatform: RuntimePlatform.linux),
+      );
+
+      expect(
+        () => registry.load(spec),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('must be resolved to a local path'),
+          ),
+        ),
+      );
+    });
   });
 
   group('RuntimeTensor', () {
