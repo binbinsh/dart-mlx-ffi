@@ -19,7 +19,7 @@ from run_all import build_plan
 
 class RunAllPrepareCoreMlArtifactTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_run_all_coreml_prepare_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_run_all_coreml_prepare_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
@@ -27,7 +27,7 @@ class RunAllPrepareCoreMlArtifactTest(unittest.TestCase):
     def test_prepare_inputs_passes_coreml_artifact_for_local_paths(self) -> None:
         artifact = self.tmp / "pipeline.json"
         artifact.write_text(
-            json.dumps({"format": "dart_mlx_ffi.coreml_pipeline.v1", "stages": []}),
+            json.dumps({"format": "dart_inference.coreml_pipeline.v1", "stages": []}),
             encoding="utf-8",
         )
         artifacts_path = self.tmp / "artifacts.yaml"

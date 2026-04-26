@@ -5,14 +5,16 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 
 import '../benchmark/runtime/input_json.dart';
-import 'package:dart_mlx_ffi/runtime.dart';
+import 'package:dart_inference/runtime.dart';
 
 void main() {
   group('runtime input JSON', () {
     late Directory dir;
 
     setUp(() {
-      dir = Directory.systemTemp.createTempSync('dmf_runtime_input_');
+      dir = Directory.systemTemp.createTempSync(
+        'dart_inference_runtime_input_',
+      );
     });
 
     tearDown(() {

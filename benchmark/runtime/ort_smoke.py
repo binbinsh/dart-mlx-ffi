@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
-    work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="dmf_ort_smoke_"))
+    work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="dinf_ort_smoke_"))
     build_dir = args.build_dir or work_dir / "build"
     try:
         result = run_smoke(
@@ -62,7 +62,7 @@ def run_smoke(
     pipeline_path.write_text(
         json.dumps(
             {
-                "format": "dart_mlx_ffi.onnx_pipeline.v1",
+                "format": "dart_inference.onnx_pipeline.v1",
                 "stages": [
                     {
                         "name": "first",
@@ -100,7 +100,7 @@ def run_smoke(
     scatter_path.write_text(
         json.dumps(
             {
-                "format": "dart_mlx_ffi.onnx_pipeline.v1",
+                "format": "dart_inference.onnx_pipeline.v1",
                 "stages": [
                     {
                         "name": "merge",
@@ -152,10 +152,10 @@ def run_smoke(
             str(ROOT / "native" / "runtime"),
             "-B",
             str(build_dir),
-            "-DDMF_BUILD_CLI=ON",
-            "-DDMF_ENABLE_ORT=ON",
-            f"-DDMF_ORT_INCLUDE_DIR={env.include_dir}",
-            f"-DDMF_ORT_LIBRARY={env.library}",
+            "-DDINF_BUILD_CLI=ON",
+            "-DDINF_ENABLE_ORT=ON",
+            f"-DDINF_ORT_INCLUDE_DIR={env.include_dir}",
+            f"-DDINF_ORT_LIBRARY={env.library}",
         ]
     )
     _run(
@@ -164,14 +164,14 @@ def run_smoke(
             "--build",
             str(build_dir),
             "--target",
-            "dart_mlx_ffi_runtime_runner",
+            "dart_inference_runtime_runner",
             "-j2",
         ]
     )
     if env.runtime_library is not None:
         shutil.copy2(env.runtime_library, build_dir / env.runtime_library.name)
 
-    runner = build_dir / "dart_mlx_ffi_runtime_runner"
+    runner = build_dir / "dart_inference_runtime_runner"
     _run(
         [
             str(runner),
@@ -282,7 +282,7 @@ def _write_add_one_model(path: Path) -> None:
     graph = helper.make_graph([node], "add_one", [input_info], [output_info], [one])
     model = helper.make_model(
         graph,
-        producer_name="dart_mlx_ffi_smoke",
+        producer_name="dart_inference_smoke",
         opset_imports=[helper.make_operatorsetid("", 13)],
     )
     model.ir_version = 10

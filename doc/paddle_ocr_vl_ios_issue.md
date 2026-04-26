@@ -22,7 +22,7 @@ The same trend remains after ruling out several likely causes.
 
 ## Environment
 
-- Project: `dart-mlx-ffi`
+- Project: `dart-inference`
 - Model: `mlx-community/PaddleOCR-VL-1.5-8bit`
 - Target device: physical iPhone, iOS 26.4
 - App bundle: Flutter example harness
@@ -79,7 +79,7 @@ These experiments did **not** materially change the slope:
 
 The repo also records the current findings in:
 
-- [paddle_ocr_vl_ios_runtime.md](/Users/binbinsh/Projects/Personal/dart-mlx-ffi/doc/paddle_ocr_vl_ios_runtime.md)
+- [paddle_ocr_vl_ios_runtime.md](/Users/binbinsh/Projects/Personal/dart-inference/doc/paddle_ocr_vl_ios_runtime.md)
 
 ## Why This Looks Runtime-Level
 
@@ -102,7 +102,7 @@ That combination makes the remaining leading hypothesis:
 Current repo-side artifacts:
 
 - Summary script:
-  [summarize_ios_runtime.py](/Users/binbinsh/Projects/Personal/dart-mlx-ffi/tool/summarize_ios_runtime.py)
+  [summarize_ios_runtime.py](/Users/binbinsh/Projects/Personal/dart-inference/tool/summarize_ios_runtime.py)
 - Latest generated summary:
   `/tmp/ios_runtime_summary.md`
 - Example logs:

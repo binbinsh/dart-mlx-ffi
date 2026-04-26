@@ -25,7 +25,7 @@ from onnx_to_litert import (
 
 class OnnxToLiteRtConverterTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_onnx_to_litert_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_onnx_to_litert_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)

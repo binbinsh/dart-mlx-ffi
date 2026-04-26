@@ -138,7 +138,7 @@ models:
           vision_encoder: onnx/vision_encoder.onnx
           decoder: onnx/decoder_model_merged.onnx
         pipeline:
-          format: dart_mlx_ffi.onnx_pipeline.v1
+          format: dart_inference.onnx_pipeline.v1
           stages:
             - name: embed_tokens
               model: "{component:embed_tokens}"

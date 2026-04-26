@@ -5,7 +5,7 @@ coverage/
 AGENTS.md
 benchmark/
 doc/
-models/
+/models/
 tool/
 example/.dart_tool/
 example/
@@ -16,9 +16,12 @@ example/android/
 example/linux/
 example/web/
 example/windows/
+test/
 benchmark/out/
 output/
 tmp/
+pyproject.toml
+uv.lock
 
 third_party/fmt/doc/
 third_party/fmt/support/
@@ -34,3 +37,13 @@ third_party/mlx/tests/
 third_party/mlx-c/docs/
 third_party/mlx-c/examples/
 vendors/
+third_party/fmt/
+third_party/gguflib/
+third_party/metal-cpp/
+third_party/mlx/
+third_party/mlx-c/
+third_party/json/CMakeLists.txt
+third_party/json/cmake/
+third_party/json/include/
+third_party/json/nlohmann_json.natvis
+third_party/json/single_include/nlohmann/json_fwd.hpp

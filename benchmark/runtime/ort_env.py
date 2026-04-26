@@ -38,13 +38,13 @@ class OrtEnvironment:
         return self.include_dir is not None and self.library is not None
 
     def to_env(self) -> dict[str, str]:
-        values = {"DART_MLX_ENABLE_ORT": "1"}
+        values = {"DART_INFERENCE_ENABLE_ORT": "1"}
         if self.include_dir is not None:
-            values["DART_MLX_ORT_INCLUDE_DIR"] = str(self.include_dir)
+            values["DART_INFERENCE_ORT_INCLUDE_DIR"] = str(self.include_dir)
         if self.library is not None:
-            values["DART_MLX_ORT_LIBRARY"] = str(self.library)
+            values["DART_INFERENCE_ORT_LIBRARY"] = str(self.library)
         if self.runtime_library is not None:
-            values["DART_MLX_ORT_RUNTIME_LIBRARY"] = str(self.runtime_library)
+            values["DART_INFERENCE_ORT_RUNTIME_LIBRARY"] = str(self.runtime_library)
         return values
 
     def to_json(self) -> dict[str, Any]:
@@ -134,10 +134,10 @@ def _resolve_version(
 ) -> str:
     env = os.environ
     if target_os == "android":
-        explicit = env.get("DART_MLX_ORT_ANDROID_VERSION") or env.get("DART_MLX_ORT_VERSION")
+        explicit = env.get("DART_INFERENCE_ORT_ANDROID_VERSION") or env.get("DART_INFERENCE_ORT_VERSION")
         if explicit:
             return explicit
-    explicit = env.get("DART_MLX_ORT_VERSION")
+    explicit = env.get("DART_INFERENCE_ORT_VERSION")
     if explicit:
         return explicit
     if package_root is not None and package_version != "unknown":
@@ -156,8 +156,8 @@ def _onnxruntime_package() -> tuple[Path | None, str]:
 def _library_candidates(package_root: Path | None) -> list[Path]:
     env = os.environ
     candidates = [
-        _path(env.get("DART_MLX_ORT_RUNTIME_LIBRARY")),
-        _path(env.get("DART_MLX_ORT_LIBRARY")),
+        _path(env.get("DART_INFERENCE_ORT_RUNTIME_LIBRARY")),
+        _path(env.get("DART_INFERENCE_ORT_LIBRARY")),
     ]
     if package_root is not None:
         capi = package_root / "capi"
@@ -177,7 +177,7 @@ def _library_candidates(package_root: Path | None) -> list[Path]:
 def _include_candidates(package_root: Path | None, version: str) -> list[Path]:
     env = os.environ
     candidates = [
-        _path(env.get("DART_MLX_ORT_INCLUDE_DIR")),
+        _path(env.get("DART_INFERENCE_ORT_INCLUDE_DIR")),
     ]
     if package_root is not None:
         candidates.extend(
@@ -254,7 +254,7 @@ def _resolve_android_library(
     fetch_headers: bool,
 ) -> Path | None:
     env = os.environ
-    explicit = _path(env.get("DART_MLX_ORT_LIBRARY"))
+    explicit = _path(env.get("DART_INFERENCE_ORT_LIBRARY"))
     if explicit is not None and explicit.exists():
         return explicit.resolve()
     if version == "unknown":

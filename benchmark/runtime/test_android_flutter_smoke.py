@@ -20,7 +20,7 @@ from flutter_smoke_common import MarkerParser, extract_marker_payload
 class AndroidFlutterSmokeTest(unittest.TestCase):
     def test_extract_marker_payload(self) -> None:
         line = (
-            "DMF_RUNTIME_SMOKE_RESULT:"
+            "DINF_RUNTIME_SMOKE_RESULT:"
             '{"passed":true,"engine":"litert","model_id":"qwen2_5"}'
         )
         payload = extract_marker_payload(line)
@@ -31,21 +31,21 @@ class AndroidFlutterSmokeTest(unittest.TestCase):
 
     def test_marker_parser_chunked_payload(self) -> None:
         parser = MarkerParser()
-        self.assertIsNone(parser.feed("DMF_RUNTIME_SMOKE_RESULT_BEGIN:2"))
+        self.assertIsNone(parser.feed("DINF_RUNTIME_SMOKE_RESULT_BEGIN:2"))
         self.assertIsNone(
-            parser.feed("DMF_RUNTIME_SMOKE_RESULT_CHUNK:1/2:eyJwYXNzZWQiOnRydWUs")
+            parser.feed("DINF_RUNTIME_SMOKE_RESULT_CHUNK:1/2:eyJwYXNzZWQiOnRydWUs")
         )
-        payload = parser.feed("DMF_RUNTIME_SMOKE_RESULT_CHUNK:2/2:ImVuZ2luZSI6ImxpdGVydCJ9")
+        payload = parser.feed("DINF_RUNTIME_SMOKE_RESULT_CHUNK:2/2:ImVuZ2luZSI6ImxpdGVydCJ9")
         self.assertIsNotNone(payload)
         assert payload is not None
         self.assertTrue(payload["passed"])
         self.assertEqual(payload["engine"], "litert")
-        self.assertIsNone(parser.feed("DMF_RUNTIME_SMOKE_RESULT_END"))
+        self.assertIsNone(parser.feed("DINF_RUNTIME_SMOKE_RESULT_END"))
 
     def test_marker_parser_chunked_payload_without_end(self) -> None:
         parser = MarkerParser()
-        self.assertIsNone(parser.feed("DMF_RUNTIME_SMOKE_RESULT_BEGIN:1"))
-        payload = parser.feed("DMF_RUNTIME_SMOKE_RESULT_CHUNK:1/1:eyJwYXNzZWQiOnRydWV9")
+        self.assertIsNone(parser.feed("DINF_RUNTIME_SMOKE_RESULT_BEGIN:1"))
+        payload = parser.feed("DINF_RUNTIME_SMOKE_RESULT_CHUNK:1/1:eyJwYXNzZWQiOnRydWV9")
         self.assertIsNotNone(payload)
         assert payload is not None
         self.assertTrue(payload["passed"])
@@ -81,7 +81,7 @@ class AndroidFlutterSmokeTest(unittest.TestCase):
         )
         self.assertIn("--device-user=0", command)
         self.assertIn(
-            "--dart-define=DMF_RUNTIME_SMOKE_ARTIFACT=hf://litert-community/Qwen2.5-0.5B-Instruct/Qwen2.5-0.5B-Instruct_seq128_q8_ekv1280.tflite",
+            "--dart-define=DINF_RUNTIME_SMOKE_ARTIFACT=hf://litert-community/Qwen2.5-0.5B-Instruct/Qwen2.5-0.5B-Instruct_seq128_q8_ekv1280.tflite",
             command,
         )
         self.assertIn("--release", command)
@@ -89,7 +89,7 @@ class AndroidFlutterSmokeTest(unittest.TestCase):
     def test_logcat_follow_command(self) -> None:
         command = android_flutter_smoke.logcat_follow_command(device_id="android-device")
         self.assertEqual(command[:4], ["adb", "-s", "android-device", "logcat"])
-        self.assertIn("DMF_RUNTIME_SMOKE:I", command)
+        self.assertIn("DINF_RUNTIME_SMOKE:I", command)
         self.assertEqual(command[-2:], ["flutter:I", "*:S"])
 
     def test_parse_hf_uri(self) -> None:
@@ -102,21 +102,21 @@ class AndroidFlutterSmokeTest(unittest.TestCase):
     def test_artifact_permission_paths_for_default_android_root(self) -> None:
         paths = android_flutter_smoke._artifact_permission_paths(
             package_name="com.example.app",
-            remote_root="/sdcard/Android/data/com.example.app/files/dart_mlx_ffi_runtime_smoke",
-            remote_dir="/sdcard/Android/data/com.example.app/files/dart_mlx_ffi_runtime_smoke/silero_vad/onnx",
+            remote_root="/sdcard/Android/data/com.example.app/files/dart_inference_runtime_smoke",
+            remote_dir="/sdcard/Android/data/com.example.app/files/dart_inference_runtime_smoke/silero_vad/onnx",
         )
         self.assertIn("/sdcard/Android/data/com.example.app", paths)
         self.assertIn("/sdcard/Android/data/com.example.app/files", paths)
         self.assertIn(
-            "/sdcard/Android/data/com.example.app/files/dart_mlx_ffi_runtime_smoke",
+            "/sdcard/Android/data/com.example.app/files/dart_inference_runtime_smoke",
             paths,
         )
         self.assertIn(
-            "/sdcard/Android/data/com.example.app/files/dart_mlx_ffi_runtime_smoke/silero_vad",
+            "/sdcard/Android/data/com.example.app/files/dart_inference_runtime_smoke/silero_vad",
             paths,
         )
         self.assertIn(
-            "/sdcard/Android/data/com.example.app/files/dart_mlx_ffi_runtime_smoke/silero_vad/onnx",
+            "/sdcard/Android/data/com.example.app/files/dart_inference_runtime_smoke/silero_vad/onnx",
             paths,
         )
 
@@ -145,7 +145,7 @@ class AndroidFlutterSmokeTest(unittest.TestCase):
 
         self.assertEqual(
             remote,
-            "/sdcard/Android/data/com.example.app/files/dart_mlx_ffi_runtime_smoke/silero_vad/onnx/model.onnx",
+            "/sdcard/Android/data/com.example.app/files/dart_inference_runtime_smoke/silero_vad/onnx/model.onnx",
         )
         mkdir_calls = [entry for entry in calls if entry[:2] == ["shell", "mkdir"]]
         self.assertEqual(len(mkdir_calls), 1)
@@ -211,9 +211,9 @@ class AndroidFlutterSmokeTest(unittest.TestCase):
         logcat_script = textwrap.dedent(
             """
             import time
-            print("DMF_RUNTIME_SMOKE_RESULT_BEGIN:1", flush=True)
-            print("DMF_RUNTIME_SMOKE_RESULT_CHUNK:1/1:eyJwYXNzZWQiOnRydWV9", flush=True)
-            print("DMF_RUNTIME_SMOKE_RESULT_END", flush=True)
+            print("DINF_RUNTIME_SMOKE_RESULT_BEGIN:1", flush=True)
+            print("DINF_RUNTIME_SMOKE_RESULT_CHUNK:1/1:eyJwYXNzZWQiOnRydWV9", flush=True)
+            print("DINF_RUNTIME_SMOKE_RESULT_END", flush=True)
             time.sleep(1)
             """
         )

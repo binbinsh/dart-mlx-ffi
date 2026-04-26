@@ -27,7 +27,7 @@ migrate_working_dir/
 /pubspec.lock
 .dart_tool/
 .claude/
-.dart_mlx_runtime_env.json
+.dart_inference_runtime_env.json
 .flutter-plugins-dependencies
 /coverage/
 **/doc/api/

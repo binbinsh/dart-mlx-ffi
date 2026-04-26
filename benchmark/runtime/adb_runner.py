@@ -53,7 +53,7 @@ def main() -> None:
     parser.add_argument("--device-id")
     parser.add_argument(
         "--remote-dir",
-        default="/data/local/tmp/dart_mlx_ffi_runtime",
+        default="/data/local/tmp/dart_inference_runtime",
     )
     parser.add_argument("--device-runner")
     parser.add_argument("--device-command")
@@ -220,7 +220,7 @@ class AdbRuntimeCell:
         temp = tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".json",
-            prefix="dmf_adb_input_",
+            prefix="dinf_adb_input_",
             delete=False,
             encoding="utf-8",
         )

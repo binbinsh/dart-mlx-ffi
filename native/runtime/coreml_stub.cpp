@@ -1,6 +1,6 @@
 #include "runtime_bridge.h"
 
-DmfRuntimeSession* dmf_create_coreml_session(
+DinfRuntimeSession* dinf_create_coreml_session(
     const char*,
     const char*,
     std::string* error) {

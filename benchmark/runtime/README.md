@@ -275,7 +275,7 @@ final session = await registry.loadAsync(
 );
 ```
 
-`HuggingFaceArtifactCache` stores files under `DART_MLX_HF_CACHE`, or the
+`HuggingFaceArtifactCache` stores files under `DART_INFERENCE_HF_CACHE`, or the
 platform cache directory when that environment variable is unset. Synchronous
 `RuntimeRegistry.load()` remains local-only; use `loadAsync()` whenever remote
 artifacts may need to be downloaded. `run_matrix.py`, `run_all.py`, and the
@@ -304,7 +304,7 @@ uv run python benchmark/runtime/ios_flutter_smoke.py \
 ```
 
 The app emits chunked runtime-smoke markers
-(`DMF_RUNTIME_SMOKE_RESULT_BEGIN/CHUNK/END`) containing load diagnostics and
+(`DINF_RUNTIME_SMOKE_RESULT_BEGIN/CHUNK/END`) containing load diagnostics and
 memory snapshots from `RuntimeRegistry.loadAsync()`. Reports default to
 `benchmark/out/runtime/<model>/ios/device_smoke.json` unless `--out` is set.
 
@@ -334,7 +334,7 @@ uv run python benchmark/runtime/adb_runner.py \
   --artifact /data/local/tmp/qwen3_5/model.tflite \
   --remote-baseline-report /data/local/tmp/qwen3_5/android_baseline.json \
   --remote-candidate-report /data/local/tmp/qwen3_5/android_candidate.json \
-  --device-runner /data/local/tmp/dart_mlx_ffi_runtime_runner \
+  --device-runner /data/local/tmp/dart_inference_runtime_runner \
   --delegate xnnpack \
   --require-delegate
 ```
@@ -342,18 +342,18 @@ uv run python benchmark/runtime/adb_runner.py \
 The bundled native CLI can be built as that device runner:
 
 ```sh
-cmake -S native/runtime -B /tmp/dmf_runtime_android \
-  -DDMF_BUILD_CLI=ON \
+cmake -S native/runtime -B /tmp/dinf_runtime_android \
+  -DDINF_BUILD_CLI=ON \
   -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_PLATFORM=android-26
 
-cmake --build /tmp/dmf_runtime_android --target dart_mlx_ffi_runtime_runner
-adb push /tmp/dmf_runtime_android/libdart_mlx_ffi_runtime.so \
-  /data/local/tmp/libdart_mlx_ffi_runtime.so
-adb push /tmp/dmf_runtime_android/dart_mlx_ffi_runtime_runner \
-  /data/local/tmp/dart_mlx_ffi_runtime_runner
-adb shell chmod +x /data/local/tmp/dart_mlx_ffi_runtime_runner
+cmake --build /tmp/dinf_runtime_android --target dart_inference_runtime_runner
+adb push /tmp/dinf_runtime_android/libdart_inference_runtime.so \
+  /data/local/tmp/libdart_inference_runtime.so
+adb push /tmp/dinf_runtime_android/dart_inference_runtime_runner \
+  /data/local/tmp/dart_inference_runtime_runner
+adb shell chmod +x /data/local/tmp/dart_inference_runtime_runner
 ```
 
 Use `LD_LIBRARY_PATH=/data/local/tmp` in `device_command` when the runner and
@@ -455,7 +455,7 @@ Native backend notes:
 
 ```json
 {
-  "format": "dart_mlx_ffi.coreml_pipeline.v1",
+  "format": "dart_inference.coreml_pipeline.v1",
   "stages": [
     {
       "name": "vision",
@@ -479,9 +479,9 @@ Native backend notes:
   every model stage, so ANE/GPU/CPU placement gates still work for
   componentized models.
 - ONNX Runtime is compiled in when the build hook sees
-  `DART_MLX_ENABLE_ORT=1`, `DART_MLX_ORT_INCLUDE_DIR`, and
-  `DART_MLX_ORT_LIBRARY`.
-  Set `DART_MLX_ORT_RUNTIME_LIBRARY` when the link library is an import
+  `DART_INFERENCE_ENABLE_ORT=1`, `DART_INFERENCE_ORT_INCLUDE_DIR`, and
+  `DART_INFERENCE_ORT_LIBRARY`.
+  Set `DART_INFERENCE_ORT_RUNTIME_LIBRARY` when the link library is an import
   library and the runtime `.dll` / `.so` / `.dylib` must be bundled separately.
   Use `--provider cuda|dml|openvino|qnn|xnnpack|cpu` to request a provider,
   and `--require-provider` when fallback to CPU should fail the run.
@@ -500,7 +500,7 @@ eval "$(uv run python benchmark/runtime/ort_env.py --fetch-headers --shell)"
 
 ```json
 {
-  "format": "dart_mlx_ffi.onnx_pipeline.v1",
+  "format": "dart_inference.onnx_pipeline.v1",
   "stages": [
     {
       "name": "vision",
@@ -538,12 +538,12 @@ uv run python benchmark/runtime/ort_smoke.py
   executes both single-model and two-stage pipeline paths through the C++
   backend, and checks the numeric outputs.
 - LiteRT uses the TensorFlow Lite C API and loads
-  `DART_MLX_LITERT_LIBRARY` / `DART_MLX_TFLITE_LIBRARY` when provided, falling
+  `DART_INFERENCE_LITERT_LIBRARY` / `DART_INFERENCE_TFLITE_LIBRARY` when provided, falling
   back to a bundled adjacent `libtensorflowlite_c` / `tensorflowlite_c.dll`
   next to the runtime bridge, then the platform library name. The build hook
   bundles that dependency when either environment variable points at a local
   LiteRT/TensorFlow Lite C library. Optional side libraries can be passed with
-  `DART_MLX_LITERT_EXTRA_LIBRARIES` (or backend option
+  `DART_INFERENCE_LITERT_EXTRA_LIBRARIES` (or backend option
   `litertExtraLibraries`), and are preloaded before model creation. This is
   useful for Select TF Ops/Flex (`libtensorflowlite_flex_jni.so`) models.
   XNNPACK is enabled when available unless
@@ -643,7 +643,7 @@ uv run --group vlm-prepare python benchmark/runtime/prepare_inputs.py \
 For ONNX smoke runs, pass `--onnx-artifact <model.onnx>` to align the generated
 inputs to the graph signature and synthesize zero tensors for required cache or
 side inputs that the tokenizer does not produce. `--onnx-artifact` also accepts
-`dart_mlx_ffi.onnx_pipeline.v1` JSON specs; `prepare_inputs.py` walks each
+`dart_inference.onnx_pipeline.v1` JSON specs; `prepare_inputs.py` walks each
 component graph, skips tensors produced by earlier stages, derives
 `image_token_indices` for `scatter_embeddings`, preserves ONNX `bool` inputs
 such as `use_cache_branch`, and writes large tensors as binary sidecars next to

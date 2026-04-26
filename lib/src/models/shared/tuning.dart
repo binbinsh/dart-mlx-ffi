@@ -18,9 +18,9 @@ enum ApplePlatform { ios, macos }
 /// Detect the current Apple platform at runtime.
 ///
 /// On real devices this uses the OS; in tests you can override via the
-/// `DART_MLX_PLATFORM` env var (`ios` or `macos`).
+/// `DART_INFERENCE_PLATFORM` env var (`ios` or `macos`).
 ApplePlatform get currentPlatform {
-  final override = Platform.environment['DART_MLX_PLATFORM'];
+  final override = Platform.environment['DART_INFERENCE_PLATFORM'];
   if (override == 'ios') return ApplePlatform.ios;
   if (override == 'macos') return ApplePlatform.macos;
   // Platform.isIOS is only true in Flutter; for pure Dart on macOS, default

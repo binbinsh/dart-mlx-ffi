@@ -29,7 +29,7 @@ final class CoreMlBundleLayout {
   /// True for a single `.mlmodelc`/`.mlpackage` bundle.
   bool get isMonolithic => monolithicModelPath != null;
 
-  /// True for a `dart_mlx_ffi.coreml_pipeline.v1` JSON spec.
+  /// True for a `dart_inference.coreml_pipeline.v1` JSON spec.
   bool get isPipeline => pipelineSpecPath != null;
 
   /// Whether the bundle has enough structure for a Core ML runtime to load.

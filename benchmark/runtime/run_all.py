@@ -1072,7 +1072,7 @@ def _is_onnx_input_artifact(path: Path) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return data.get("format") == "dart_mlx_ffi.onnx_pipeline.v1"
+    return data.get("format") == "dart_inference.onnx_pipeline.v1"
 
 
 def _input_sidecar_reasons(

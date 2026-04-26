@@ -187,10 +187,10 @@ std::filesystem::path runtime_library_dir() {
 
 std::vector<std::string> library_candidates() {
   std::vector<std::string> candidates;
-  if (const char* value = env("DART_MLX_LITERT_LIBRARY")) {
+  if (const char* value = env("DART_INFERENCE_LITERT_LIBRARY")) {
     append_unique(&candidates, value);
   }
-  if (const char* value = env("DART_MLX_TFLITE_LIBRARY")) {
+  if (const char* value = env("DART_INFERENCE_TFLITE_LIBRARY")) {
     append_unique(&candidates, value);
   }
   const auto adjacent = runtime_library_dir();
@@ -220,16 +220,16 @@ std::vector<std::string> library_candidates() {
 
 std::vector<std::string> support_library_candidates(const char* options_json) {
   std::vector<std::string> candidates;
-  if (const char* raw = env("DART_MLX_LITERT_EXTRA_LIBRARIES")) {
+  if (const char* raw = env("DART_INFERENCE_LITERT_EXTRA_LIBRARIES")) {
     for (const auto& value : parse_library_list(raw)) {
       append_unique(&candidates, value);
     }
   }
-  if (const char* value = env("DART_MLX_TFLITE_FLEX_LIBRARY")) {
+  if (const char* value = env("DART_INFERENCE_TFLITE_FLEX_LIBRARY")) {
     append_unique(&candidates, value);
   }
   for (const auto key : {"litertExtraLibraries", "extraLibraries"}) {
-    const std::string values = dmf_option_string(options_json, key);
+    const std::string values = dinf_option_string(options_json, key);
     for (const auto& value : parse_library_list(values)) {
       append_unique(&candidates, value);
     }
@@ -331,14 +331,14 @@ std::string lower(std::string value) {
 }
 
 std::string requested_delegate(const char* options_json) {
-  return lower(dmf_option_string(options_json, "delegate"));
+  return lower(dinf_option_string(options_json, "delegate"));
 }
 
 bool xnnpack_enabled(const char* options_json) {
-  if (!dmf_option_bool(options_json, "enableXNNPack", true) ||
-      !dmf_option_bool(options_json, "enableXnnpack", true) ||
-      !dmf_option_bool(options_json, "useXNNPACK", true) ||
-      !dmf_option_bool(options_json, "useXnnpack", true)) {
+  if (!dinf_option_bool(options_json, "enableXNNPack", true) ||
+      !dinf_option_bool(options_json, "enableXnnpack", true) ||
+      !dinf_option_bool(options_json, "useXNNPACK", true) ||
+      !dinf_option_bool(options_json, "useXnnpack", true)) {
     return false;
   }
   return requested_delegate(options_json) != "none";
@@ -351,7 +351,7 @@ bool wants_xnnpack(const char* options_json) {
   const std::string delegate = requested_delegate(options_json);
   return delegate.empty() || delegate == "xnnpack" || delegate == "gpu" ||
          delegate == "nnapi" || delegate == "npu" || delegate == "qnn" ||
-         dmf_options_contains_token(options_json, "cpu");
+         dinf_options_contains_token(options_json, "cpu");
 }
 
 struct DelegateHandle {
@@ -512,7 +512,7 @@ bool write_section_file(
   const auto stamp = std::chrono::steady_clock::now()
                          .time_since_epoch()
                          .count();
-  const auto name = std::string("dart_mlx_litert_") +
+  const auto name = std::string("dart_inference_litert_") +
                     std::to_string(std::hash<std::string>{}(source_path)) +
                     "_" + std::to_string(index) + "_" +
                     std::to_string(stamp) + ".tflite";
@@ -561,7 +561,7 @@ bool prepare_litert_artifact(
   }
 
   const int requested =
-      dmf_option_int(options_json, "litertSectionIndex", -1);
+      dinf_option_int(options_json, "litertSectionIndex", -1);
   int selected = requested;
   if (selected < 0 && sections.size() == 1) {
     selected = 0;
@@ -651,7 +651,7 @@ bool add_symbol_delegate(
 bool resolve_input_indices(
     const LiteRtApi& api,
     TfLiteInterpreter* interpreter,
-    const DmfNamedTensor* inputs,
+    const DartInferenceNamedTensor* inputs,
     size_t input_count,
     std::vector<int32_t>* indices,
     std::string* error) {
@@ -701,46 +701,46 @@ bool resolve_input_indices(
 int32_t litert_dtype_to_dmf(int32_t type) {
   switch (type) {
     case 1:
-      return DMF_DTYPE_FLOAT32;
+      return DINF_DTYPE_FLOAT32;
     case 2:
-      return DMF_DTYPE_INT32;
+      return DINF_DTYPE_INT32;
     case 3:
-      return DMF_DTYPE_UINT8;
+      return DINF_DTYPE_UINT8;
     case 4:
-      return DMF_DTYPE_INT64;
+      return DINF_DTYPE_INT64;
     case 6:
-      return DMF_DTYPE_BOOL;
+      return DINF_DTYPE_BOOL;
     case 10:
-      return DMF_DTYPE_FLOAT16;
+      return DINF_DTYPE_FLOAT16;
     case 11:
-      return DMF_DTYPE_FLOAT64;
+      return DINF_DTYPE_FLOAT64;
     default:
       return 0;
   }
 }
 
-int32_t dmf_dtype_to_litert(int32_t dtype) {
+int32_t dinf_dtype_to_litert(int32_t dtype) {
   switch (dtype) {
-    case DMF_DTYPE_FLOAT32:
+    case DINF_DTYPE_FLOAT32:
       return 1;
-    case DMF_DTYPE_INT32:
+    case DINF_DTYPE_INT32:
       return 2;
-    case DMF_DTYPE_UINT8:
+    case DINF_DTYPE_UINT8:
       return 3;
-    case DMF_DTYPE_INT64:
+    case DINF_DTYPE_INT64:
       return 4;
-    case DMF_DTYPE_BOOL:
+    case DINF_DTYPE_BOOL:
       return 6;
-    case DMF_DTYPE_FLOAT16:
+    case DINF_DTYPE_FLOAT16:
       return 10;
-    case DMF_DTYPE_FLOAT64:
+    case DINF_DTYPE_FLOAT64:
       return 11;
     default:
       return -1;
   }
 }
 
-class LiteRtSession final : public DmfRuntimeSession {
+class LiteRtSession final : public DinfRuntimeSession {
  public:
   LiteRtSession(
       std::unique_ptr<SharedLibrary> library,
@@ -787,9 +787,9 @@ class LiteRtSession final : public DmfRuntimeSession {
   }
 
   int Run(
-      const DmfNamedTensor* inputs,
+      const DartInferenceNamedTensor* inputs,
       size_t input_count,
-      DmfNamedTensor** outputs,
+      DartInferenceNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     std::vector<int32_t> input_indices;
@@ -818,7 +818,7 @@ class LiteRtSession final : public DmfRuntimeSession {
         *error = "LiteRT input tensor is null";
         return 1;
       }
-      if (api_.TensorType(tensor) != dmf_dtype_to_litert(inputs[i].tensor.dtype)) {
+      if (api_.TensorType(tensor) != dinf_dtype_to_litert(inputs[i].tensor.dtype)) {
         *error = "LiteRT input dtype does not match model signature";
         return 1;
       }
@@ -838,7 +838,7 @@ class LiteRtSession final : public DmfRuntimeSession {
       return 1;
     }
     const int32_t count = api_.OutputTensorCount(interpreter_);
-    std::vector<DmfNamedTensor> produced;
+    std::vector<DartInferenceNamedTensor> produced;
     for (int32_t i = 0; i < count; ++i) {
       const TfLiteTensor* tensor = api_.OutputTensor(interpreter_, i);
       if (tensor == nullptr) {
@@ -860,7 +860,7 @@ class LiteRtSession final : public DmfRuntimeSession {
         shape.push_back(api_.TensorDim(tensor, axis));
       }
       const char* name = api_.TensorName(tensor);
-      produced.push_back(dmf_make_tensor(
+      produced.push_back(dinf_make_tensor(
           name == nullptr ? "" : name,
           dtype,
           shape,
@@ -868,30 +868,30 @@ class LiteRtSession final : public DmfRuntimeSession {
           data.size()));
     }
     *output_count = produced.size();
-    *outputs = static_cast<DmfNamedTensor*>(
-        std::malloc(sizeof(DmfNamedTensor) * produced.size()));
+    *outputs = static_cast<DartInferenceNamedTensor*>(
+        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DmfNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
     }
     return 0;
   }
 
   std::string DiagnosticsJson() const override {
     return std::string("{\"engine\":\"litert\",\"library\":\"") +
-           dmf_json_escape(library_->path()) + "\",\"num_threads\":" +
+           dinf_json_escape(library_->path()) + "\",\"num_threads\":" +
            std::to_string(num_threads_) + ",\"requested_delegate\":\"" +
-           dmf_json_escape(requested_delegate_) + "\",\"delegates\":" +
-           dmf_json_string_array(delegate_names_) +
+           dinf_json_escape(requested_delegate_) + "\",\"delegates\":" +
+           dinf_json_string_array(delegate_names_) +
            ",\"support_libraries_loaded\":" +
-           dmf_json_string_array(support_library_loaded_) +
+           dinf_json_string_array(support_library_loaded_) +
            ",\"support_libraries_attempted\":" +
-           dmf_json_string_array(support_library_attempts_) +
+           dinf_json_string_array(support_library_attempts_) +
            ",\"input_names\":" + tensor_names(/*inputs=*/true) +
            ",\"output_names\":" + tensor_names(/*inputs=*/false) +
-           ",\"artifact_path\":\"" + dmf_json_escape(artifact_.source_path) +
+           ",\"artifact_path\":\"" + dinf_json_escape(artifact_.source_path) +
            "\",\"resolved_artifact_path\":\"" +
-           dmf_json_escape(artifact_.model_path) +
-           "\",\"artifact_format\":\"" + dmf_json_escape(artifact_.source_format) +
+           dinf_json_escape(artifact_.model_path) +
+           "\",\"artifact_format\":\"" + dinf_json_escape(artifact_.source_format) +
            "\",\"tflite_section_count\":" +
            std::to_string(artifact_.section_count) +
            ",\"selected_tflite_section\":" +
@@ -914,7 +914,7 @@ class LiteRtSession final : public DmfRuntimeSession {
       const char* name = tensor == nullptr ? nullptr : api_.TensorName(tensor);
       names.emplace_back(name == nullptr ? "" : name);
     }
-    return dmf_json_string_array(names);
+    return dinf_json_string_array(names);
   }
 
   std::unique_ptr<SharedLibrary> library_;
@@ -935,7 +935,7 @@ class LiteRtSession final : public DmfRuntimeSession {
 
 }  // namespace
 
-DmfRuntimeSession* dmf_create_litert_session(
+DinfRuntimeSession* dinf_create_litert_session(
     const char* model_path,
     const char* options_json,
     std::string* error) {
@@ -967,12 +967,12 @@ DmfRuntimeSession* dmf_create_litert_session(
     TfLiteInterpreterOptions* options = api.OptionsCreate();
     LiteRtErrorCollector error_collector;
     configure_error_reporter(api, options, &error_collector);
-    const int num_threads = std::max(1, dmf_option_int(options_json, "numThreads", 1));
+    const int num_threads = std::max(1, dinf_option_int(options_json, "numThreads", 1));
     api.OptionsSetNumThreads(options, num_threads);
     std::vector<DelegateHandle> delegates;
     std::vector<std::string> delegate_names;
     const bool require_delegate =
-        dmf_option_bool(options_json, "requireDelegate", false);
+        dinf_option_bool(options_json, "requireDelegate", false);
     const std::string delegate = requested_delegate(options_json);
     if (delegate == "gpu") {
       const auto before = delegates.size();
@@ -1050,7 +1050,7 @@ DmfRuntimeSession* dmf_create_litert_session(
       api.ModelDelete(model);
       *error = "TfLiteInterpreterCreate failed for " + artifact.model_path;
       if (!delegate_names.empty()) {
-        *error += " with delegates " + dmf_json_string_array(delegate_names);
+        *error += " with delegates " + dinf_json_string_array(delegate_names);
       } else {
         *error += " with no delegates";
       }
@@ -1063,10 +1063,10 @@ DmfRuntimeSession* dmf_create_litert_session(
       }
       if (!support_libraries.loaded.empty()) {
         *error += " [support libraries loaded: " +
-                  dmf_json_string_array(support_libraries.loaded) + "]";
+                  dinf_json_string_array(support_libraries.loaded) + "]";
       } else if (!support_libraries.attempted.empty()) {
         *error += " [no optional support libraries loaded; attempted " +
-                  dmf_json_string_array(support_libraries.attempted) + "]";
+                  dinf_json_string_array(support_libraries.attempted) + "]";
       }
       return nullptr;
     }
@@ -1087,7 +1087,7 @@ DmfRuntimeSession* dmf_create_litert_session(
         attempted_delegate_fallback);
   }
   *error = "Unable to load LiteRT/TFLite C library. Set "
-           "DART_MLX_LITERT_LIBRARY or DART_MLX_TFLITE_LIBRARY. Tried: " +
-           dmf_json_string_array(attempted);
+           "DART_INFERENCE_LITERT_LIBRARY or DART_INFERENCE_TFLITE_LIBRARY. Tried: " +
+           dinf_json_string_array(attempted);
   return nullptr;
 }

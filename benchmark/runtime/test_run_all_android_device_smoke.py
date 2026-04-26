@@ -19,7 +19,7 @@ from run_all import _artifact_health_failure, build_plan
 
 class RunAllAndroidDeviceSmokeTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_run_all_android_smoke_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_run_all_android_smoke_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)

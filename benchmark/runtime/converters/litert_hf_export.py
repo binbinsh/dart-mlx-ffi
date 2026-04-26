@@ -82,14 +82,14 @@ def _int_list(value: str | None) -> list[int] | None:
 
 def _patch_trust_remote_code(auto_cls: object) -> None:
     original = getattr(auto_cls, "from_pretrained")
-    if getattr(original, "_dmf_trust_remote_code", False):
+    if getattr(original, "_dinf_trust_remote_code", False):
         return
 
     def from_pretrained_with_trust(*args: object, **kwargs: object) -> object:
         kwargs.setdefault("trust_remote_code", True)
         return original(*args, **kwargs)
 
-    from_pretrained_with_trust._dmf_trust_remote_code = True  # type: ignore[attr-defined]
+    from_pretrained_with_trust._dinf_trust_remote_code = True  # type: ignore[attr-defined]
     setattr(auto_cls, "from_pretrained", from_pretrained_with_trust)
 
 

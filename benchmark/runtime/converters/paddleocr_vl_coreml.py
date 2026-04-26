@@ -211,7 +211,7 @@ def export_paddleocr_vl_coreml(
     )
 
     report = {
-        "format": "dart_mlx_ffi.coreml_conversion_report.v1",
+        "format": "dart_inference.coreml_conversion_report.v1",
         "source_model": model_id,
         "artifact": str(pipeline_path),
         "components": {
@@ -719,7 +719,7 @@ def _pipeline_spec(
     outputs: list[str],
 ) -> dict[str, Any]:
     return {
-        "format": "dart_mlx_ffi.coreml_pipeline.v1",
+        "format": "dart_inference.coreml_pipeline.v1",
         "stages": [
             {
                 "name": "embed_tokens",
@@ -823,7 +823,7 @@ def _patch_transformers_mask_alias() -> None:
     except ImportError:
         return
     create_causal_mask = getattr(masking_utils, "create_causal_mask", None)
-    if create_causal_mask is None or getattr(create_causal_mask, "_dmf_alias", False):
+    if create_causal_mask is None or getattr(create_causal_mask, "_dinf_alias", False):
         return
 
     def create_causal_mask_compat(*args: Any, **kwargs: Any) -> Any:
@@ -831,7 +831,7 @@ def _patch_transformers_mask_alias() -> None:
             kwargs["input_embeds"] = kwargs.pop("inputs_embeds")
         return create_causal_mask(*args, **kwargs)
 
-    create_causal_mask_compat._dmf_alias = True  # type: ignore[attr-defined]
+    create_causal_mask_compat._dinf_alias = True  # type: ignore[attr-defined]
     masking_utils.create_causal_mask = create_causal_mask_compat
 
 

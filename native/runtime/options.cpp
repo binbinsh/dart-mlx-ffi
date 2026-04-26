@@ -47,7 +47,7 @@ std::string unescape_json_string(const char* value) {
 
 }  // namespace
 
-int dmf_option_int(const char* json, const char* key, int fallback) {
+int dinf_option_int(const char* json, const char* key, int fallback) {
   const char* value = find_key(json, key);
   if (value == nullptr) {
     return fallback;
@@ -57,7 +57,7 @@ int dmf_option_int(const char* json, const char* key, int fallback) {
   return end == value ? fallback : static_cast<int>(parsed);
 }
 
-bool dmf_option_bool(const char* json, const char* key, bool fallback) {
+bool dinf_option_bool(const char* json, const char* key, bool fallback) {
   const char* value = find_key(json, key);
   if (value == nullptr) {
     return fallback;
@@ -71,7 +71,7 @@ bool dmf_option_bool(const char* json, const char* key, bool fallback) {
   return fallback;
 }
 
-std::string dmf_option_string(
+std::string dinf_option_string(
     const char* json,
     const char* key,
     const std::string& fallback) {
@@ -80,7 +80,7 @@ std::string dmf_option_string(
   return parsed.empty() ? fallback : parsed;
 }
 
-bool dmf_options_contains_token(const char* json, const char* token) {
+bool dinf_options_contains_token(const char* json, const char* token) {
   if (json == nullptr || token == nullptr) {
     return false;
   }

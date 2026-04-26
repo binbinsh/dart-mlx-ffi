@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:dart_mlx_ffi/runtime.dart';
+import 'package:dart_inference/runtime.dart';
 
 import 'input_json.dart';
 
@@ -81,7 +81,7 @@ Future<void> main(List<String> args) async {
         'health': {'loaded': true},
         'metrics': {'peak_memory_bytes': _peakMemory(memoryAfterLoad)},
         'device_profile': {
-          'runtime': 'dart_mlx_ffi',
+          'runtime': 'dart_inference',
           'runtime_diagnostics': session.diagnostics,
           'memory_after': memoryAfterLoad,
           'raw_peak_memory_field': _rawPeakField(memoryAfterLoad),
@@ -126,7 +126,7 @@ Future<void> main(List<String> args) async {
     'correctness': _correctness(last?.values ?? const {}),
     'metrics': {'end_to_end_ms': perIterMs, 'peak_memory_bytes': peakMemory},
     'device_profile': {
-      'runtime': 'dart_mlx_ffi',
+      'runtime': 'dart_inference',
       'runtime_diagnostics': last?.diagnostics ?? const <String, Object?>{},
       'memory_before': memoryBefore,
       'memory_after': memoryAfter,

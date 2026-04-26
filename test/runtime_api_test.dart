@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:test/test.dart';
 
-import 'package:dart_mlx_ffi/runtime.dart';
+import 'package:dart_inference/runtime.dart';
 
 void main() {
   group('RuntimeResolver', () {
@@ -45,16 +45,19 @@ void main() {
       expect(resolution.accelerators.first, Accelerator.ane);
     });
 
-    test('prefers MLX on macOS unless ANE is requested', () {
-      final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
-      expect(resolver.resolve(spec).engine, RuntimeEngine.mlx);
-      expect(
-        resolver
-            .resolve(spec, const RuntimeOptions(prefer: [Accelerator.ane]))
-            .engine,
-        RuntimeEngine.coreml,
-      );
-    });
+    test(
+      'prefers Core ML on macOS until the Zig MLX backend is registered',
+      () {
+        final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
+        expect(resolver.resolve(spec).engine, RuntimeEngine.coreml);
+        expect(
+          resolver
+              .resolve(spec, const RuntimeOptions(prefer: [Accelerator.ane]))
+              .engine,
+          RuntimeEngine.coreml,
+        );
+      },
+    );
 
     test('selects platform engines for desktop and Android', () {
       expect(
@@ -176,14 +179,28 @@ void main() {
   });
 
   group('RuntimeTensor', () {
-    test('copies typed data and exposes typed views', () {
+    test('wraps typed data and exposes typed views', () {
       final source = Float32List.fromList([1, 2, 3]);
       final tensor = RuntimeTensor.float32([3], source);
       source[0] = 99;
 
       expect(tensor.dtype, RuntimeTensorDataType.float32);
       expect(tensor.shape, [3]);
-      expect(tensor.asFloat32List(), [1, 2, 3]);
+      expect(tensor.asFloat32List(), [99, 2, 3]);
+    });
+
+    test('allocates Zig-owned native input buffers', () {
+      final buffer = NativeTensorBuffer.float32([3]);
+      try {
+        buffer.asFloat32List().setAll(0, [1, 2, 3]);
+        final tensor = buffer.tensor;
+
+        expect(tensor.dtype, RuntimeTensorDataType.float32);
+        expect(tensor.shape, [3]);
+        expect(tensor.asFloat32List(), [1, 2, 3]);
+      } finally {
+        buffer.close();
+      }
     });
   });
 
@@ -293,7 +310,7 @@ void main() {
       final dir = Directory.systemTemp.createTempSync('coreml_layout_');
       try {
         final spec = File('${dir.path}/pipeline.json')
-          ..writeAsStringSync('{"format":"dart_mlx_ffi.coreml_pipeline.v1"}');
+          ..writeAsStringSync('{"format":"dart_inference.coreml_pipeline.v1"}');
 
         final layout = CoreMlBundleLayout.discover(spec.path);
         expect(layout.isLoadable, isTrue);

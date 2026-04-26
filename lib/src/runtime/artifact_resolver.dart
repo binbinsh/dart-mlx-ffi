@@ -222,7 +222,7 @@ final class HuggingFaceArtifactCache implements RuntimeArtifactResolver {
         request.followRedirects = false;
         request.headers.set(
           HttpHeaders.userAgentHeader,
-          'dart-mlx-ffi-runtime',
+          'dart-inference-runtime',
         );
         request.headers.set(HttpHeaders.acceptHeader, '*/*');
         if (_shouldAuthenticate(current)) {
@@ -369,18 +369,18 @@ Future<String> _readError(HttpClientResponse response) async {
 
 String _defaultCacheRoot() {
   final env = Platform.environment;
-  if (env['DART_MLX_HF_CACHE'] case final value? when value.isNotEmpty) {
+  if (env['DART_INFERENCE_HF_CACHE'] case final value? when value.isNotEmpty) {
     return value;
   }
   if (Platform.isWindows) {
     final base = env['LOCALAPPDATA'] ?? env['APPDATA'];
     if (base != null && base.isNotEmpty) {
-      return p.join(base, 'dart_mlx_ffi', 'huggingface');
+      return p.join(base, 'dart_inference', 'huggingface');
     }
   }
   final home = env['HOME'];
   if (home != null && home.isNotEmpty) {
-    return p.join(home, '.cache', 'dart_mlx_ffi', 'huggingface');
+    return p.join(home, '.cache', 'dart_inference', 'huggingface');
   }
-  return p.join(Directory.systemTemp.path, 'dart_mlx_ffi', 'huggingface');
+  return p.join(Directory.systemTemp.path, 'dart_inference', 'huggingface');
 }

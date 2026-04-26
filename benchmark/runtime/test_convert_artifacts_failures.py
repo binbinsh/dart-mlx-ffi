@@ -18,7 +18,7 @@ from convert_artifacts import ArtifactConverter
 
 class ConvertArtifactFailureTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_convert_failure_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_convert_failure_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)

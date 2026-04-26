@@ -83,57 +83,57 @@ void write_json_file(const std::string& path, const json& value) {
 
 int engine_id(const std::string& engine) {
   if (engine == "coreml") {
-    return DMF_ENGINE_COREML;
+    return DINF_ENGINE_COREML;
   }
   if (engine == "onnx") {
-    return DMF_ENGINE_ONNX;
+    return DINF_ENGINE_ONNX;
   }
   if (engine == "litert") {
-    return DMF_ENGINE_LITERT;
+    return DINF_ENGINE_LITERT;
   }
   throw std::runtime_error("Unsupported engine: " + engine);
 }
 
 int dtype_id(const std::string& dtype) {
   if (dtype == "float32") {
-    return DMF_DTYPE_FLOAT32;
+    return DINF_DTYPE_FLOAT32;
   }
   if (dtype == "int32") {
-    return DMF_DTYPE_INT32;
+    return DINF_DTYPE_INT32;
   }
   if (dtype == "int64") {
-    return DMF_DTYPE_INT64;
+    return DINF_DTYPE_INT64;
   }
   if (dtype == "uint8") {
-    return DMF_DTYPE_UINT8;
+    return DINF_DTYPE_UINT8;
   }
   if (dtype == "float64") {
-    return DMF_DTYPE_FLOAT64;
+    return DINF_DTYPE_FLOAT64;
   }
   if (dtype == "float16") {
-    return DMF_DTYPE_FLOAT16;
+    return DINF_DTYPE_FLOAT16;
   }
   if (dtype == "bool") {
-    return DMF_DTYPE_BOOL;
+    return DINF_DTYPE_BOOL;
   }
   throw std::runtime_error("Unsupported dtype: " + dtype);
 }
 
 std::string dtype_name(int dtype) {
   switch (dtype) {
-    case DMF_DTYPE_FLOAT32:
+    case DINF_DTYPE_FLOAT32:
       return "float32";
-    case DMF_DTYPE_INT32:
+    case DINF_DTYPE_INT32:
       return "int32";
-    case DMF_DTYPE_INT64:
+    case DINF_DTYPE_INT64:
       return "int64";
-    case DMF_DTYPE_UINT8:
+    case DINF_DTYPE_UINT8:
       return "uint8";
-    case DMF_DTYPE_FLOAT64:
+    case DINF_DTYPE_FLOAT64:
       return "float64";
-    case DMF_DTYPE_FLOAT16:
+    case DINF_DTYPE_FLOAT16:
       return "float16";
-    case DMF_DTYPE_BOOL:
+    case DINF_DTYPE_BOOL:
       return "bool";
     default:
       return "unknown";
@@ -369,7 +369,7 @@ std::vector<int64_t> shape_from_json(
     const std::string& input_name) {
   std::vector<int64_t> shape;
   if (!spec.contains("shape")) {
-    const size_t width = dmf_dtype_size(dtype);
+    const size_t width = dinf_dtype_size(dtype);
     if (width == 0 || byte_length % width != 0) {
       throw std::runtime_error(
           "Input " + input_name + " byte length is not divisible by dtype width.");
@@ -383,7 +383,7 @@ std::vector<int64_t> shape_from_json(
   for (const auto& dim : spec.at("shape")) {
     shape.push_back(dim.get<int64_t>());
   }
-  const size_t width = dmf_dtype_size(dtype);
+  const size_t width = dinf_dtype_size(dtype);
   size_t expected = width;
   for (const auto dim : shape) {
     expected *= static_cast<size_t>(dim);
@@ -395,7 +395,7 @@ std::vector<int64_t> shape_from_json(
   return shape;
 }
 
-DmfNamedTensor tensor_from_json(
+DartInferenceNamedTensor tensor_from_json(
     const std::string& name,
     const json& spec,
     const std::filesystem::path& base_dir) {
@@ -406,7 +406,7 @@ DmfNamedTensor tensor_from_json(
   const int id = dtype_id(dtype);
   std::vector<uint8_t> bytes =
       tensor_bytes_from_json(spec, dtype, base_dir, name);
-  return dmf_make_tensor(
+  return dinf_make_tensor(
       name.c_str(),
       id,
       shape_from_json(spec, id, bytes.size(), name),
@@ -414,7 +414,7 @@ DmfNamedTensor tensor_from_json(
       bytes.size());
 }
 
-std::vector<DmfNamedTensor> inputs_from_json(
+std::vector<DartInferenceNamedTensor> inputs_from_json(
     const json& document,
     const std::filesystem::path& base_dir) {
   const json* inputs = &document;
@@ -424,14 +424,14 @@ std::vector<DmfNamedTensor> inputs_from_json(
   if (!inputs->is_object()) {
     throw std::runtime_error("Input JSON must contain an object of tensors.");
   }
-  std::vector<DmfNamedTensor> tensors;
+  std::vector<DartInferenceNamedTensor> tensors;
   for (const auto& item : inputs->items()) {
     tensors.push_back(tensor_from_json(item.key(), item.value(), base_dir));
   }
   return tensors;
 }
 
-void free_inputs(std::vector<DmfNamedTensor>& tensors) {
+void free_inputs(std::vector<DartInferenceNamedTensor>& tensors) {
   for (auto& tensor : tensors) {
     std::free(tensor.name);
     std::free(tensor.tensor.shape);
@@ -445,61 +445,61 @@ json parse_json_string(char* raw) {
     return json::object();
   }
   const std::string text(raw);
-  dmf_runtime_free_string(raw);
+  dinf_cpp_runtime_free_string(raw);
   if (text.empty()) {
     return json::object();
   }
   return json::parse(text);
 }
 
-json tensor_values(const DmfNativeTensor& tensor) {
+json tensor_values(const DartInferenceNativeTensor& tensor) {
   const auto count = static_cast<size_t>(
-      tensor.byte_length / static_cast<intptr_t>(dmf_dtype_size(tensor.dtype)));
+      tensor.byte_length / static_cast<intptr_t>(dinf_dtype_size(tensor.dtype)));
   json values = json::array();
   switch (tensor.dtype) {
-    case DMF_DTYPE_FLOAT32: {
+    case DINF_DTYPE_FLOAT32: {
       const auto* data = static_cast<const float*>(tensor.data);
       for (size_t i = 0; i < count; ++i) {
         values.push_back(data[i]);
       }
       break;
     }
-    case DMF_DTYPE_INT32: {
+    case DINF_DTYPE_INT32: {
       const auto* data = static_cast<const int32_t*>(tensor.data);
       for (size_t i = 0; i < count; ++i) {
         values.push_back(data[i]);
       }
       break;
     }
-    case DMF_DTYPE_INT64: {
+    case DINF_DTYPE_INT64: {
       const auto* data = static_cast<const int64_t*>(tensor.data);
       for (size_t i = 0; i < count; ++i) {
         values.push_back(data[i]);
       }
       break;
     }
-    case DMF_DTYPE_UINT8: {
+    case DINF_DTYPE_UINT8: {
       const auto* data = static_cast<const uint8_t*>(tensor.data);
       for (size_t i = 0; i < count; ++i) {
         values.push_back(data[i]);
       }
       break;
     }
-    case DMF_DTYPE_FLOAT64: {
+    case DINF_DTYPE_FLOAT64: {
       const auto* data = static_cast<const double*>(tensor.data);
       for (size_t i = 0; i < count; ++i) {
         values.push_back(data[i]);
       }
       break;
     }
-    case DMF_DTYPE_FLOAT16: {
+    case DINF_DTYPE_FLOAT16: {
       const auto* data = static_cast<const uint16_t*>(tensor.data);
       for (size_t i = 0; i < count; ++i) {
         values.push_back(data[i]);
       }
       break;
     }
-    case DMF_DTYPE_BOOL: {
+    case DINF_DTYPE_BOOL: {
       const auto* data = static_cast<const uint8_t*>(tensor.data);
       for (size_t i = 0; i < count; ++i) {
         values.push_back(data[i] != 0);
@@ -510,7 +510,7 @@ json tensor_values(const DmfNativeTensor& tensor) {
   return values;
 }
 
-json tensor_shape(const DmfNativeTensor& tensor) {
+json tensor_shape(const DartInferenceNativeTensor& tensor) {
   json shape = json::array();
   for (int i = 0; i < tensor.rank; ++i) {
     shape.push_back(tensor.shape[i]);
@@ -518,7 +518,7 @@ json tensor_shape(const DmfNativeTensor& tensor) {
   return shape;
 }
 
-json correctness(DmfNamedTensor* outputs, intptr_t output_count) {
+json correctness(DartInferenceNamedTensor* outputs, intptr_t output_count) {
   json output_values = json::object();
   json output_summaries = json::object();
   for (intptr_t i = 0; i < output_count; ++i) {
@@ -608,7 +608,7 @@ void update_peak_memory(uint64_t* peak, const json& memory) {
 void usage() {
   std::cout
       << "Usage:\n"
-      << "  dart_mlx_ffi_runtime_runner --model-id <id> "
+      << "  dart_inference_runtime_runner --model-id <id> "
       << "--engine <coreml|onnx|litert> --artifact <path> "
       << "--input-json <inputs.json> [--platform android] [--out report.json]\n";
 }
@@ -631,32 +631,32 @@ int main(int argc, char** argv) {
     const int iters = std::stoi(args.option("iters", "5"));
 
     char* error = nullptr;
-    DmfRuntimeSession* session = dmf_runtime_create(
+    DinfRuntimeSession* session = dinf_cpp_runtime_create(
         engine_id(engine),
         artifact.c_str(),
         runtime_options(args).dump().c_str(),
         &error);
     if (session == nullptr) {
       const std::string message = error == nullptr ? "runtime create failed" : error;
-      dmf_runtime_free_string(error);
+      dinf_cpp_runtime_free_string(error);
       throw std::runtime_error(message);
     }
 
     auto inputs = inputs_from_json(
         read_json_file(input_path),
         std::filesystem::path(input_path).parent_path());
-    DmfNamedTensor* outputs = nullptr;
+    DartInferenceNamedTensor* outputs = nullptr;
     intptr_t output_count = 0;
-    const json memory_before = parse_json_string(dmf_runtime_memory_info_json());
+    const json memory_before = parse_json_string(dinf_cpp_runtime_memory_info_json());
     uint64_t peak_memory = peak_memory_value(memory_before);
 
     for (int i = 0; i < warmup; ++i) {
       if (outputs != nullptr) {
-        dmf_runtime_free_tensors(outputs, output_count);
+        dinf_cpp_runtime_free_tensors(outputs, output_count);
         outputs = nullptr;
         output_count = 0;
       }
-      if (dmf_runtime_run(
+      if (dinf_cpp_runtime_run(
               session,
               inputs.data(),
               static_cast<intptr_t>(inputs.size()),
@@ -664,23 +664,23 @@ int main(int argc, char** argv) {
               &output_count,
               &error) != 0) {
         const std::string message = error == nullptr ? "runtime run failed" : error;
-        dmf_runtime_free_string(error);
+        dinf_cpp_runtime_free_string(error);
         throw std::runtime_error(message);
       }
       update_peak_memory(
           &peak_memory,
-          parse_json_string(dmf_runtime_memory_info_json()));
+          parse_json_string(dinf_cpp_runtime_memory_info_json()));
     }
 
     double timed_ms = 0.0;
     for (int i = 0; i < iters; ++i) {
       if (outputs != nullptr) {
-        dmf_runtime_free_tensors(outputs, output_count);
+        dinf_cpp_runtime_free_tensors(outputs, output_count);
         outputs = nullptr;
         output_count = 0;
       }
       const auto start = std::chrono::steady_clock::now();
-      if (dmf_runtime_run(
+      if (dinf_cpp_runtime_run(
               session,
               inputs.data(),
               static_cast<intptr_t>(inputs.size()),
@@ -688,19 +688,19 @@ int main(int argc, char** argv) {
               &output_count,
               &error) != 0) {
         const std::string message = error == nullptr ? "runtime run failed" : error;
-        dmf_runtime_free_string(error);
+        dinf_cpp_runtime_free_string(error);
         throw std::runtime_error(message);
       }
       const auto end = std::chrono::steady_clock::now();
       timed_ms += millis_since(start, end);
       update_peak_memory(
           &peak_memory,
-          parse_json_string(dmf_runtime_memory_info_json()));
+          parse_json_string(dinf_cpp_runtime_memory_info_json()));
     }
 
-    const json memory_after = parse_json_string(dmf_runtime_memory_info_json());
+    const json memory_after = parse_json_string(dinf_cpp_runtime_memory_info_json());
     update_peak_memory(&peak_memory, memory_after);
-    const json diagnostics = parse_json_string(dmf_runtime_diagnostics_json(session));
+    const json diagnostics = parse_json_string(dinf_cpp_runtime_diagnostics_json(session));
     const double per_iter_ms = iters > 0 ? timed_ms / iters : 0.0;
 
     json report = {
@@ -713,7 +713,7 @@ int main(int argc, char** argv) {
         {
             "device_profile",
             {
-                {"runtime", "dart_mlx_ffi_native_cli"},
+                {"runtime", "dart_inference_native_cli"},
                 {"runtime_diagnostics", diagnostics},
                 {"memory_before", memory_before},
                 {"memory_after", memory_after},
@@ -733,13 +733,13 @@ int main(int argc, char** argv) {
     std::cout << report.dump(2) << "\n";
 
     if (outputs != nullptr) {
-      dmf_runtime_free_tensors(outputs, output_count);
+      dinf_cpp_runtime_free_tensors(outputs, output_count);
     }
     free_inputs(inputs);
-    dmf_runtime_free(session);
+    dinf_cpp_runtime_free(session);
     return 0;
   } catch (const std::exception& error) {
-    std::cerr << "dart_mlx_ffi_runtime_runner failed: " << error.what() << "\n";
+    std::cerr << "dart_inference_runtime_runner failed: " << error.what() << "\n";
     return 2;
   }
 }

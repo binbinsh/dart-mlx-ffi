@@ -1,5 +1,27 @@
 # Changelog
 
+### Unreleased
+
+- Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.27`.
+- Made the Zig runtime the only Dart-facing native build output and stopped producing the old Dart-facing MLX code asset from the build hook.
+- Routed explicit MLX runtime loads through the Zig runtime boundary so future `mlx-c` execution cannot silently fall back to the private C++ adapter path.
+- Removed the former raw/shim/stable APIs, legacy model runners, legacy tests, old Dart-facing MLX C++ bridge, and stale local MLX benchmark/probe/example entry points from the package source.
+- Renamed native runtime adapter internals to the `DINF/dinf_` prefix, keeping only `dart_inference_runtime_*` as the Dart-facing ABI.
+- Added a Dart ONNX Runtime convenience layer (`DartOnnxSession`) on top of the shared model runtime API.
+- Added Linux/NVIDIA ONNX model runners for structured UniFrontend and Kokoro TTS, including structured tokenizer, TN/SSML post-processing, Kokoro phonemization, and a composed UniFrontend+Kokoro TTS runtime.
+- Added a library-level UniFrontend+Kokoro TTS registry loader so Dart/Flutter apps can run the stack in-process without depending on the HTTP server wrapper.
+- Added package-level `dart_inference:onnx_server`, `dart_inference:structured_smoke_infer`, `dart_inference:structured_frontend_infer`, `dart_inference:tts_infer`, `dart_inference:tts_server`, and `dart_inference:tts_backends_status` tools for pure-Dart ONNX serving, benchmarking, structured frontend inference, direct TTS inference, and provider-status reporting.
+- Added a TTS backend runtime registry and capability catalog that mark `kokoro` as pure Dart ONNX ready and record the ONNX-export blockers for the remaining local providers.
+- Added explicit `close()` lifecycle hooks for structured UniFrontend, Kokoro, the composed UniFrontend+Kokoro runtime, and the TTS backend registry so long-lived Dart/Flutter apps can release ONNX Runtime GPU sessions without waiting for process exit.
+- Added Dart-side `.dart_inference_runtime_env.json` discovery for ONNX Runtime preload libraries, including automatic sibling `cuda/lib` and `tensorrt/lib` inference from the staged ORT library path.
+- Added ONNX Runtime dependency bundling for provider sidecar libraries, Linux SONAME aliases, optional CUDA/cuDNN/cuBLAS/TensorRT preloading from Dart `backendOptions` or CLI flags, and TensorRT cache/workspace/subgraph provider options so GPU EPs can run without relying on a Python process.
+- Fixed structured UniFrontend SSML composition to choose Chinese TN aliases for Chinese text when the multi-head model emits overlapping English and Chinese TN spans.
+- Added CUDA EP memory-limit options and defaulted the UniFrontend+Kokoro loader to a 16 GiB CUDA arena cap to avoid runaway ONNX Runtime arena reservation while leaving enough room for Kokoro synthesis.
+- Switched Kokoro phonemization to a strict-by-default Dart FFI eSpeak-NG path with LRU caching, SSML `<phoneme>` tag support, and tone3-pinyin conversion for UniFrontend polyphone output, keeping the `espeak-ng` process path only as an explicit fallback.
+- Added Kokoro phoneme vocab filtering and chunked ONNX synthesis so long phoneme inputs are split at the 510-token Kokoro budget instead of being silently truncated.
+- Moved CUDA/TensorRT ONNX Runtime provider append handling into the native runtime bridge and made the build hook fall back from Ninja to platform CMake generators when Ninja is unavailable.
+
 ### 26.414.19
 
 - Switched the iPhone `PaddleOCR-VL-1.5` default KV-cache scheme from `turboquant` to `uniform` after validating the real `photo_render_512` case on-device, restoring the expected token prefix and lowering peak memory.
@@ -12,7 +34,7 @@
 
 - Removed the experimental private ANE and Core ML bridge surfaces from the Dart API, native build, tests, local tooling, and vendored `espresso_ane` sources so the package scope is MLX-only again.
 - Added a Dart `PaddleOCR-VL` runner under `lib/src/models/paddle_ocr_vl/` and exported `PaddleOcrVlRunner` / `PaddleOcrVlConfig` from `lib/models.dart`.
-- Simplified the package build hook and native CMake configuration after the ANE removal, including dropping the `DART_MLX_ENABLE_PRIVATE_ANE` toggle and the now-unused `coremltools` Python dependency.
+- Simplified the package build hook and native CMake configuration after the ANE removal, including dropping the `DART_INFERENCE_ENABLE_PRIVATE_ANE` toggle and the now-unused `coremltools` Python dependency.
 - Patched the vendored MLX Metal build scripts to honor the active Apple SDK and deployment flags for iOS builds, and to skip `jaccl` on iOS.
 
 ### 26.404.11
@@ -34,7 +56,7 @@
 - Added `lib/models.dart` as the unified public export surface for Dart model implementations.
 - Renamed benchmark sweep scripts away from `recent_*` naming and introduced `publish_model_list.json` plus `parakeet_tdt_sweep.py`.
 - Added `TDT v3` to the publish benchmark list and regenerated `benchmark/out/publish_report.json` with `14` rows.
-- Fixed multiple `dart-mlx-ffi` native bridge ops to run on `default_device_stream()` where appropriate, including `addmm` and `conv2d`, improving Dart MLX parity and speed.
+- Fixed multiple `dart-inference` native bridge ops to run on `default_device_stream()` where appropriate, including `addmm` and `conv2d`, improving Dart MLX parity and speed.
 - Fixed stale benchmark tooling/docs after the model-layout move, including the generic benchmark runner plus ignored local `tmp/` and `output/` artifacts.
 - Updated `README.md`, `models/README.md`, and `AGENTS.md` to reflect the new model layout, benchmark layout, and version format.
 

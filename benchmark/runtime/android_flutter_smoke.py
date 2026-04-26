@@ -21,10 +21,10 @@ from ort_env import resolve_ort_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_DIR = ROOT / "example"
-ANDROID_LOG_TAG = "DMF_RUNTIME_SMOKE"
-DEFAULT_ANDROID_PACKAGE = "com.example.dartmlxffiexample"
+ANDROID_LOG_TAG = "DINF_RUNTIME_SMOKE"
+DEFAULT_ANDROID_PACKAGE = "com.example.dartinferenceexample"
 DEFAULT_HF_CACHE_DIR = ROOT / "benchmark" / "out" / "runtime" / "_hf_cache"
-RUNTIME_ENV_FILE = ROOT / ".dart_mlx_runtime_env.json"
+RUNTIME_ENV_FILE = ROOT / ".dart_inference_runtime_env.json"
 
 
 def main() -> None:
@@ -70,7 +70,7 @@ def main() -> None:
         default=None,
         help=(
             "Override remote directory for pushed artifacts. Defaults to "
-            "/sdcard/Android/data/<package>/files/dart_mlx_ffi_runtime_smoke."
+            "/sdcard/Android/data/<package>/files/dart_inference_runtime_smoke."
         ),
     )
     parser.add_argument(
@@ -153,7 +153,7 @@ def main() -> None:
             runtime_env_values.update(values)
             flutter_env.update(values)
     runtime_env_file = write_runtime_env_file(runtime_env_values)
-    flutter_env["DART_MLX_RUNTIME_ENV_FILE"] = str(runtime_env_file)
+    flutter_env["DART_INFERENCE_RUNTIME_ENV_FILE"] = str(runtime_env_file)
     result["runtime_env_file"] = str(runtime_env_file)
     result["runtime_env"] = runtime_env_values
     logcat_reset(device_id)
@@ -229,14 +229,14 @@ def flutter_command(
         "-d",
         device_id,
         f"--{build_mode}",
-        "--dart-define=DMF_RUNTIME_SMOKE=true",
-        f"--dart-define=DMF_RUNTIME_SMOKE_MODEL={model_id}",
-        f"--dart-define=DMF_RUNTIME_SMOKE_ENGINE={engine}",
+        "--dart-define=DINF_RUNTIME_SMOKE=true",
+        f"--dart-define=DINF_RUNTIME_SMOKE_MODEL={model_id}",
+        f"--dart-define=DINF_RUNTIME_SMOKE_ENGINE={engine}",
     ]
     if device_user:
         command.append(f"--device-user={device_user}")
     if artifact:
-        command.append(f"--dart-define=DMF_RUNTIME_SMOKE_ARTIFACT={artifact}")
+        command.append(f"--dart-define=DINF_RUNTIME_SMOKE_ARTIFACT={artifact}")
     return command
 
 
@@ -292,7 +292,7 @@ def download_hf_artifact(uri: str, cache_dir: Path) -> Path:
         temp_path.unlink()
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     url = f"https://huggingface.co/{repo_id}/resolve/main/{artifact_path}"
-    request = urllib.request.Request(url, headers={"User-Agent": "dart-mlx-ffi-runtime-smoke"})
+    request = urllib.request.Request(url, headers={"User-Agent": "dart-inference-runtime-smoke"})
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
@@ -317,7 +317,7 @@ def push_artifact_to_device(
     remote_root = (
         device_artifact_dir
         if device_artifact_dir
-        else f"/sdcard/Android/data/{package_name}/files/dart_mlx_ffi_runtime_smoke"
+        else f"/sdcard/Android/data/{package_name}/files/dart_inference_runtime_smoke"
     )
     remote_dir = f"{remote_root.rstrip('/')}/{model_id}/{engine}"
     _run_adb(device_id, ["shell", "mkdir", "-p", remote_dir], check=True)

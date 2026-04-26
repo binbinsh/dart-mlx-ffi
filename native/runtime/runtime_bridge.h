@@ -5,24 +5,30 @@
 #include <string>
 #include <vector>
 
-enum DmfRuntimeEngine {
-  DMF_ENGINE_MLX = 0,
-  DMF_ENGINE_COREML = 1,
-  DMF_ENGINE_ONNX = 2,
-  DMF_ENGINE_LITERT = 3,
+#if defined(_WIN32)
+#define DINF_RUNTIME_EXPORT __declspec(dllexport)
+#else
+#define DINF_RUNTIME_EXPORT __attribute__((visibility("default")))
+#endif
+
+enum DinfRuntimeEngine {
+  DINF_ENGINE_MLX = 0,
+  DINF_ENGINE_COREML = 1,
+  DINF_ENGINE_ONNX = 2,
+  DINF_ENGINE_LITERT = 3,
 };
 
-enum DmfTensorDType {
-  DMF_DTYPE_FLOAT32 = 1,
-  DMF_DTYPE_INT32 = 2,
-  DMF_DTYPE_INT64 = 3,
-  DMF_DTYPE_UINT8 = 4,
-  DMF_DTYPE_FLOAT64 = 5,
-  DMF_DTYPE_FLOAT16 = 6,
-  DMF_DTYPE_BOOL = 7,
+enum DinfTensorDType {
+  DINF_DTYPE_FLOAT32 = 1,
+  DINF_DTYPE_INT32 = 2,
+  DINF_DTYPE_INT64 = 3,
+  DINF_DTYPE_UINT8 = 4,
+  DINF_DTYPE_FLOAT64 = 5,
+  DINF_DTYPE_FLOAT16 = 6,
+  DINF_DTYPE_BOOL = 7,
 };
 
-struct DmfNativeTensor {
+struct DartInferenceNativeTensor {
   int32_t dtype;
   int32_t rank;
   int64_t* shape;
@@ -30,19 +36,19 @@ struct DmfNativeTensor {
   void* data;
 };
 
-struct DmfNamedTensor {
+struct DartInferenceNamedTensor {
   char* name;
-  DmfNativeTensor tensor;
+  DartInferenceNativeTensor tensor;
 };
 
-class DmfRuntimeSession {
+class DinfRuntimeSession {
  public:
-  virtual ~DmfRuntimeSession() = default;
+  virtual ~DinfRuntimeSession() = default;
 
   virtual int Run(
-      const DmfNamedTensor* inputs,
+      const DartInferenceNamedTensor* inputs,
       size_t input_count,
-      DmfNamedTensor** outputs,
+      DartInferenceNamedTensor** outputs,
       size_t* output_count,
       std::string* error) = 0;
 
@@ -51,57 +57,62 @@ class DmfRuntimeSession {
 
 extern "C" {
 
-DmfRuntimeSession* dmf_runtime_create(
+DINF_RUNTIME_EXPORT DinfRuntimeSession* dinf_cpp_runtime_create(
     int32_t engine,
     const char* model_path,
     const char* options_json,
     char** error);
 
-void dmf_runtime_free(DmfRuntimeSession* session);
+DINF_RUNTIME_EXPORT void dinf_cpp_runtime_free(DinfRuntimeSession* session);
 
-int32_t dmf_runtime_run(
-    DmfRuntimeSession* session,
-    const DmfNamedTensor* inputs,
+DINF_RUNTIME_EXPORT int32_t dinf_cpp_runtime_run(
+    DinfRuntimeSession* session,
+    const DartInferenceNamedTensor* inputs,
     intptr_t input_count,
-    DmfNamedTensor** outputs,
+    DartInferenceNamedTensor** outputs,
     intptr_t* output_count,
     char** error);
 
-void dmf_runtime_free_tensors(DmfNamedTensor* tensors, intptr_t count);
+DINF_RUNTIME_EXPORT void dinf_cpp_runtime_free_tensors(
+    DartInferenceNamedTensor* tensors,
+    intptr_t count);
 
-void dmf_runtime_free_string(char* value);
+DINF_RUNTIME_EXPORT void dinf_cpp_runtime_free_string(char* value);
 
-char* dmf_runtime_memory_info_json();
+DINF_RUNTIME_EXPORT char* dinf_cpp_runtime_backend_json();
 
-char* dmf_runtime_diagnostics_json(DmfRuntimeSession* session);
+DINF_RUNTIME_EXPORT char* dinf_cpp_runtime_memory_info_json();
+
+DINF_RUNTIME_EXPORT char* dinf_cpp_runtime_diagnostics_json(
+    DinfRuntimeSession* session);
 }
 
-DmfNamedTensor dmf_make_tensor(
+DartInferenceNamedTensor dinf_make_tensor(
     const char* name,
     int32_t dtype,
     const std::vector<int64_t>& shape,
     const void* data,
     size_t byte_length);
 
-size_t dmf_dtype_size(int32_t dtype);
+size_t dinf_dtype_size(int32_t dtype);
 
-char* dmf_copy_string(const std::string& value);
+char* dinf_copy_string(const std::string& value);
 
-std::string dmf_json_escape(const std::string& value);
+std::string dinf_json_escape(const std::string& value);
 
-std::string dmf_json_string_array(const std::vector<std::string>& values);
+std::string dinf_json_string_array(const std::vector<std::string>& values);
 
-DmfRuntimeSession* dmf_create_coreml_session(
+DinfRuntimeSession* dinf_create_coreml_session(
     const char* model_path,
     const char* options_json,
     std::string* error);
 
-DmfRuntimeSession* dmf_create_onnx_session(
+DinfRuntimeSession* dinf_create_onnx_session(
     const char* model_path,
     const char* options_json,
     std::string* error);
 
-DmfRuntimeSession* dmf_create_litert_session(
+DinfRuntimeSession* dinf_create_litert_session(
     const char* model_path,
     const char* options_json,
     std::string* error);

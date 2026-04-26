@@ -31,20 +31,20 @@ std::string basename(const std::string& path) {
 
 MLComputeUnits compute_units_from_options(const char* options_json) {
   std::string requested =
-      dmf_option_string(options_json, "computeUnits",
-          dmf_option_string(options_json, "coremlComputeUnits"));
+      dinf_option_string(options_json, "computeUnits",
+          dinf_option_string(options_json, "coremlComputeUnits"));
   std::transform(requested.begin(), requested.end(), requested.begin(),
                  [](unsigned char c) {
                    return static_cast<char>(std::tolower(c));
                  });
   if (requested.empty()) {
-    if (dmf_options_contains_token(options_json, "ane")) {
+    if (dinf_options_contains_token(options_json, "ane")) {
       return MLComputeUnitsCPUAndNeuralEngine;
     }
-    if (dmf_options_contains_token(options_json, "gpu")) {
+    if (dinf_options_contains_token(options_json, "gpu")) {
       return MLComputeUnitsCPUAndGPU;
     }
-    if (dmf_options_contains_token(options_json, "cpu")) {
+    if (dinf_options_contains_token(options_json, "cpu")) {
       return MLComputeUnitsCPUOnly;
     }
     return MLComputeUnitsCPUAndNeuralEngine;
@@ -81,13 +81,13 @@ std::string compute_units_name(MLComputeUnits units) {
 
 MLMultiArrayDataType coreml_dtype(int32_t dtype, std::string* error) {
   switch (dtype) {
-    case DMF_DTYPE_FLOAT32:
+    case DINF_DTYPE_FLOAT32:
       return MLMultiArrayDataTypeFloat32;
-    case DMF_DTYPE_FLOAT64:
+    case DINF_DTYPE_FLOAT64:
       return MLMultiArrayDataTypeDouble;
-    case DMF_DTYPE_INT32:
+    case DINF_DTYPE_INT32:
       return MLMultiArrayDataTypeInt32;
-    case DMF_DTYPE_FLOAT16:
+    case DINF_DTYPE_FLOAT16:
       return MLMultiArrayDataTypeFloat16;
     default:
       if (error != nullptr) {
@@ -97,23 +97,23 @@ MLMultiArrayDataType coreml_dtype(int32_t dtype, std::string* error) {
   }
 }
 
-int32_t dmf_dtype(MLMultiArrayDataType dtype) {
+int32_t dinf_dtype(MLMultiArrayDataType dtype) {
   switch (dtype) {
     case MLMultiArrayDataTypeFloat32:
-      return DMF_DTYPE_FLOAT32;
+      return DINF_DTYPE_FLOAT32;
     case MLMultiArrayDataTypeDouble:
-      return DMF_DTYPE_FLOAT64;
+      return DINF_DTYPE_FLOAT64;
     case MLMultiArrayDataTypeInt32:
-      return DMF_DTYPE_INT32;
+      return DINF_DTYPE_INT32;
     case MLMultiArrayDataTypeFloat16:
-      return DMF_DTYPE_FLOAT16;
+      return DINF_DTYPE_FLOAT16;
     default:
       return 0;
   }
 }
 
 size_t array_byte_length(MLMultiArray* array) {
-  const size_t dtype_size = dmf_dtype_size(dmf_dtype(array.dataType));
+  const size_t dtype_size = dinf_dtype_size(dinf_dtype(array.dataType));
   if (dtype_size == 0) {
     return 0;
   }
@@ -124,7 +124,7 @@ size_t array_byte_length(MLMultiArray* array) {
   return count * dtype_size;
 }
 
-MLMultiArray* make_multi_array(const DmfNamedTensor& input, std::string* error) {
+MLMultiArray* make_multi_array(const DartInferenceNamedTensor& input, std::string* error) {
   NSMutableArray<NSNumber*>* shape = [NSMutableArray array];
   for (int32_t i = 0; i < input.tensor.rank; ++i) {
     [shape addObject:@(input.tensor.shape[i])];
@@ -266,8 +266,8 @@ std::vector<std::string> discover_model_paths(
   }
 
   const std::string requested_mode =
-      dmf_option_string(options_json, "coremlMode",
-          dmf_option_string(options_json, "mode", "decode"));
+      dinf_option_string(options_json, "coremlMode",
+          dinf_option_string(options_json, "mode", "decode"));
   const bool wants_prefill = requested_mode == "prefill";
   std::vector<std::string> chunks = wants_prefill
       ? discover_chunk_paths(model_path, "prefill_chunk")
@@ -358,7 +358,7 @@ bool is_pipeline_spec(const std::filesystem::path& path, json* spec) {
     return false;
   }
   const std::string format = parsed.value("format", "");
-  if (!format.empty() && format != "dart_mlx_ffi.coreml_pipeline.v1") {
+  if (!format.empty() && format != "dart_inference.coreml_pipeline.v1") {
     return false;
   }
   *spec = std::move(parsed);
@@ -451,7 +451,7 @@ std::string json_counts(const std::map<std::string, int>& counts) {
     }
     first = false;
     out += "\"";
-    out += dmf_json_escape(entry.first);
+    out += dinf_json_escape(entry.first);
     out += "\":";
     out += std::to_string(entry.second);
   }
@@ -551,10 +551,10 @@ std::string compute_plan_audit_json(
     const std::vector<std::string>& paths,
     MLModelConfiguration* config,
     const char* options_json) {
-  const bool enabled = dmf_option_bool(
+  const bool enabled = dinf_option_bool(
       options_json,
       "computePlanAudit",
-      dmf_option_bool(options_json, "diagnostics", false));
+      dinf_option_bool(options_json, "diagnostics", false));
   if (!enabled) {
     return "{\"enabled\":false}";
   }
@@ -579,7 +579,7 @@ std::string compute_plan_audit_json(
     out += ",\"operator_counts\":";
     out += json_counts(audit.operators);
     out += ",\"errors\":";
-    out += dmf_json_string_array(audit.errors);
+    out += dinf_json_string_array(audit.errors);
     out += "}";
     return out;
   }
@@ -679,7 +679,7 @@ bool scatter_embeddings(
     return false;
   }
   const size_t index_count =
-      array_byte_length(indices) / dmf_dtype_size(dmf_dtype(indices.dataType));
+      array_byte_length(indices) / dinf_dtype_size(dinf_dtype(indices.dataType));
   if (index_count != static_cast<size_t>(updates.shape[0].longLongValue)) {
     *error = "scatter_embeddings update count does not match index count";
     return false;
@@ -695,7 +695,7 @@ bool scatter_embeddings(
   }
   const size_t total_bytes = array_byte_length(base);
   const size_t row_bytes = static_cast<size_t>(hidden) *
-                           dmf_dtype_size(dmf_dtype(base.dataType));
+                           dinf_dtype_size(dinf_dtype(base.dataType));
   std::memcpy(merged.dataPointer, base.dataPointer, total_bytes);
   const auto* update_bytes = static_cast<const uint8_t*>(updates.dataPointer);
   auto* merged_bytes = static_cast<uint8_t*>(merged.dataPointer);
@@ -721,7 +721,7 @@ bool scatter_embeddings(
   return true;
 }
 
-class CoreMlSession final : public DmfRuntimeSession {
+class CoreMlSession final : public DinfRuntimeSession {
  public:
   CoreMlSession(
       std::vector<CoreMlStage> stages,
@@ -742,9 +742,9 @@ class CoreMlSession final : public DmfRuntimeSession {
         requested_outputs_(std::move(requested_outputs)) {}
 
   int Run(
-      const DmfNamedTensor* inputs,
+      const DartInferenceNamedTensor* inputs,
       size_t input_count,
-      DmfNamedTensor** outputs,
+      DartInferenceNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     NSMutableDictionary<NSString*, MLFeatureValue*>* dict =
@@ -840,18 +840,18 @@ class CoreMlSession final : public DmfRuntimeSession {
     NSMutableArray<NSString*>* names =
         [NSMutableArray arrayWithArray:final_outputs.allKeys];
     [names sortUsingSelector:@selector(compare:)];
-    std::vector<DmfNamedTensor> produced;
+    std::vector<DartInferenceNamedTensor> produced;
     for (NSString* name in names) {
       MLFeatureValue* value = final_outputs[name];
       MLMultiArray* array = value.multiArrayValue;
       if (array == nil) {
         continue;
       }
-      const int32_t dtype = dmf_dtype(array.dataType);
+      const int32_t dtype = dinf_dtype(array.dataType);
       if (dtype == 0) {
         continue;
       }
-      produced.push_back(dmf_make_tensor(
+      produced.push_back(dinf_make_tensor(
           name.UTF8String,
           dtype,
           shape_of(array),
@@ -859,23 +859,23 @@ class CoreMlSession final : public DmfRuntimeSession {
           array_byte_length(array)));
     }
     *output_count = produced.size();
-    *outputs = static_cast<DmfNamedTensor*>(
-        std::malloc(sizeof(DmfNamedTensor) * produced.size()));
+    *outputs = static_cast<DartInferenceNamedTensor*>(
+        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DmfNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
     }
     return 0;
   }
 
   std::string DiagnosticsJson() const override {
     return std::string("{\"engine\":\"coreml\",\"compute_units\":\"") +
-           dmf_json_escape(compute_units_) + "\",\"layout\":\"" +
-           dmf_json_escape(layout_) + "\",\"mode\":\"" +
-           dmf_json_escape(mode_) + "\",\"loaded_models\":" +
+           dinf_json_escape(compute_units_) + "\",\"layout\":\"" +
+           dinf_json_escape(layout_) + "\",\"mode\":\"" +
+           dinf_json_escape(mode_) + "\",\"loaded_models\":" +
            std::to_string(loaded_model_count()) +
            ",\"stage_count\":" + std::to_string(stages_.size()) +
-           ",\"input_names\":" + dmf_json_string_array(input_names_) +
-           ",\"output_names\":" + dmf_json_string_array(output_names_) +
+           ",\"input_names\":" + dinf_json_string_array(input_names_) +
+           ",\"output_names\":" + dinf_json_string_array(output_names_) +
            ",\"stages\":" + stages_json() +
            ",\"compute_plan\":" +
            compute_plan_audit_ + "}";
@@ -888,12 +888,12 @@ class CoreMlSession final : public DmfRuntimeSession {
       if (i > 0) {
         out += ",";
       }
-      out += "{\"name\":\"" + dmf_json_escape(stages_[i].name) +
+      out += "{\"name\":\"" + dinf_json_escape(stages_[i].name) +
              "\"";
       if (!stages_[i].op.empty()) {
-        out += ",\"op\":\"" + dmf_json_escape(stages_[i].op) + "\"";
+        out += ",\"op\":\"" + dinf_json_escape(stages_[i].op) + "\"";
       } else {
-        out += ",\"model\":\"" + dmf_json_escape(stages_[i].path) + "\"";
+        out += ",\"model\":\"" + dinf_json_escape(stages_[i].path) + "\"";
       }
       out += "}";
     }
@@ -923,7 +923,7 @@ class CoreMlSession final : public DmfRuntimeSession {
 
 }  // namespace
 
-DmfRuntimeSession* dmf_create_coreml_session(
+DinfRuntimeSession* dinf_create_coreml_session(
     const char* model_path,
     const char* options_json,
     std::string* error) {

@@ -619,7 +619,7 @@ nvtx = [
 ]
 
 [[package]]
-name = "dart-mlx-ffi-bench"
+name = "dart-inference-bench"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

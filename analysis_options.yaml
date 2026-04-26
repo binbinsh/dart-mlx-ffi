@@ -4,7 +4,6 @@ include: package:flutter_lints/flutter.yaml
 # https://dart.dev/guides/language/analysis-options
 analyzer:
   exclude:
-    - lib/src/raw/mlx_bindings.g.dart
     - benchmark/**
     - tool/**
     - example/**

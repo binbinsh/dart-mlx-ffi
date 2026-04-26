@@ -52,11 +52,11 @@ class LiteRtEnvironment:
     def to_env(self) -> dict[str, str]:
         values: dict[str, str] = {}
         if self.library is not None:
-            values["DART_MLX_LITERT_LIBRARY"] = str(self.library)
+            values["DART_INFERENCE_LITERT_LIBRARY"] = str(self.library)
         if self.runtime_library is not None:
-            values["DART_MLX_TFLITE_LIBRARY"] = str(self.runtime_library)
+            values["DART_INFERENCE_TFLITE_LIBRARY"] = str(self.runtime_library)
         if self.extra_libraries:
-            values["DART_MLX_LITERT_EXTRA_LIBRARIES"] = os.pathsep.join(
+            values["DART_INFERENCE_LITERT_EXTRA_LIBRARIES"] = os.pathsep.join(
                 str(path) for path in self.extra_libraries
             )
         return values
@@ -147,21 +147,21 @@ def resolve_litert_environment(
 def _resolve_version(package_version: str, target_os: str) -> str:
     env = os.environ
     if target_os == "android":
-        explicit = env.get("DART_MLX_LITERT_ANDROID_VERSION") or env.get(
-            "DART_MLX_TFLITE_ANDROID_VERSION"
+        explicit = env.get("DART_INFERENCE_LITERT_ANDROID_VERSION") or env.get(
+            "DART_INFERENCE_TFLITE_ANDROID_VERSION"
         )
         if explicit:
             return explicit
-        explicit = env.get("DART_MLX_LITERT_VERSION") or env.get(
-            "DART_MLX_TFLITE_VERSION"
+        explicit = env.get("DART_INFERENCE_LITERT_VERSION") or env.get(
+            "DART_INFERENCE_TFLITE_VERSION"
         )
         if explicit:
             return explicit
-        default_android = env.get("DART_MLX_LITERT_ANDROID_DEFAULT_VERSION")
+        default_android = env.get("DART_INFERENCE_LITERT_ANDROID_DEFAULT_VERSION")
         if default_android:
             return default_android
         return DEFAULT_ANDROID_LITERT_VERSION
-    explicit = env.get("DART_MLX_LITERT_VERSION") or env.get("DART_MLX_TFLITE_VERSION")
+    explicit = env.get("DART_INFERENCE_LITERT_VERSION") or env.get("DART_INFERENCE_TFLITE_VERSION")
     if explicit:
         return explicit
     if package_version != "unknown":
@@ -183,8 +183,8 @@ def _litert_package() -> tuple[Path | None, str]:
 def _library_candidates(package_root: Path | None) -> list[Path]:
     env = os.environ
     candidates = [
-        _path(env.get("DART_MLX_LITERT_LIBRARY")),
-        _path(env.get("DART_MLX_TFLITE_LIBRARY")),
+        _path(env.get("DART_INFERENCE_LITERT_LIBRARY")),
+        _path(env.get("DART_INFERENCE_TFLITE_LIBRARY")),
     ]
     if package_root is not None:
         candidates.extend(
@@ -214,7 +214,7 @@ def _resolve_android_library(
 ) -> Path | None:
     env = os.environ
     explicit = _path(
-        env.get("DART_MLX_LITERT_LIBRARY") or env.get("DART_MLX_TFLITE_LIBRARY")
+        env.get("DART_INFERENCE_LITERT_LIBRARY") or env.get("DART_INFERENCE_TFLITE_LIBRARY")
     )
     if explicit is not None and explicit.exists():
         return explicit.resolve()
@@ -370,7 +370,7 @@ def _first_existing(candidates: list[Path]) -> Path | None:
 
 
 def _extra_library_paths_from_env() -> list[Path]:
-    raw = os.environ.get("DART_MLX_LITERT_EXTRA_LIBRARIES", "")
+    raw = os.environ.get("DART_INFERENCE_LITERT_EXTRA_LIBRARIES", "")
     if not raw:
         return []
     items = [item.strip() for item in raw.split(os.pathsep) if item.strip()]

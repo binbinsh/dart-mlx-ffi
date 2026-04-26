@@ -16,7 +16,7 @@ from audit import audit
 
 class AuditBlockerTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_audit_blocker_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_audit_blocker_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)

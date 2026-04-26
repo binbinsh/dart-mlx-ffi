@@ -13,61 +13,60 @@
 #include <utility>
 #include <vector>
 
-#if DMF_ENABLE_ORT
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
+
+#if DINF_ENABLE_ORT
 #include <onnxruntime_c_api.h>
 #include "nlohmann/json.hpp"
 #if defined(_WIN32)
 #include <windows.h>
 #endif
 #endif
-
-#if DMF_ENABLE_ORT
+#if DINF_ENABLE_ORT
 namespace {
-
 using json = nlohmann::json;
-
 ONNXTensorElementDataType ort_dtype(int32_t dtype) {
   switch (dtype) {
-    case DMF_DTYPE_FLOAT32:
+    case DINF_DTYPE_FLOAT32:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
-    case DMF_DTYPE_INT32:
+    case DINF_DTYPE_INT32:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
-    case DMF_DTYPE_INT64:
+    case DINF_DTYPE_INT64:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
-    case DMF_DTYPE_UINT8:
+    case DINF_DTYPE_UINT8:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
-    case DMF_DTYPE_FLOAT64:
+    case DINF_DTYPE_FLOAT64:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE;
-    case DMF_DTYPE_FLOAT16:
+    case DINF_DTYPE_FLOAT16:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
-    case DMF_DTYPE_BOOL:
+    case DINF_DTYPE_BOOL:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
     default:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   }
 }
-
-int32_t dmf_dtype(ONNXTensorElementDataType dtype) {
+int32_t dinf_dtype(ONNXTensorElementDataType dtype) {
   switch (dtype) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-      return DMF_DTYPE_FLOAT32;
+      return DINF_DTYPE_FLOAT32;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
-      return DMF_DTYPE_INT32;
+      return DINF_DTYPE_INT32;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
-      return DMF_DTYPE_INT64;
+      return DINF_DTYPE_INT64;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-      return DMF_DTYPE_UINT8;
+      return DINF_DTYPE_UINT8;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:
-      return DMF_DTYPE_FLOAT64;
+      return DINF_DTYPE_FLOAT64;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
-      return DMF_DTYPE_FLOAT16;
+      return DINF_DTYPE_FLOAT16;
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
-      return DMF_DTYPE_BOOL;
+      return DINF_DTYPE_BOOL;
     default:
       return 0;
   }
 }
-
 std::string status_message(const OrtApi* api, OrtStatus* status) {
   if (status == nullptr) {
     return "";
@@ -76,7 +75,6 @@ std::string status_message(const OrtApi* api, OrtStatus* status) {
   api->ReleaseStatus(status);
   return message;
 }
-
 bool ok(const OrtApi* api, OrtStatus* status, std::string* error) {
   if (status == nullptr) {
     return true;
@@ -84,12 +82,66 @@ bool ok(const OrtApi* api, OrtStatus* status, std::string* error) {
   *error = status_message(api, status);
   return false;
 }
-
 std::string lower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
   return value;
+}
+#if defined(_WIN32)
+std::wstring utf8_to_wide(const char* value);
+#endif
+std::vector<std::string> split_path_list(const std::string& raw) {
+  std::vector<std::string> out;
+  std::string current;
+  for (const char ch : raw) {
+    if (ch == ':' || ch == ';' || ch == ',' || ch == '\n' || ch == '\r') {
+      if (!current.empty()) {
+        out.push_back(current);
+        current.clear();
+      }
+      continue;
+    }
+    current.push_back(ch);
+  }
+  if (!current.empty()) {
+    out.push_back(current);
+  }
+  return out;
+}
+
+bool preload_runtime_libraries(const char* options_json, std::string* error) {
+  const std::string raw =
+      dinf_option_string(options_json, "preloadLibraries",
+          dinf_option_string(options_json, "preloadRuntimeLibraries"));
+  if (raw.empty()) {
+    return true;
+  }
+  const bool required =
+      dinf_option_bool(options_json, "requirePreloadLibraries",
+          dinf_option_bool(options_json, "requireProvider", false));
+  for (const auto& path : split_path_list(raw)) {
+    if (path.empty()) {
+      continue;
+    }
+#if defined(_WIN32)
+    const std::wstring wide = utf8_to_wide(path.c_str());
+    HMODULE handle = LoadLibraryW(wide.c_str());
+    if (handle == nullptr && required) {
+      *error = "Failed to preload runtime library: " + path;
+      return false;
+    }
+#else
+    void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    if (handle == nullptr && required) {
+      const char* dl_error = dlerror();
+      *error = std::string("Failed to preload runtime library ") + path +
+               ": " + (dl_error == nullptr ? "" : dl_error);
+      return false;
+    }
+#endif
+  }
+  return true;
 }
 
 std::vector<std::string> available_providers(
@@ -179,14 +231,14 @@ std::string choose_provider(
     const char* options_json,
     const std::vector<std::string>& providers) {
   std::string requested =
-      dmf_option_string(options_json, "provider",
-          dmf_option_string(options_json, "executionProvider",
-              dmf_option_string(options_json, "ortProvider")));
+      dinf_option_string(options_json, "provider",
+          dinf_option_string(options_json, "executionProvider",
+              dinf_option_string(options_json, "ortProvider")));
   if (!requested.empty()) {
     return canonical_provider(requested);
   }
-  if (!dmf_options_contains_token(options_json, "gpu") &&
-      !dmf_options_contains_token(options_json, "npu")) {
+  if (!dinf_options_contains_token(options_json, "gpu") &&
+      !dinf_options_contains_token(options_json, "npu")) {
     return "CPUExecutionProvider";
   }
   const std::vector<std::string> gpu_order = {
@@ -203,7 +255,7 @@ std::string choose_provider(
       "OpenVINOExecutionProvider",
   };
   const auto& order =
-      dmf_options_contains_token(options_json, "npu") ? npu_order : gpu_order;
+      dinf_options_contains_token(options_json, "npu") ? npu_order : gpu_order;
   for (const auto& provider : order) {
     if (contains_provider(providers, provider)) {
       return provider;
@@ -227,18 +279,111 @@ bool append_provider(
     return true;
   }
   if (!contains_provider(providers, provider)) {
-    if (dmf_option_bool(options_json, "requireProvider", false)) {
+    if (dinf_option_bool(options_json, "requireProvider", false)) {
       *error = "Requested ONNX Runtime provider is unavailable: " + provider;
       return false;
     }
     return true;
   }
+
+  // Prefer provider-specific append APIs for CUDA/TensorRT. Some ONNX Runtime
+  // builds report these providers in GetAvailableProviders(), but the generic
+  // SessionOptionsAppendExecutionProvider(name, ...) path does not recognize
+  // their names.
+  if (provider == "CUDAExecutionProvider" &&
+      api->SessionOptionsAppendExecutionProvider_CUDA != nullptr) {
+    OrtCUDAProviderOptions cuda_options{};
+    cuda_options.device_id =
+        std::max(0, dinf_option_int(options_json, "deviceId", 0));
+    const int cuda_mem_limit_mb =
+        dinf_option_int(options_json, "cudaMemoryLimitMb",
+            dinf_option_int(options_json, "gpuMemoryLimitMb", 0));
+    if (cuda_mem_limit_mb > 0) {
+      cuda_options.gpu_mem_limit =
+          static_cast<size_t>(cuda_mem_limit_mb) * 1024ULL * 1024ULL;
+    }
+    const int arena_extend_strategy =
+        dinf_option_int(options_json, "cudaArenaExtendStrategy",
+            dinf_option_int(options_json, "gpuArenaExtendStrategy", -1));
+    if (arena_extend_strategy >= 0) {
+      cuda_options.arena_extend_strategy = arena_extend_strategy;
+    }
+    std::string append_error;
+    if (ok(api,
+           api->SessionOptionsAppendExecutionProvider_CUDA(
+               options,
+               &cuda_options),
+           &append_error)) {
+      if (appended != nullptr) {
+        *appended = true;
+      }
+      return true;
+    }
+    if (dinf_option_bool(options_json, "requireProvider", false)) {
+      *error = append_error;
+      return false;
+    }
+  }
+
+  if (provider == "TensorrtExecutionProvider" &&
+      api->SessionOptionsAppendExecutionProvider_TensorRT != nullptr) {
+    OrtTensorRTProviderOptions trt_options{};
+    trt_options.device_id =
+        std::max(0, dinf_option_int(options_json, "deviceId", 0));
+    trt_options.trt_max_partition_iterations =
+        std::max(0, dinf_option_int(options_json, "trtMaxPartitionIterations", 0));
+    trt_options.trt_min_subgraph_size =
+        std::max(0, dinf_option_int(options_json, "trtMinSubgraphSize", 0));
+    const int trt_workspace_mb =
+        dinf_option_int(options_json, "trtWorkspaceMemoryLimitMb",
+            dinf_option_int(options_json, "trtMaxWorkspaceSizeMb", 0));
+    if (trt_workspace_mb > 0) {
+      trt_options.trt_max_workspace_size =
+          static_cast<size_t>(trt_workspace_mb) * 1024ULL * 1024ULL;
+    }
+    trt_options.trt_fp16_enable =
+        dinf_option_bool(options_json, "trtFp16", false) ? 1 : 0;
+    trt_options.trt_int8_enable =
+        dinf_option_bool(options_json, "trtInt8", false) ? 1 : 0;
+    trt_options.trt_dump_subgraphs =
+        dinf_option_bool(options_json, "trtDumpSubgraphs", false) ? 1 : 0;
+    const std::string trt_cache_path =
+        dinf_option_string(options_json, "trtCacheDir",
+            dinf_option_string(options_json, "trtEngineCachePath"));
+    if (!trt_cache_path.empty()) {
+      trt_options.trt_engine_cache_enable = 1;
+      trt_options.trt_engine_cache_path = trt_cache_path.c_str();
+    } else {
+      trt_options.trt_engine_cache_enable =
+          dinf_option_bool(options_json, "trtEngineCacheEnable", false) ? 1 : 0;
+    }
+    trt_options.trt_force_sequential_engine_build =
+        dinf_option_bool(options_json, "trtForceSequentialEngineBuild", false)
+        ? 1
+        : 0;
+    std::string append_error;
+    if (ok(api,
+           api->SessionOptionsAppendExecutionProvider_TensorRT(
+               options,
+               &trt_options),
+           &append_error)) {
+      if (appended != nullptr) {
+        *appended = true;
+      }
+      return true;
+    }
+    if (dinf_option_bool(options_json, "requireProvider", false)) {
+      *error = append_error;
+      return false;
+    }
+  }
+
   std::string append_error;
   if (!ok(api,
           api->SessionOptionsAppendExecutionProvider(
               options, provider.c_str(), nullptr, nullptr, 0),
           &append_error)) {
-    if (dmf_option_bool(options_json, "requireProvider", false)) {
+    if (dinf_option_bool(options_json, "requireProvider", false)) {
       *error = append_error;
       return false;
     }
@@ -265,7 +410,7 @@ std::wstring utf8_to_wide(const char* value) {
 }
 #endif
 
-class OrtSessionWrapper final : public DmfRuntimeSession {
+class OrtSessionWrapper final : public DinfRuntimeSession {
  public:
   OrtSessionWrapper(
       const OrtApi* api,
@@ -305,9 +450,9 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
   const std::vector<std::string>& OutputNames() const { return output_names_; }
 
   int Run(
-      const DmfNamedTensor* inputs,
+      const DartInferenceNamedTensor* inputs,
       size_t input_count,
-      DmfNamedTensor** outputs,
+      DartInferenceNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     std::vector<OrtValue*> input_values(input_count);
@@ -372,7 +517,7 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
       return 1;
     }
 
-    std::vector<DmfNamedTensor> produced;
+    std::vector<DartInferenceNamedTensor> produced;
     for (size_t i = 0; i < output_values.size(); ++i) {
       OrtTensorTypeAndShapeInfo* info = nullptr;
       if (!ok(api_, api_->GetTensorTypeAndShape(output_values[i], &info), error)) {
@@ -389,7 +534,7 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
         release_names(owned_names);
         return 1;
       }
-      const int32_t dtype = dmf_dtype(ort_type);
+      const int32_t dtype = dinf_dtype(ort_type);
       if (dtype == 0) {
         api_->ReleaseTensorTypeAndShapeInfo(info);
         continue;
@@ -426,34 +571,34 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
         release_names(owned_names);
         return 1;
       }
-      produced.push_back(dmf_make_tensor(
+      produced.push_back(dinf_make_tensor(
           output_names[i],
           dtype,
           shape,
           data,
-          count * dmf_dtype_size(dtype)));
+          count * dinf_dtype_size(dtype)));
     }
 
     release_values(input_values);
     release_values(output_values);
     release_names(owned_names);
     *output_count = produced.size();
-    *outputs = static_cast<DmfNamedTensor*>(
-        std::malloc(sizeof(DmfNamedTensor) * produced.size()));
+    *outputs = static_cast<DartInferenceNamedTensor*>(
+        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DmfNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
     }
     return 0;
   }
 
   std::string DiagnosticsJson() const override {
     return std::string("{\"engine\":\"onnx\",\"provider\":\"") +
-           dmf_json_escape(provider_) + "\",\"provider_appended\":" +
+           dinf_json_escape(provider_) + "\",\"provider_appended\":" +
            (provider_appended_ ? "true" : "false") + ",\"num_threads\":" +
            std::to_string(num_threads_) + ",\"available_providers\":" +
-           dmf_json_string_array(available_providers_) +
-           ",\"input_names\":" + dmf_json_string_array(input_names_) +
-           ",\"output_names\":" + dmf_json_string_array(output_names_) + "}";
+           dinf_json_string_array(available_providers_) +
+           ",\"input_names\":" + dinf_json_string_array(input_names_) +
+           ",\"output_names\":" + dinf_json_string_array(output_names_) + "}";
   }
 
  private:
@@ -498,20 +643,25 @@ std::unique_ptr<OrtSessionWrapper> create_ort_session(
   OrtSession* session = nullptr;
   OrtAllocator* allocator = nullptr;
   OrtMemoryInfo* memory_info = nullptr;
-  if (!ok(api, api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dart_mlx_ffi", &env), error)) {
+  if (!ok(api, api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dart_inference", &env), error)) {
     return nullptr;
   }
   if (!ok(api, api->CreateSessionOptions(&options), error)) {
     api->ReleaseEnv(env);
     return nullptr;
   }
-  const int num_threads = std::max(1, dmf_option_int(options_json, "numThreads", 1));
+  const int num_threads = std::max(1, dinf_option_int(options_json, "numThreads", 1));
   if (!ok(api, api->SetIntraOpNumThreads(options, num_threads), error)) {
     api->ReleaseSessionOptions(options);
     api->ReleaseEnv(env);
     return nullptr;
   }
   if (!ok(api, api->SetSessionGraphOptimizationLevel(options, ORT_ENABLE_ALL), error)) {
+    api->ReleaseSessionOptions(options);
+    api->ReleaseEnv(env);
+    return nullptr;
+  }
+  if (!preload_runtime_libraries(options_json, error)) {
     api->ReleaseSessionOptions(options);
     api->ReleaseEnv(env);
     return nullptr;
@@ -601,7 +751,7 @@ std::unique_ptr<OrtSessionWrapper> create_ort_session(
       provider_appended));
 }
 
-std::vector<int64_t> tensor_shape(const DmfNativeTensor& tensor) {
+std::vector<int64_t> tensor_shape(const DartInferenceNativeTensor& tensor) {
   std::vector<int64_t> shape;
   shape.reserve(tensor.rank);
   for (int i = 0; i < tensor.rank; ++i) {
@@ -611,15 +761,15 @@ std::vector<int64_t> tensor_shape(const DmfNativeTensor& tensor) {
 }
 
 struct OwnedTensorArray {
-  DmfNamedTensor* values = nullptr;
+  DartInferenceNamedTensor* values = nullptr;
   size_t count = 0;
 
   ~OwnedTensorArray() {
-    dmf_runtime_free_tensors(values, static_cast<intptr_t>(count));
+    dinf_cpp_runtime_free_tensors(values, static_cast<intptr_t>(count));
   }
 };
 
-using TensorMap = std::map<std::string, const DmfNamedTensor*>;
+using TensorMap = std::map<std::string, const DartInferenceNamedTensor*>;
 using StringMap = std::map<std::string, std::string>;
 
 StringMap string_map_from_json(const json& value) {
@@ -662,7 +812,7 @@ std::string mapped_name(
   return found == values.end() ? fallback : found->second;
 }
 
-const DmfNamedTensor* find_tensor(
+const DartInferenceNamedTensor* find_tensor(
     const TensorMap& tensors,
     const std::string& name,
     std::string* error) {
@@ -674,11 +824,11 @@ const DmfNamedTensor* find_tensor(
   return found->second;
 }
 
-int64_t index_value(const DmfNativeTensor& tensor, size_t index) {
-  if (tensor.dtype == DMF_DTYPE_INT64) {
+int64_t index_value(const DartInferenceNativeTensor& tensor, size_t index) {
+  if (tensor.dtype == DINF_DTYPE_INT64) {
     return static_cast<const int64_t*>(tensor.data)[index];
   }
-  if (tensor.dtype == DMF_DTYPE_INT32) {
+  if (tensor.dtype == DINF_DTYPE_INT32) {
     return static_cast<const int32_t*>(tensor.data)[index];
   }
   return -1;
@@ -708,8 +858,8 @@ OwnedTensorArray* scatter_embeddings(
     *error = "scatter_embeddings expects base rank >= 2 and updates rank 2";
     return nullptr;
   }
-  if (indices->tensor.dtype != DMF_DTYPE_INT64 &&
-      indices->tensor.dtype != DMF_DTYPE_INT32) {
+  if (indices->tensor.dtype != DINF_DTYPE_INT64 &&
+      indices->tensor.dtype != DINF_DTYPE_INT32) {
     *error = "scatter_embeddings indices must be int32 or int64";
     return nullptr;
   }
@@ -732,12 +882,12 @@ OwnedTensorArray* scatter_embeddings(
     return nullptr;
   }
   const size_t index_count =
-      static_cast<size_t>(indices->tensor.byte_length / dmf_dtype_size(indices->tensor.dtype));
+      static_cast<size_t>(indices->tensor.byte_length / dinf_dtype_size(indices->tensor.dtype));
   if (index_count != static_cast<size_t>(updates->tensor.shape[0])) {
     *error = "scatter_embeddings update count does not match index count";
     return nullptr;
   }
-  const size_t row_bytes = static_cast<size_t>(hidden) * dmf_dtype_size(base->tensor.dtype);
+  const size_t row_bytes = static_cast<size_t>(hidden) * dinf_dtype_size(base->tensor.dtype);
   const auto* update_bytes = static_cast<const uint8_t*>(updates->tensor.data);
   std::vector<uint8_t> merged(static_cast<size_t>(base->tensor.byte_length));
   std::memcpy(merged.data(), base->tensor.data, merged.size());
@@ -758,8 +908,8 @@ OwnedTensorArray* scatter_embeddings(
       mapped_name(stage.outputs, "output", "inputs_embeds");
   auto* holder = new OwnedTensorArray();
   holder->count = 1;
-  holder->values = static_cast<DmfNamedTensor*>(std::malloc(sizeof(DmfNamedTensor)));
-  holder->values[0] = dmf_make_tensor(
+  holder->values = static_cast<DartInferenceNamedTensor*>(std::malloc(sizeof(DartInferenceNamedTensor)));
+  holder->values[0] = dinf_make_tensor(
       output_name.c_str(),
       base->tensor.dtype,
       tensor_shape(base->tensor),
@@ -768,7 +918,7 @@ OwnedTensorArray* scatter_embeddings(
   return holder;
 }
 
-class OrtPipelineSession final : public DmfRuntimeSession {
+class OrtPipelineSession final : public DinfRuntimeSession {
  public:
   OrtPipelineSession(
       std::string spec_path,
@@ -779,9 +929,9 @@ class OrtPipelineSession final : public DmfRuntimeSession {
         requested_outputs_(std::move(requested_outputs)) {}
 
   int Run(
-      const DmfNamedTensor* inputs,
+      const DartInferenceNamedTensor* inputs,
       size_t input_count,
-      DmfNamedTensor** outputs,
+      DartInferenceNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     TensorMap tensors;
@@ -813,7 +963,7 @@ class OrtPipelineSession final : public DmfRuntimeSession {
         continue;
       }
 
-      std::vector<DmfNamedTensor> selected;
+      std::vector<DartInferenceNamedTensor> selected;
       std::vector<std::string> selected_names;
       const auto& required = stage.session->InputNames();
       selected.reserve(required.size());
@@ -835,7 +985,7 @@ class OrtPipelineSession final : public DmfRuntimeSession {
         selected[i].name = const_cast<char*>(selected_names[i].c_str());
       }
 
-      DmfNamedTensor* stage_outputs = nullptr;
+      DartInferenceNamedTensor* stage_outputs = nullptr;
       size_t stage_output_count = 0;
       const int status = stage.session->Run(
           selected.data(),
@@ -844,7 +994,7 @@ class OrtPipelineSession final : public DmfRuntimeSession {
           &stage_output_count,
           error);
       if (status != 0) {
-        dmf_runtime_free_tensors(
+        dinf_cpp_runtime_free_tensors(
             stage_outputs,
             static_cast<intptr_t>(stage_output_count));
         return status;
@@ -872,7 +1022,7 @@ class OrtPipelineSession final : public DmfRuntimeSession {
         requested[key] = key;
       }
     }
-    std::vector<DmfNamedTensor> produced;
+    std::vector<DartInferenceNamedTensor> produced;
     for (const auto& item : requested) {
       const auto found = tensors.find(item.second);
       if (found == tensors.end()) {
@@ -880,7 +1030,7 @@ class OrtPipelineSession final : public DmfRuntimeSession {
         return 1;
       }
       const auto* source = found->second;
-      produced.push_back(dmf_make_tensor(
+      produced.push_back(dinf_make_tensor(
           item.first.c_str(),
           source->tensor.dtype,
           tensor_shape(source->tensor),
@@ -888,10 +1038,10 @@ class OrtPipelineSession final : public DmfRuntimeSession {
           source->tensor.byte_length));
     }
     *output_count = produced.size();
-    *outputs = static_cast<DmfNamedTensor*>(
-        std::malloc(sizeof(DmfNamedTensor) * produced.size()));
+    *outputs = static_cast<DartInferenceNamedTensor*>(
+        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DmfNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
     }
     return 0;
   }
@@ -902,18 +1052,18 @@ class OrtPipelineSession final : public DmfRuntimeSession {
       if (i > 0) {
         stages += ",";
       }
-      stages += "{\"name\":\"" + dmf_json_escape(stages_[i].name) + "\"";
+      stages += "{\"name\":\"" + dinf_json_escape(stages_[i].name) + "\"";
       if (!stages_[i].op.empty()) {
-        stages += ",\"op\":\"" + dmf_json_escape(stages_[i].op) + "\"";
+        stages += ",\"op\":\"" + dinf_json_escape(stages_[i].op) + "\"";
       } else {
-        stages += ",\"model\":\"" + dmf_json_escape(stages_[i].model_path) +
+        stages += ",\"model\":\"" + dinf_json_escape(stages_[i].model_path) +
                   "\",\"diagnostics\":" + stages_[i].session->DiagnosticsJson();
       }
       stages += "}";
     }
     stages += "]";
     return "{\"engine\":\"onnx\",\"pipeline\":true,\"spec\":\"" +
-           dmf_json_escape(spec_path_) + "\",\"stage_count\":" +
+           dinf_json_escape(spec_path_) + "\",\"stage_count\":" +
            std::to_string(stages_.size()) + ",\"stages\":" + stages + "}";
   }
 
@@ -937,7 +1087,7 @@ bool is_pipeline_spec(const std::filesystem::path& path, json* spec) {
     return false;
   }
   const std::string format = parsed.value("format", "");
-  if (!format.empty() && format != "dart_mlx_ffi.onnx_pipeline.v1") {
+  if (!format.empty() && format != "dart_inference.onnx_pipeline.v1") {
     return false;
   }
   *spec = std::move(parsed);
@@ -1022,17 +1172,17 @@ std::unique_ptr<OrtPipelineSession> create_pipeline_session(
 namespace {
 std::string ort_disabled_error() {
   return "ONNX Runtime backend was built without ORT headers/library. "
-         "Set DART_MLX_ENABLE_ORT=1 and provide DART_MLX_ORT_INCLUDE_DIR "
-         "and DART_MLX_ORT_LIBRARY when building.";
+         "Set DART_INFERENCE_ENABLE_ORT=1 and provide DART_INFERENCE_ORT_INCLUDE_DIR "
+         "and DART_INFERENCE_ORT_LIBRARY when building.";
 }
 }  // namespace
 #endif
 
-DmfRuntimeSession* dmf_create_onnx_session(
+DinfRuntimeSession* dinf_create_onnx_session(
     const char* model_path,
     const char* options_json,
     std::string* error) {
-#if DMF_ENABLE_ORT
+#if DINF_ENABLE_ORT
   json spec;
   if (is_pipeline_spec(model_path, &spec)) {
     auto pipeline = create_pipeline_session(model_path, spec, options_json, error);

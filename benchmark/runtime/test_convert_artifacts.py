@@ -29,7 +29,7 @@ from run_all import build_plan
 
 class ConvertArtifactsTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_convert_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_convert_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
@@ -56,7 +56,7 @@ class ConvertArtifactsTest(unittest.TestCase):
         (out / "pipeline.json").write_text(
             json.dumps(
                 {
-                    "format": "dart_mlx_ffi.coreml_pipeline.v1",
+                    "format": "dart_inference.coreml_pipeline.v1",
                     "stages": [],
                 }
             ),
@@ -457,7 +457,7 @@ class ConvertArtifactsTest(unittest.TestCase):
     def test_prepare_inputs_plan_passes_onnx_pipeline_json(self) -> None:
         artifact = self.tmp / "pipeline.json"
         artifact.write_text(
-            json.dumps({"format": "dart_mlx_ffi.onnx_pipeline.v1", "stages": []}),
+            json.dumps({"format": "dart_inference.onnx_pipeline.v1", "stages": []}),
             encoding="utf-8",
         )
         artifact_map = {
@@ -507,7 +507,7 @@ class ConvertArtifactsTest(unittest.TestCase):
     def test_vlm_prepare_inputs_uses_group_and_does_not_truncate_by_default(self) -> None:
         artifact = self.tmp / "pipeline.json"
         artifact.write_text(
-            json.dumps({"format": "dart_mlx_ffi.onnx_pipeline.v1", "stages": []}),
+            json.dumps({"format": "dart_inference.onnx_pipeline.v1", "stages": []}),
             encoding="utf-8",
         )
         artifact_map = {
@@ -558,7 +558,7 @@ class ConvertArtifactsTest(unittest.TestCase):
     def test_vlm_auto_prepare_inputs_when_tiny_fixture_is_selected(self) -> None:
         artifact = self.tmp / "pipeline.json"
         artifact.write_text(
-            json.dumps({"format": "dart_mlx_ffi.onnx_pipeline.v1", "stages": []}),
+            json.dumps({"format": "dart_inference.onnx_pipeline.v1", "stages": []}),
             encoding="utf-8",
         )
         artifact_map = {
@@ -687,7 +687,7 @@ class ConverterCommandSmokeTest(unittest.TestCase):
 
 class PrepareInputsTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_prepare_inputs_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_prepare_inputs_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
@@ -778,7 +778,7 @@ class PrepareInputsTest(unittest.TestCase):
         pipeline.write_text(
             json.dumps(
                 {
-                    "format": "dart_mlx_ffi.onnx_pipeline.v1",
+                    "format": "dart_inference.onnx_pipeline.v1",
                     "stages": [
                         {
                             "name": "merge",
@@ -819,15 +819,15 @@ class OrtEnvTest(unittest.TestCase):
         )
 
         values = env.to_env()
-        self.assertEqual(values["DART_MLX_ENABLE_ORT"], "1")
-        self.assertEqual(values["DART_MLX_ORT_INCLUDE_DIR"], "/tmp/include")
-        self.assertEqual(values["DART_MLX_ORT_LIBRARY"], "/tmp/libonnxruntime.dylib")
+        self.assertEqual(values["DART_INFERENCE_ENABLE_ORT"], "1")
+        self.assertEqual(values["DART_INFERENCE_ORT_INCLUDE_DIR"], "/tmp/include")
+        self.assertEqual(values["DART_INFERENCE_ORT_LIBRARY"], "/tmp/libonnxruntime.dylib")
         self.assertTrue(env.ready)
 
 
 class EngineGapTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_resolver_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_resolver_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
@@ -899,7 +899,7 @@ class EngineGapTest(unittest.TestCase):
                                 "decoder": "onnx/decoder.onnx",
                             },
                             "pipeline": {
-                                "format": "dart_mlx_ffi.onnx_pipeline.v1",
+                                "format": "dart_inference.onnx_pipeline.v1",
                                 "stages": [
                                     {
                                         "name": "embed",
@@ -939,7 +939,7 @@ class EngineGapTest(unittest.TestCase):
         self.assertEqual(pipeline_path.suffix, ".json")
         self.assertTrue(pipeline_path.exists())
         payload = yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["format"], "dart_mlx_ffi.onnx_pipeline.v1")
+        self.assertEqual(payload["format"], "dart_inference.onnx_pipeline.v1")
         self.assertEqual(
             payload["stages"][0]["model"],
             str(artifact_dir / "onnx" / "embed.onnx"),
@@ -997,7 +997,7 @@ class _LocalResolver(HuggingFaceArtifactResolver):
 
 class PromotionFallbackGateTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_promotion_gate_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_promotion_gate_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)

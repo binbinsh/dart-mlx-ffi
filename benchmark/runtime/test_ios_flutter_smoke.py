@@ -15,7 +15,7 @@ import ios_flutter_smoke
 class IosFlutterSmokeTest(unittest.TestCase):
     def test_extract_marker_payload(self) -> None:
         line = (
-            "DMF_RUNTIME_SMOKE_RESULT:"
+            "DINF_RUNTIME_SMOKE_RESULT:"
             '{"passed":true,"engine":"coreml","model_id":"silero_vad"}'
         )
         payload = ios_flutter_smoke.extract_marker_payload(line)
@@ -26,7 +26,7 @@ class IosFlutterSmokeTest(unittest.TestCase):
 
     def test_extract_marker_payload_invalid_json(self) -> None:
         payload = ios_flutter_smoke.extract_marker_payload(
-            "DMF_RUNTIME_SMOKE_RESULT:{invalid"
+            "DINF_RUNTIME_SMOKE_RESULT:{invalid"
         )
         self.assertIsNotNone(payload)
         assert payload is not None
@@ -35,24 +35,24 @@ class IosFlutterSmokeTest(unittest.TestCase):
 
     def test_marker_parser_chunked_payload(self) -> None:
         parser = ios_flutter_smoke.MarkerParser()
-        self.assertIsNone(parser.feed("DMF_RUNTIME_SMOKE_RESULT_BEGIN:2"))
+        self.assertIsNone(parser.feed("DINF_RUNTIME_SMOKE_RESULT_BEGIN:2"))
         self.assertIsNone(
-            parser.feed("DMF_RUNTIME_SMOKE_RESULT_CHUNK:1/2:eyJwYXNzZWQiOnRydWUs")
+            parser.feed("DINF_RUNTIME_SMOKE_RESULT_CHUNK:1/2:eyJwYXNzZWQiOnRydWUs")
         )
-        payload = parser.feed("DMF_RUNTIME_SMOKE_RESULT_CHUNK:2/2:ImVuZ2luZSI6ImNvcmVtbCJ9")
+        payload = parser.feed("DINF_RUNTIME_SMOKE_RESULT_CHUNK:2/2:ImVuZ2luZSI6ImNvcmVtbCJ9")
         self.assertIsNotNone(payload)
         assert payload is not None
         self.assertTrue(payload["passed"])
         self.assertEqual(payload["engine"], "coreml")
-        self.assertIsNone(parser.feed("DMF_RUNTIME_SMOKE_RESULT_END"))
+        self.assertIsNone(parser.feed("DINF_RUNTIME_SMOKE_RESULT_END"))
 
     def test_marker_parser_incomplete_chunks(self) -> None:
         parser = ios_flutter_smoke.MarkerParser()
-        self.assertIsNone(parser.feed("DMF_RUNTIME_SMOKE_RESULT_BEGIN:2"))
+        self.assertIsNone(parser.feed("DINF_RUNTIME_SMOKE_RESULT_BEGIN:2"))
         self.assertIsNone(
-            parser.feed("DMF_RUNTIME_SMOKE_RESULT_CHUNK:1/2:eyJwYXNzZWQiOnRydWV9")
+            parser.feed("DINF_RUNTIME_SMOKE_RESULT_CHUNK:1/2:eyJwYXNzZWQiOnRydWV9")
         )
-        payload = parser.feed("DMF_RUNTIME_SMOKE_RESULT_END")
+        payload = parser.feed("DINF_RUNTIME_SMOKE_RESULT_END")
         self.assertIsNotNone(payload)
         assert payload is not None
         self.assertFalse(payload["passed"])
@@ -75,7 +75,7 @@ class IosFlutterSmokeTest(unittest.TestCase):
             engine="coreml",
             artifact="hf://FluidInference/silero-vad-coreml/silero-vad-unified-v6.0.0.mlmodelc",
         )
-        self.assertIn("--dart-define=DMF_RUNTIME_SMOKE_ARTIFACT=hf://FluidInference/silero-vad-coreml/silero-vad-unified-v6.0.0.mlmodelc", command)
+        self.assertIn("--dart-define=DINF_RUNTIME_SMOKE_ARTIFACT=hf://FluidInference/silero-vad-coreml/silero-vad-unified-v6.0.0.mlmodelc", command)
 
 
 if __name__ == "__main__":

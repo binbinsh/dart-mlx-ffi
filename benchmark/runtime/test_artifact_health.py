@@ -18,7 +18,7 @@ from artifact_health import _classify_dart_runtime_failure, validate_artifact
 
 class ArtifactHealthTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_artifact_health_test_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_artifact_health_test_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
@@ -28,7 +28,7 @@ class ArtifactHealthTest(unittest.TestCase):
         pipeline.write_text(
             json.dumps(
                 {
-                    "format": "dart_mlx_ffi.onnx_pipeline.v1",
+                    "format": "dart_inference.onnx_pipeline.v1",
                     "stages": [{"name": "merge", "op": "scatter_embeddings"}],
                 }
             ),
@@ -45,7 +45,7 @@ class ArtifactHealthTest(unittest.TestCase):
         pipeline.write_text(
             json.dumps(
                 {
-                    "format": "dart_mlx_ffi.onnx_pipeline.v1",
+                    "format": "dart_inference.onnx_pipeline.v1",
                     "stages": [{"name": "decoder"}],
                 }
             ),

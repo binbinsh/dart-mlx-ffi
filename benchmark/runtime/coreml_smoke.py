@@ -17,12 +17,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build and run a tiny native Core ML smoke test."
     )
-    parser.add_argument("--build-dir", type=Path, default=Path("/tmp/dmf_runtime_build"))
+    parser.add_argument("--build-dir", type=Path, default=Path("/tmp/dinf_runtime_build"))
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
-    work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="dmf_coreml_smoke_"))
+    work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="dinf_coreml_smoke_"))
     try:
         result = run_smoke(build_dir=args.build_dir, work_dir=work_dir)
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -54,7 +54,7 @@ def run_smoke(*, build_dir: Path, work_dir: Path) -> dict[str, Any]:
     pipeline_path.write_text(
         json.dumps(
             {
-                "format": "dart_mlx_ffi.coreml_pipeline.v1",
+                "format": "dart_inference.coreml_pipeline.v1",
                 "stages": [
                     {
                         "name": "first",
@@ -92,7 +92,7 @@ def run_smoke(*, build_dir: Path, work_dir: Path) -> dict[str, Any]:
     scatter_path.write_text(
         json.dumps(
             {
-                "format": "dart_mlx_ffi.coreml_pipeline.v1",
+                "format": "dart_inference.coreml_pipeline.v1",
                 "stages": [
                     {
                         "name": "merge",
@@ -143,7 +143,7 @@ def run_smoke(*, build_dir: Path, work_dir: Path) -> dict[str, Any]:
             str(ROOT / "native" / "runtime"),
             "-B",
             str(build_dir),
-            "-DDMF_BUILD_CLI=ON",
+            "-DDINF_BUILD_CLI=ON",
         ]
     )
     _run(
@@ -152,11 +152,11 @@ def run_smoke(*, build_dir: Path, work_dir: Path) -> dict[str, Any]:
             "--build",
             str(build_dir),
             "--target",
-            "dart_mlx_ffi_runtime_runner",
+            "dart_inference_runtime_runner",
             "-j2",
         ]
     )
-    runner = build_dir / "dart_mlx_ffi_runtime_runner"
+    runner = build_dir / "dart_inference_runtime_runner"
     _run(
         [
             sys.executable,

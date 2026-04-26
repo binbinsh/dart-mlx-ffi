@@ -155,7 +155,7 @@ def _onnx_checks(artifact: Path) -> list[dict[str, Any]]:
     if artifact.suffix.lower() != ".json":
         return [{"name": artifact.name, "kind": "model", "path": str(artifact)}]
     spec = json.loads(artifact.read_text(encoding="utf-8"))
-    if spec.get("format") != "dart_mlx_ffi.onnx_pipeline.v1":
+    if spec.get("format") != "dart_inference.onnx_pipeline.v1":
         return [{"name": artifact.name, "kind": "model", "path": str(artifact)}]
     checks: list[dict[str, Any]] = []
     for index, stage in enumerate(spec.get("stages") or []):

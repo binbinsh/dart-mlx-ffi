@@ -1,0 +1,47 @@
+{
+  "version": "0.16.0",
+  "releaseDate": "2026-04-13",
+  "source": "https://ziglang.org/download/",
+  "artifacts": {
+    "src": {
+      "url": "https://ziglang.org/download/0.16.0/zig-0.16.0.tar.xz",
+      "sha256": "43186959edc87d5c7a1be7b7d2a25efffd22ce5807c7af99067f86f99641bfdf"
+    },
+    "x86_64-linux": {
+      "url": "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
+      "sha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+    },
+    "aarch64-linux": {
+      "url": "https://ziglang.org/download/0.16.0/zig-aarch64-linux-0.16.0.tar.xz",
+      "sha256": "ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17"
+    },
+    "arm-linux": {
+      "url": "https://ziglang.org/download/0.16.0/zig-arm-linux-0.16.0.tar.xz",
+      "sha256": "f85116bf2f9189bb6ae280c7f92f03b89c2551a88e17881c0c2df86bf4e42c50"
+    },
+    "riscv64-linux": {
+      "url": "https://ziglang.org/download/0.16.0/zig-riscv64-linux-0.16.0.tar.xz",
+      "sha256": "bc069b0f2f568f54bafbdfc1d65b12fd386ed6a652044a37aee6a4f72f14076e"
+    },
+    "x86_64-macos": {
+      "url": "https://ziglang.org/download/0.16.0/zig-x86_64-macos-0.16.0.tar.xz",
+      "sha256": "0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7"
+    },
+    "aarch64-macos": {
+      "url": "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz",
+      "sha256": "b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489"
+    },
+    "x86_64-windows": {
+      "url": "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip",
+      "sha256": "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e"
+    },
+    "aarch64-windows": {
+      "url": "https://ziglang.org/download/0.16.0/zig-aarch64-windows-0.16.0.zip",
+      "sha256": "aee38316ee4111717900f45dd3130145c39289e105541d737eb8c5ed653c78ef"
+    },
+    "x86-windows": {
+      "url": "https://ziglang.org/download/0.16.0/zig-x86-windows-0.16.0.zip",
+      "sha256": "8aee7e8a8deb998ba96cb95d89aa5fcdf32933fdc67de51d280d9e4d7396f1a0"
+    }
+  }
+}

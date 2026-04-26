@@ -1,7 +1,7 @@
 [project]
-name = "dart-mlx-ffi-bench"
+name = "dart-inference-bench"
 version = "0.0.0"
-description = "Python benchmark tooling for dart-mlx-ffi."
+description = "Python benchmark tooling for dart-inference."
 requires-python = ">=3.11"
 dependencies = [
   "espeakng-loader>=0.2.4",

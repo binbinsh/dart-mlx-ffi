@@ -18,7 +18,7 @@ from prepare_inputs import _processor_tensors
 
 class PrepareInputsProcessorFallbackTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_prepare_inputs_processor_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_prepare_inputs_processor_"))
         self.image = self.tmp / "image.png"
         self.image.write_bytes(b"png")
 

@@ -152,7 +152,7 @@ def main() -> None:
     final_artifact = output_dir / "model.tflite"
     if selected is None:
         report = {
-            "format": "dart_mlx_ffi.onnx_to_litert.v2",
+            "format": "dart_inference.onnx_to_litert.v2",
             "status": "failed",
             "sources": [source.as_dict() for source in sources],
             "attempts": attempts,
@@ -170,7 +170,7 @@ def main() -> None:
     shutil.copy2(selected_tflite, final_artifact)
 
     report = {
-        "format": "dart_mlx_ffi.onnx_to_litert.v2",
+        "format": "dart_inference.onnx_to_litert.v2",
         "status": "converted",
         "repo": selected["repo"],
         "artifact": selected["artifact"],

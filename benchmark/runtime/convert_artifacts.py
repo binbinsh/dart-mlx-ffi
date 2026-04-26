@@ -905,8 +905,8 @@ def _is_pipeline_artifact(path: Path) -> bool:
     if not isinstance(data, dict):
         return False
     return data.get("format") in {
-        "dart_mlx_ffi.coreml_pipeline.v1",
-        "dart_mlx_ffi.onnx_pipeline.v1",
+        "dart_inference.coreml_pipeline.v1",
+        "dart_inference.onnx_pipeline.v1",
     }
 
 

@@ -116,12 +116,12 @@ def flutter_command(
         "run",
         "-d",
         device_id,
-        "--dart-define=DMF_RUNTIME_SMOKE=true",
-        f"--dart-define=DMF_RUNTIME_SMOKE_MODEL={model_id}",
-        f"--dart-define=DMF_RUNTIME_SMOKE_ENGINE={engine}",
+        "--dart-define=DINF_RUNTIME_SMOKE=true",
+        f"--dart-define=DINF_RUNTIME_SMOKE_MODEL={model_id}",
+        f"--dart-define=DINF_RUNTIME_SMOKE_ENGINE={engine}",
     ]
     if artifact:
-        command.append(f"--dart-define=DMF_RUNTIME_SMOKE_ARTIFACT={artifact}")
+        command.append(f"--dart-define=DINF_RUNTIME_SMOKE_ARTIFACT={artifact}")
     return command
 
 

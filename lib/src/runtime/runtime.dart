@@ -135,10 +135,19 @@ final class ModelOutputs {
   const ModelOutputs(
     this.values, {
     this.diagnostics = const <String, Object?>{},
-  });
+    void Function()? release,
+  }) : _release = release;
 
   final Map<String, Object?> values;
   final Map<String, Object?> diagnostics;
+  final void Function()? _release;
+
+  /// Release native output buffers immediately.
+  ///
+  /// Output tensors backed by native memory must not be read after this call.
+  void close() {
+    _release?.call();
+  }
 }
 
 /// Tensor dtypes supported by native runtime backends.
@@ -158,7 +167,8 @@ final class RuntimeTensor {
     required this.dtype,
     required this.shape,
     required this.bytes,
-  });
+    Object? owner,
+  }) : _owner = owner;
 
   factory RuntimeTensor.float32(List<int> shape, Float32List data) {
     return RuntimeTensor(
@@ -188,7 +198,7 @@ final class RuntimeTensor {
     return RuntimeTensor(
       dtype: RuntimeTensorDataType.uint8,
       shape: shape,
-      bytes: Uint8List.fromList(data),
+      bytes: _copyBytes(data),
     );
   }
 
@@ -196,7 +206,7 @@ final class RuntimeTensor {
     return RuntimeTensor(
       dtype: RuntimeTensorDataType.boolean,
       shape: shape,
-      bytes: Uint8List.fromList(data),
+      bytes: _copyBytes(data),
     );
   }
 
@@ -211,6 +221,9 @@ final class RuntimeTensor {
   final RuntimeTensorDataType dtype;
   final List<int> shape;
   final Uint8List bytes;
+  // Keeps native output owners alive for external typed-data backed tensors.
+  // ignore: unused_field
+  final Object? _owner;
 
   Float32List asFloat32List() => _view<Float32List>(
     () => bytes.buffer.asFloat32List(
@@ -236,7 +249,7 @@ final class RuntimeTensor {
     ),
   );
 
-  Uint8List asUint8List() => Uint8List.fromList(bytes);
+  Uint8List asUint8List() => bytes;
 
   T _view<T extends TypedData>(T Function() create) => create();
 }
@@ -405,9 +418,7 @@ final class _SelectedRuntime {
 }
 
 Uint8List _copyBytes(TypedData data) {
-  return Uint8List.fromList(
-    data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-  );
+  return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 }
 
 /// Runtime selection policy.
@@ -478,25 +489,9 @@ final class RuntimeResolver {
     RuntimePlatform platform,
     RuntimeOptions options,
   ) {
-    final prefersAne = options.prefer.contains(Accelerator.ane);
     return switch (platform) {
-      RuntimePlatform.ios => const [
-        RuntimeEngine.coreml,
-        RuntimeEngine.mlx,
-        RuntimeEngine.onnx,
-      ],
-      RuntimePlatform.macos =>
-        prefersAne
-            ? const [
-                RuntimeEngine.coreml,
-                RuntimeEngine.mlx,
-                RuntimeEngine.onnx,
-              ]
-            : const [
-                RuntimeEngine.mlx,
-                RuntimeEngine.coreml,
-                RuntimeEngine.onnx,
-              ],
+      RuntimePlatform.ios => const [RuntimeEngine.coreml, RuntimeEngine.onnx],
+      RuntimePlatform.macos => const [RuntimeEngine.coreml, RuntimeEngine.onnx],
       RuntimePlatform.windows => const [RuntimeEngine.onnx],
       RuntimePlatform.linux => const [RuntimeEngine.onnx],
       RuntimePlatform.android => const [
@@ -504,7 +499,6 @@ final class RuntimeResolver {
         RuntimeEngine.onnx,
       ],
       RuntimePlatform.unknown => const [
-        RuntimeEngine.mlx,
         RuntimeEngine.coreml,
         RuntimeEngine.onnx,
         RuntimeEngine.litert,

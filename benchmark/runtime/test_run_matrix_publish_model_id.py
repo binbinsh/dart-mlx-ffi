@@ -18,7 +18,7 @@ from run_matrix import RuntimeCell
 
 class RunMatrixPublishModelIdTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_run_matrix_publish_id_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_run_matrix_publish_id_"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)

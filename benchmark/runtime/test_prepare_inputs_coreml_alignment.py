@@ -17,10 +17,10 @@ from prepare_inputs import _align_coreml_inputs
 
 class PrepareInputsCoreMlAlignmentTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="dmf_prepare_inputs_coreml_"))
+        self.tmp = Path(tempfile.mkdtemp(prefix="dinf_prepare_inputs_coreml_"))
         self.artifact = self.tmp / "pipeline.json"
         self.artifact.write_text(
-            json.dumps({"format": "dart_mlx_ffi.coreml_pipeline.v1", "stages": []}),
+            json.dumps({"format": "dart_inference.coreml_pipeline.v1", "stages": []}),
             encoding="utf-8",
         )
         sample = {

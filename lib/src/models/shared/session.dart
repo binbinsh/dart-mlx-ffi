@@ -1,12 +1,8 @@
 /// Public [PromptSession] interface for multi-turn cached generation.
 ///
-/// Extracted from the patterns in `Qwen35PromptSession` and
-/// `Qwen3AsrRunner`'s streaming state.  A session caches the KV state after
-/// the initial prompt so that follow-up generations start from the cached
-/// prefix, avoiding redundant prefill.
+/// A session caches provider state after the initial prompt so follow-up
+/// generations can start from the cached prefix and avoid redundant prefill.
 library;
-
-import 'cache.dart';
 
 // ---------------------------------------------------------------------------
 // Generation result
@@ -89,7 +85,7 @@ final class GenerationResult {
 /// multiple generations can share the same prompt prefix.
 ///
 /// This is the public interface — concrete implementations are provided by
-/// each model runner (e.g. Qwen3.5, PaddleOCR-VL).
+/// each model runner.
 ///
 /// Usage:
 /// ```dart
@@ -151,31 +147,36 @@ abstract interface class StreamSession {
 /// tensor from which the argmax is taken.
 ///
 /// This function manages timing, stop-token detection, and result assembly.
-typedef StepFunction = Object Function(List<int> tokens, DecodeCache cache);
+typedef StepFunction<T extends Object> = Object Function(
+  List<int> tokens,
+  T cache,
+);
 
 /// Run a greedy decode loop.
 ///
 /// [promptLogits] is the logits tensor from the prefill (last-token slice).
-/// [cache] is the (cloned) decode cache to mutate during generation.
+/// [cache] is the provider cache to mutate during generation.
 /// [argmaxFn] extracts the next token ID from a logits tensor.
 /// [stepFn] runs one decode step and returns the next logits tensor.
 /// [closeFn] disposes a logits tensor.
+/// [closeCacheFn] releases the provider cache.
 ///
 /// Returns a [GenerationResult] with full timing.
-GenerationResult greedyDecodeLoop({
+GenerationResult greedyDecodeLoop<T extends Object>({
   required List<int> promptTokenIds,
   required Object promptLogits,
-  required DecodeCache cache,
+  required T cache,
   required int maxNewTokens,
   required Set<int> stopTokenIds,
   required int Function(Object logits) argmaxFn,
-  required Object Function(int tokenId, DecodeCache cache) stepFn,
+  required Object Function(int tokenId, T cache) stepFn,
   required void Function(Object logits) closeFn,
+  required void Function(T cache) closeCacheFn,
   required double promptMs,
 }) {
   if (maxNewTokens <= 0) {
     closeFn(promptLogits);
-    cache.close();
+    closeCacheFn(cache);
     return GenerationResult(
       tokenIds: List<int>.unmodifiable(promptTokenIds),
       generatedTokenIds: const <int>[],
@@ -215,7 +216,7 @@ GenerationResult greedyDecodeLoop({
   } finally {
     decodeWatch.stop();
     closeFn(logits);
-    cache.close();
+    closeCacheFn(cache);
   }
 
   final totalMs = promptMs + decodeWatch.elapsedMicroseconds / 1000.0;

@@ -7,13 +7,13 @@ namespace {
 
 void set_error(char** out, const std::string& message) {
   if (out != nullptr) {
-    *out = dmf_copy_string(message);
+    *out = dinf_copy_string(message);
   }
 }
 
 }  // namespace
 
-extern "C" DmfRuntimeSession* dmf_runtime_create(
+extern "C" DinfRuntimeSession* dinf_cpp_runtime_create(
     int32_t engine,
     const char* model_path,
     const char* options_json,
@@ -23,16 +23,16 @@ extern "C" DmfRuntimeSession* dmf_runtime_create(
     return nullptr;
   }
   std::string message;
-  DmfRuntimeSession* session = nullptr;
+  DinfRuntimeSession* session = nullptr;
   switch (engine) {
-    case DMF_ENGINE_COREML:
-      session = dmf_create_coreml_session(model_path, options_json, &message);
+    case DINF_ENGINE_COREML:
+      session = dinf_create_coreml_session(model_path, options_json, &message);
       break;
-    case DMF_ENGINE_ONNX:
-      session = dmf_create_onnx_session(model_path, options_json, &message);
+    case DINF_ENGINE_ONNX:
+      session = dinf_create_onnx_session(model_path, options_json, &message);
       break;
-    case DMF_ENGINE_LITERT:
-      session = dmf_create_litert_session(model_path, options_json, &message);
+    case DINF_ENGINE_LITERT:
+      session = dinf_create_litert_session(model_path, options_json, &message);
       break;
     default:
       message = "Unsupported native runtime engine";
@@ -45,15 +45,15 @@ extern "C" DmfRuntimeSession* dmf_runtime_create(
   return session;
 }
 
-extern "C" void dmf_runtime_free(DmfRuntimeSession* session) {
+extern "C" void dinf_cpp_runtime_free(DinfRuntimeSession* session) {
   delete session;
 }
 
-extern "C" int32_t dmf_runtime_run(
-    DmfRuntimeSession* session,
-    const DmfNamedTensor* inputs,
+extern "C" int32_t dinf_cpp_runtime_run(
+    DinfRuntimeSession* session,
+    const DartInferenceNamedTensor* inputs,
     intptr_t input_count,
-    DmfNamedTensor** outputs,
+    DartInferenceNamedTensor** outputs,
     intptr_t* output_count,
     char** error) {
   if (session == nullptr) {
@@ -81,8 +81,8 @@ extern "C" int32_t dmf_runtime_run(
   return status;
 }
 
-extern "C" void dmf_runtime_free_tensors(
-    DmfNamedTensor* tensors,
+extern "C" void dinf_cpp_runtime_free_tensors(
+    DartInferenceNamedTensor* tensors,
     intptr_t count) {
   if (tensors == nullptr) {
     return;
@@ -95,25 +95,30 @@ extern "C" void dmf_runtime_free_tensors(
   std::free(tensors);
 }
 
-extern "C" void dmf_runtime_free_string(char* value) {
+extern "C" void dinf_cpp_runtime_free_string(char* value) {
   std::free(value);
 }
 
-extern "C" char* dmf_runtime_diagnostics_json(DmfRuntimeSession* session) {
-  if (session == nullptr) {
-    return dmf_copy_string("{}");
-  }
-  return dmf_copy_string(session->DiagnosticsJson());
+extern "C" char* dinf_cpp_runtime_backend_json() {
+  return dinf_copy_string(
+      "{\"native_backend\":\"cpp-adapter\",\"abi\":\"dinf_cpp_runtime_adapter_v1\"}");
 }
 
-DmfNamedTensor dmf_make_tensor(
+extern "C" char* dinf_cpp_runtime_diagnostics_json(DinfRuntimeSession* session) {
+  if (session == nullptr) {
+    return dinf_copy_string("{}");
+  }
+  return dinf_copy_string(session->DiagnosticsJson());
+}
+
+DartInferenceNamedTensor dinf_make_tensor(
     const char* name,
     int32_t dtype,
     const std::vector<int64_t>& shape,
     const void* data,
     size_t byte_length) {
-  DmfNamedTensor tensor{};
-  tensor.name = dmf_copy_string(name == nullptr ? "" : name);
+  DartInferenceNamedTensor tensor{};
+  tensor.name = dinf_copy_string(name == nullptr ? "" : name);
   tensor.tensor.dtype = dtype;
   tensor.tensor.rank = static_cast<int32_t>(shape.size());
   tensor.tensor.byte_length = static_cast<intptr_t>(byte_length);
@@ -132,25 +137,25 @@ DmfNamedTensor dmf_make_tensor(
   return tensor;
 }
 
-size_t dmf_dtype_size(int32_t dtype) {
+size_t dinf_dtype_size(int32_t dtype) {
   switch (dtype) {
-    case DMF_DTYPE_FLOAT32:
-    case DMF_DTYPE_INT32:
+    case DINF_DTYPE_FLOAT32:
+    case DINF_DTYPE_INT32:
       return 4;
-    case DMF_DTYPE_INT64:
-    case DMF_DTYPE_FLOAT64:
+    case DINF_DTYPE_INT64:
+    case DINF_DTYPE_FLOAT64:
       return 8;
-    case DMF_DTYPE_UINT8:
-    case DMF_DTYPE_BOOL:
+    case DINF_DTYPE_UINT8:
+    case DINF_DTYPE_BOOL:
       return 1;
-    case DMF_DTYPE_FLOAT16:
+    case DINF_DTYPE_FLOAT16:
       return 2;
     default:
       return 0;
   }
 }
 
-char* dmf_copy_string(const std::string& value) {
+char* dinf_copy_string(const std::string& value) {
   auto* out = static_cast<char*>(std::malloc(value.size() + 1));
   if (out == nullptr) {
     return nullptr;
@@ -159,7 +164,7 @@ char* dmf_copy_string(const std::string& value) {
   return out;
 }
 
-std::string dmf_json_escape(const std::string& value) {
+std::string dinf_json_escape(const std::string& value) {
   std::string out;
   out.reserve(value.size() + 2);
   for (const char c : value) {
@@ -187,14 +192,14 @@ std::string dmf_json_escape(const std::string& value) {
   return out;
 }
 
-std::string dmf_json_string_array(const std::vector<std::string>& values) {
+std::string dinf_json_string_array(const std::vector<std::string>& values) {
   std::string out = "[";
   for (size_t i = 0; i < values.size(); ++i) {
     if (i > 0) {
       out += ",";
     }
     out += "\"";
-    out += dmf_json_escape(values[i]);
+    out += dinf_json_escape(values[i]);
     out += "\"";
   }
   out += "]";

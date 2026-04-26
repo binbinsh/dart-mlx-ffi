@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:dart_mlx_ffi/runtime.dart';
+import 'package:dart_inference/runtime.dart';
 
 Map<String, Object?> readRuntimeInputsJson(String path) {
   final file = File(path);

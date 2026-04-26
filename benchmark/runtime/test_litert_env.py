@@ -31,7 +31,7 @@ class LiteRtEnvTest(unittest.TestCase):
     def test_resolve_version_android_respects_explicit_override(self) -> None:
         with mock.patch.dict(
             os.environ,
-            {"DART_MLX_LITERT_ANDROID_VERSION": "2.16.1"},
+            {"DART_INFERENCE_LITERT_ANDROID_VERSION": "2.16.1"},
             clear=True,
         ):
             version = litert_env._resolve_version(
@@ -47,7 +47,7 @@ class LiteRtEnvTest(unittest.TestCase):
             with (
                 mock.patch.dict(
                     os.environ,
-                    {"DART_MLX_LITERT_LIBRARY": str(library)},
+                    {"DART_INFERENCE_LITERT_LIBRARY": str(library)},
                     clear=False,
                 ),
                 mock.patch("litert_env._litert_package", return_value=(None, "unknown")),
@@ -59,8 +59,8 @@ class LiteRtEnvTest(unittest.TestCase):
         self.assertTrue(env.ready)
         self.assertEqual(env.library, library.resolve())
         values = env.to_env()
-        self.assertEqual(values["DART_MLX_LITERT_LIBRARY"], str(library.resolve()))
-        self.assertEqual(values["DART_MLX_TFLITE_LIBRARY"], str(library.resolve()))
+        self.assertEqual(values["DART_INFERENCE_LITERT_LIBRARY"], str(library.resolve()))
+        self.assertEqual(values["DART_INFERENCE_TFLITE_LIBRARY"], str(library.resolve()))
 
     def test_resolve_android_fetches_when_cache_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -6,7 +6,7 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
-import 'package:dart_mlx_ffi/models.dart';
+import 'package:dart_inference/models.dart';
 
 void main() {
   // -----------------------------------------------------------------------

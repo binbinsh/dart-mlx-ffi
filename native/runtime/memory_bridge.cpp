@@ -155,7 +155,7 @@ uint64_t update_peak(uint64_t value) {
 
 }  // namespace
 
-extern "C" char* dmf_runtime_memory_info_json() {
+extern "C" char* dinf_cpp_runtime_memory_info_json() {
   std::ostringstream out;
   out << "{";
 #if defined(__APPLE__)
@@ -212,5 +212,5 @@ extern "C" char* dmf_runtime_memory_info_json() {
   out << json_pair("peak_memory_bytes", 0, false);
 #endif
   out << "}";
-  return dmf_copy_string(out.str());
+  return dinf_copy_string(out.str());
 }

@@ -482,7 +482,7 @@ func runFunctionOnce(
 }
 
 final class PeakMemorySampler {
-  private let queue = DispatchQueue(label: "dart_mlx_ffi.coreml_llm.peak_memory")
+  private let queue = DispatchQueue(label: "dart_inference.coreml_llm.peak_memory")
   private var timer: DispatchSourceTimer?
   private var peak: UInt64 = 0
 
