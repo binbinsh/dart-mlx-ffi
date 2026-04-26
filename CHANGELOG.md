@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.76`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.77`.
+- Replaced Dart-side native open-option JSON encoding with the typed `dinf_open` entry ABI, leaving Zig to merge options and build the private adapter JSON.
 - Replaced Dart session-diagnostics JSON parsing with the typed `dinf_diag` entry ABI, moving adapter diagnostics JSON flattening behind Zig.
 - Replaced native memory-snapshot JSON with the typed `dinf_mem` ABI so Dart receives cross-platform memory fields without decoding native JSON.
 - Replaced runtime backend-info JSON with the typed `dinf_info` ABI, removing the Dart-side JSON decode and obsolete private adapter info symbol.

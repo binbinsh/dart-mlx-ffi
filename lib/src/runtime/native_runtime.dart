@@ -1,7 +1,6 @@
 /// Native Core ML / ONNX Runtime / LiteRT runtime adapters.
 library;
 
-import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
@@ -20,14 +19,14 @@ final _nativeInputFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((pointer) {
   }
 });
 const _infoListSep = '\x1e';
-const _diagPathSep = '\x1f';
-const _diagString = 1;
-const _diagInt = 2;
-const _diagBool = 3;
-const _diagMap = 4;
-const _diagList = 5;
-const _diagDouble = 6;
-const _diagNull = 7;
+const _entryPathSep = '\x1f';
+const _entryString = 1;
+const _entryInt = 2;
+const _entryBool = 3;
+const _entryMap = 4;
+const _entryList = 5;
+const _entryDouble = 6;
+const _entryNull = 7;
 
 /// Native runtime implementation metadata.
 abstract final class NativeRuntimeBackend {
@@ -329,6 +328,109 @@ final class NativeTensorBuffer {
   }
 }
 
+final class _ValueEntryArena {
+  _ValueEntryArena(Map<String, Object?> values) {
+    count = _countMap(values);
+    pointer = count == 0 ? ffi.nullptr : calloc<native.ValueEntryAbi>(count);
+    try {
+      var index = 0;
+      for (final entry in values.entries) {
+        index = _write(pointer, index, entry.key, entry.value);
+      }
+    } catch (_) {
+      close();
+      rethrow;
+    }
+  }
+
+  late final ffi.Pointer<native.ValueEntryAbi> pointer;
+  late final int count;
+  final List<ffi.Pointer<ffi.Char>> _strings = [];
+
+  int _write(
+    ffi.Pointer<native.ValueEntryAbi> target,
+    int index,
+    String path,
+    Object? value,
+  ) {
+    final entry = target[index];
+    entry
+      ..path = _own(path)
+      ..kind = _entryKind(value)
+      ..text = value is String ? _own(value) : ffi.nullptr
+      ..intValue = value is int ? value : 0
+      ..doubleValue = value is double ? value : 0
+      ..boolValue = value == true ? 1 : 0;
+    var next = index + 1;
+    if (value is Map) {
+      value.forEach((key, child) {
+        if (key is! String) {
+          throw ArgumentError.value(key, 'runtime option key');
+        }
+        next = _write(target, next, '$path$_entryPathSep$key', child);
+      });
+    } else if (value is List) {
+      for (var i = 0; i < value.length; i += 1) {
+        next = _write(target, next, '$path$_entryPathSep$i', value[i]);
+      }
+    }
+    return next;
+  }
+
+  ffi.Pointer<ffi.Char> _own(String value) {
+    final pointer = value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    _strings.add(pointer);
+    return pointer;
+  }
+
+  void close() {
+    for (final value in _strings) {
+      calloc.free(value);
+    }
+    _strings.clear();
+    if (pointer != ffi.nullptr) {
+      calloc.free(pointer);
+    }
+  }
+}
+
+int _countMap(Map<String, Object?> values) {
+  var count = 0;
+  for (final value in values.values) {
+    count += _countValue(value);
+  }
+  return count;
+}
+
+int _countValue(Object? value) {
+  if (value is Map) {
+    var count = 1;
+    for (final child in value.values) {
+      count += _countValue(child);
+    }
+    return count;
+  }
+  if (value is List) {
+    var count = 1;
+    for (final child in value) {
+      count += _countValue(child);
+    }
+    return count;
+  }
+  return 1;
+}
+
+int _entryKind(Object? value) {
+  if (value == null) return _entryNull;
+  if (value is String) return _entryString;
+  if (value is int) return _entryInt;
+  if (value is double) return _entryDouble;
+  if (value is bool) return _entryBool;
+  if (value is Map) return _entryMap;
+  if (value is List) return _entryList;
+  throw ArgumentError.value(value, 'runtime option value');
+}
+
 /// ModelRuntime implementation backed by the bundled native runtime bridge.
 final class NativeModelRuntime implements ModelRuntime {
   NativeModelRuntime(this.engine);
@@ -348,21 +450,19 @@ final class NativeModelRuntime implements ModelRuntime {
     }
     final error = calloc<ffi.Pointer<ffi.Char>>();
     final path = bundle.artifactPath.toNativeUtf8().cast<ffi.Char>();
-    final metadataJson = jsonEncode(
-      bundle.artifact.metadata,
-    ).toNativeUtf8().cast<ffi.Char>();
-    final backendJson = jsonEncode(
-      options.backendOptions,
-    ).toNativeUtf8().cast<ffi.Char>();
+    final metadata = _ValueEntryArena(bundle.artifact.metadata);
+    final backend = _ValueEntryArena(options.backendOptions);
     try {
-      final handle = native.openOpts(
+      final handle = native.open(
         _engineId(engine),
         path,
         _preferMask(options.prefer),
         options.diagnostics ? 1 : 0,
         options.numThreads ?? 0,
-        metadataJson,
-        backendJson,
+        metadata.pointer,
+        metadata.count,
+        backend.pointer,
+        backend.count,
         error,
       );
       if (handle == ffi.nullptr) {
@@ -374,8 +474,8 @@ final class NativeModelRuntime implements ModelRuntime {
       );
     } finally {
       calloc.free(path);
-      calloc.free(metadataJson);
-      calloc.free(backendJson);
+      metadata.close();
+      backend.close();
       calloc.free(error);
     }
   }
@@ -473,7 +573,7 @@ final class _NativeModelSession implements ModelSession {
 
   Map<String, Object?> _diagnostics() {
     final count = calloc<ffi.IntPtr>();
-    ffi.Pointer<native.DiagEntryAbi> entries = ffi.nullptr;
+    ffi.Pointer<native.ValueEntryAbi> entries = ffi.nullptr;
     try {
       entries = native.diag(_handle, count);
       final length = count.value;
@@ -538,27 +638,27 @@ final class _NativeModelSession implements ModelSession {
   }
 }
 
-List<String> _diagPath(native.DiagEntryAbi entry) {
+List<String> _diagPath(native.ValueEntryAbi entry) {
   if (entry.path == ffi.nullptr) return const <String>[];
   final text = entry.path.cast<Utf8>().toDartString();
-  return text.isEmpty ? const <String>[] : text.split(_diagPathSep);
+  return text.isEmpty ? const <String>[] : text.split(_entryPathSep);
 }
 
-Object? _diagValue(native.DiagEntryAbi entry) {
+Object? _diagValue(native.ValueEntryAbi entry) {
   switch (entry.kind) {
-    case _diagString:
+    case _entryString:
       return _staticText(entry.text);
-    case _diagInt:
+    case _entryInt:
       return entry.intValue;
-    case _diagBool:
+    case _entryBool:
       return entry.boolValue != 0;
-    case _diagMap:
+    case _entryMap:
       return <String, Object?>{};
-    case _diagList:
+    case _entryList:
       return <Object?>[];
-    case _diagDouble:
+    case _entryDouble:
       return entry.doubleValue;
-    case _diagNull:
+    case _entryNull:
       return null;
     default:
       return null;

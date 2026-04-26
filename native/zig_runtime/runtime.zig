@@ -165,6 +165,13 @@ fn cStringOrEmpty(value: [*c]const u8) []const u8 {
     return optionalCString(value) orelse "";
 }
 
+fn entrySlice(entries: [*c]const open_opts.Entry, count: isize) []const open_opts.Entry {
+    if (entries == null or count <= 0) {
+        return &.{};
+    }
+    return entries[0..@intCast(count)];
+}
+
 fn emptyMemoryInfo() MemoryAbi {
     return .{
         .native_backend = null,
@@ -540,14 +547,16 @@ fn openSession(
     return @ptrCast(resolved);
 }
 
-export fn dinf_open_opts(
+export fn dinf_open(
     engine: i32,
     model_path: [*c]const u8,
     prefer_mask: i32,
     diagnostics: i32,
     num_threads: i32,
-    metadata_json: [*c]const u8,
-    backend_json: [*c]const u8,
+    metadata_entries: [*c]const open_opts.Entry,
+    metadata_count: isize,
+    backend_entries: [*c]const open_opts.Entry,
+    backend_count: isize,
     error_out: ?*[*c]u8,
 ) ?*anyopaque {
     const allocator = std.heap.c_allocator;
@@ -557,10 +566,10 @@ export fn dinf_open_opts(
         prefer_mask,
         diagnostics != 0,
         num_threads,
-        optionalCString(metadata_json),
-        optionalCString(backend_json),
+        entrySlice(metadata_entries, metadata_count),
+        entrySlice(backend_entries, backend_count),
     ) catch {
-        setError(error_out, "invalid runtime options JSON");
+        setError(error_out, "invalid runtime options");
         return null;
     };
     defer allocator.free(options);
