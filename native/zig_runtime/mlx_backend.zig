@@ -60,6 +60,7 @@ const MlxDtype = enum(c_int) {
 
 const MlxManagedDtor = *const fn (?*anyopaque) callconv(.c) void;
 const path = std.Io.Dir.path;
+const max_config_json_bytes = 2 * 1024 * 1024;
 
 const native = if (linked and !builtin.is_test) struct {
     extern fn mlx_string_new() MlxString;
@@ -138,6 +139,7 @@ pub const SessionError = error{
     InvalidPath,
     ArtifactNotFound,
     UnsupportedArtifact,
+    InvalidConfig,
     MlxCallFailed,
     OutOfMemory,
 };
@@ -170,6 +172,33 @@ const Weights = struct {
     }
 };
 
+const ModelMetadata = struct {
+    config_path: ?[]u8,
+    tokenizer_path: ?[]u8,
+    generation_config_path: ?[]u8,
+    model_type: ?[]u8,
+    architecture: ?[]u8,
+
+    fn empty() ModelMetadata {
+        return .{
+            .config_path = null,
+            .tokenizer_path = null,
+            .generation_config_path = null,
+            .model_type = null,
+            .architecture = null,
+        };
+    }
+
+    fn deinit(self: *ModelMetadata, allocator: std.mem.Allocator) void {
+        freeOptionalString(allocator, &self.config_path);
+        freeOptionalString(allocator, &self.tokenizer_path);
+        freeOptionalString(allocator, &self.generation_config_path);
+        freeOptionalString(allocator, &self.model_type);
+        freeOptionalString(allocator, &self.architecture);
+        self.* = ModelMetadata.empty();
+    }
+};
+
 pub const Session = struct {
     allocator: std.mem.Allocator,
     model_path: []u8,
@@ -178,8 +207,10 @@ pub const Session = struct {
     artifact_kind: ArtifactKind,
     weight_file_count: usize,
     weights: Weights,
+    metadata: ModelMetadata,
 
     pub fn deinit(self: *Session) void {
+        self.metadata.deinit(self.allocator);
         self.weights.deinit();
         freeStringList(self.allocator, self.weight_paths);
         self.allocator.free(self.model_path);
@@ -210,6 +241,8 @@ pub fn createSession(
     }
     const layout = try discoverArtifact(allocator, io, model_path);
     errdefer layout.deinit(allocator);
+    var metadata = try loadModelMetadata(allocator, io, model_path);
+    errdefer metadata.deinit(allocator);
     var weights = try loadWeights(allocator, layout.weight_paths);
     errdefer weights.deinit();
     const model_path_copy = allocator.dupe(u8, model_path) catch return error.OutOfMemory;
@@ -224,6 +257,7 @@ pub fn createSession(
         .artifact_kind = layout.kind,
         .weight_file_count = layout.weight_file_count,
         .weights = weights,
+        .metadata = metadata,
     };
     return session;
 }
@@ -232,15 +266,20 @@ pub fn sessionDiagnosticsJson(
     session: *const Session,
     allocator: std.mem.Allocator,
 ) std.mem.Allocator.Error![]u8 {
-    return std.fmt.allocPrint(
+    return std.json.Stringify.valueAlloc(
         allocator,
-        "{{\"artifact_kind\":\"{s}\",\"weight_file_count\":{d},\"weights_loaded\":{},\"loaded_weight_file_count\":{d}}}",
         .{
-            artifactKindName(session.artifact_kind),
-            session.weight_file_count,
-            session.weights.loaded,
-            session.weights.loaded_file_count,
+            .artifact_kind = artifactKindName(session.artifact_kind),
+            .weight_file_count = session.weight_file_count,
+            .weights_loaded = session.weights.loaded,
+            .loaded_weight_file_count = session.weights.loaded_file_count,
+            .has_config = session.metadata.config_path != null,
+            .has_tokenizer = session.metadata.tokenizer_path != null,
+            .has_generation_config = session.metadata.generation_config_path != null,
+            .model_type = session.metadata.model_type,
+            .architecture = session.metadata.architecture,
         },
+        .{ .emit_null_optional_fields = false },
     );
 }
 
@@ -249,6 +288,7 @@ pub fn sessionErrorMessage(err: SessionError) []const u8 {
         error.InvalidPath => "Zig-owned MLX backend requires a resolved local MLX artifact path.",
         error.ArtifactNotFound => "Zig-owned MLX backend could not find the local MLX artifact.",
         error.UnsupportedArtifact => "Zig-owned MLX backend requires local MLX safetensors weights.",
+        error.InvalidConfig => "Zig-owned MLX backend could not parse the local MLX config.json.",
         error.MlxCallFailed => "Zig-owned MLX backend failed while loading safetensors through mlx-c.",
         error.OutOfMemory => "Zig-owned MLX backend ran out of memory while creating the session.",
     };
@@ -410,6 +450,108 @@ fn joinPath(
     return path.join(allocator, &.{ parent, child }) catch error.OutOfMemory;
 }
 
+fn loadModelMetadata(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    model_path: []const u8,
+) SessionError!ModelMetadata {
+    const stat = std.Io.Dir.cwd().statFile(io, model_path, .{}) catch return error.InvalidPath;
+    if (stat.kind != .directory) {
+        return ModelMetadata.empty();
+    }
+
+    var dir = std.Io.Dir.cwd().openDir(io, model_path, .{}) catch return error.InvalidPath;
+    defer dir.close(io);
+
+    var metadata = ModelMetadata.empty();
+    errdefer metadata.deinit(allocator);
+    metadata.config_path = try optionalJoinedFile(allocator, dir, io, model_path, "config.json");
+    metadata.tokenizer_path = try optionalJoinedFile(allocator, dir, io, model_path, "tokenizer.json");
+    metadata.generation_config_path = try optionalJoinedFile(allocator, dir, io, model_path, "generation_config.json");
+    if (metadata.config_path) |config_path| {
+        try parseModelConfig(allocator, io, config_path, &metadata);
+    }
+    return metadata;
+}
+
+fn optionalJoinedFile(
+    allocator: std.mem.Allocator,
+    dir: std.Io.Dir,
+    io: std.Io,
+    parent: []const u8,
+    file_name: []const u8,
+) SessionError!?[]u8 {
+    if (!fileExists(dir, io, file_name)) {
+        return null;
+    }
+    return try joinPath(allocator, parent, file_name);
+}
+
+fn parseModelConfig(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    config_path: []const u8,
+    metadata: *ModelMetadata,
+) SessionError!void {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(
+        io,
+        config_path,
+        allocator,
+        .limited(max_config_json_bytes),
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidConfig,
+    };
+    defer allocator.free(bytes);
+
+    const parsed = std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        bytes,
+        .{ .duplicate_field_behavior = .use_last },
+    ) catch return error.InvalidConfig;
+    defer parsed.deinit();
+
+    const object = switch (parsed.value) {
+        .object => |value| value,
+        else => return error.InvalidConfig,
+    };
+    metadata.model_type = try copyStringField(allocator, object, "model_type");
+    metadata.architecture = try copyFirstStringField(allocator, object, "architectures");
+}
+
+fn copyStringField(
+    allocator: std.mem.Allocator,
+    object: std.json.ObjectMap,
+    key: []const u8,
+) SessionError!?[]u8 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .string => |text| allocator.dupe(u8, text) catch return error.OutOfMemory,
+        else => null,
+    };
+}
+
+fn copyFirstStringField(
+    allocator: std.mem.Allocator,
+    object: std.json.ObjectMap,
+    key: []const u8,
+) SessionError!?[]u8 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .array => |items| {
+            if (items.items.len == 0) {
+                return null;
+            }
+            return switch (items.items[0]) {
+                .string => |text| allocator.dupe(u8, text) catch return error.OutOfMemory,
+                else => null,
+            };
+        },
+        else => null,
+    };
+}
+
 fn pathLessThan(_: void, lhs: []u8, rhs: []u8) bool {
     return std.mem.lessThan(u8, lhs, rhs);
 }
@@ -432,6 +574,13 @@ fn freeStringList(allocator: std.mem.Allocator, items: [][]u8) void {
 fn freeStringsOnly(allocator: std.mem.Allocator, items: [][]u8) void {
     for (items) |item| {
         allocator.free(item);
+    }
+}
+
+fn freeOptionalString(allocator: std.mem.Allocator, value: *?[]u8) void {
+    if (value.*) |bytes| {
+        allocator.free(bytes);
+        value.* = null;
     }
 }
 
@@ -737,6 +886,15 @@ test "MLX session discovers model.safetensors directory artifacts" {
     defer tmp.cleanup();
     const file = try tmp.dir.createFile(std.testing.io, "model.safetensors", .{});
     file.close(std.testing.io);
+    const config = try tmp.dir.createFile(std.testing.io, "config.json", .{});
+    var config_writer = config.writer(std.testing.io, &.{});
+    try config_writer.interface.writeAll("{\"model_type\":\"qwen3\",\"architectures\":[\"Qwen3ForCausalLM\"]}");
+    try config_writer.interface.flush();
+    config.close(std.testing.io);
+    const tokenizer = try tmp.dir.createFile(std.testing.io, "tokenizer.json", .{});
+    tokenizer.close(std.testing.io);
+    const generation_config = try tmp.dir.createFile(std.testing.io, "generation_config.json", .{});
+    generation_config.close(std.testing.io);
 
     const model_path = try path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(model_path);
@@ -746,10 +904,16 @@ test "MLX session discovers model.safetensors directory artifacts" {
     try std.testing.expectEqual(ArtifactKind.directory_model_safetensors, session.artifact_kind);
     try std.testing.expectEqual(@as(usize, 1), session.weight_file_count);
     try std.testing.expect(!session.weights.loaded);
+    try std.testing.expectEqualStrings("qwen3", session.metadata.model_type.?);
+    try std.testing.expectEqualStrings("Qwen3ForCausalLM", session.metadata.architecture.?);
     const json = try sessionDiagnosticsJson(session, std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_kind\":\"directory_model_safetensors\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"weights_loaded\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"has_config\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"has_tokenizer\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"has_generation_config\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"model_type\":\"qwen3\"") != null);
 }
 
 test "MLX session discovers sharded safetensors directory artifacts" {

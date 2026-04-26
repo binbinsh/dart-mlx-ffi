@@ -25,6 +25,17 @@ void main() {
       File(
         '${artifactDir.path}${Platform.pathSeparator}model.safetensors',
       ).writeAsBytesSync(const []);
+      File(
+        '${artifactDir.path}${Platform.pathSeparator}config.json',
+      ).writeAsStringSync(
+        '{"model_type":"qwen3","architectures":["Qwen3ForCausalLM"]}',
+      );
+      File(
+        '${artifactDir.path}${Platform.pathSeparator}tokenizer.json',
+      ).writeAsStringSync('{}');
+      File(
+        '${artifactDir.path}${Platform.pathSeparator}generation_config.json',
+      ).writeAsStringSync('{}');
       const spec = ModelSpec(
         id: 'zig_mlx',
         family: 'Zig MLX',
@@ -51,6 +62,11 @@ void main() {
           expect(mlxSession['weight_file_count'], 1);
           expect(mlxSession['weights_loaded'], isFalse);
           expect(mlxSession['loaded_weight_file_count'], 0);
+          expect(mlxSession['has_config'], isTrue);
+          expect(mlxSession['has_tokenizer'], isTrue);
+          expect(mlxSession['has_generation_config'], isTrue);
+          expect(mlxSession['model_type'], 'qwen3');
+          expect(mlxSession['architecture'], 'Qwen3ForCausalLM');
           final input = RuntimeTensor.float32([1], Float32List.fromList([1]));
           expect(
             () => session.run(ModelInputs({'x': input})),
