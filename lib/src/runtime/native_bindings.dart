@@ -75,6 +75,23 @@ external ffi.Pointer<ffi.Char> infoJson();
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
 external ffi.Pointer<ffi.Char> memJson();
 
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+  )
+>(symbol: 'dinf_ort_libs_json')
+external ffi.Pointer<ffi.Char> ortLibsJson(
+  ffi.Pointer<ffi.Char> runtimeEnvFile,
+  ffi.Pointer<ffi.Char> searchRoots,
+  ffi.Pointer<ffi.Char> explicitLibraries,
+  ffi.Pointer<ffi.Char> libraryDirs,
+  ffi.Pointer<ffi.Char> libraryNames,
+);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Void>)>(
   symbol: 'dinf_diag_json',
 )

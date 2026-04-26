@@ -62,14 +62,6 @@ void main() {
           '{"DART_INFERENCE_ORT_RUNTIME_LIBRARY":"${ort.path}"}',
         );
 
-      final runtimeEnv = DartInferenceRuntimeEnv.load(
-        runtimeEnvFile: envFile.path,
-      );
-      expect(
-        runtimeEnv.onnxPreloadLibraryDirectories(),
-        contains(cudaLibDir.absolute.path),
-      );
-
       final libraries = discoverDefaultOnnxRuntimePreloadLibraries(
         runtimeEnvFile: envFile.path,
       );

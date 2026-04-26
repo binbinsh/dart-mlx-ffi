@@ -1,9 +1,12 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:ffi' as ffi;
 import 'dart:typed_data';
+
+import 'package:ffi/ffi.dart';
 
 import '../models/shared/model_spec.dart';
 import '../models/shared/runtime_metadata.dart';
+import 'native_bindings.dart' as native;
 import 'runtime.dart';
 
 /// Convenience configuration for loading an ONNX Runtime session through the
@@ -155,89 +158,6 @@ const List<String> onnxCudaPreloadLibraryNames = [
   'libnvonnxparser.so.9',
 ];
 
-/// Runtime environment values used by the build hook and Dart ONNX helpers.
-///
-/// Values are loaded from `DART_INFERENCE_RUNTIME_ENV_FILE` when present, otherwise
-/// from `.dart_inference_runtime_env.json` in the current working directory or one of
-/// the caller-provided roots. Process environment values take precedence over
-/// file values.
-final class DartInferenceRuntimeEnv {
-  const DartInferenceRuntimeEnv._(this.fileValues, {this.filePath});
-
-  final Map<String, String> fileValues;
-  final String? filePath;
-
-  static DartInferenceRuntimeEnv load({
-    String? runtimeEnvFile,
-    Iterable<String> searchRoots = const [],
-  }) {
-    final file = _resolveRuntimeEnvFile(runtimeEnvFile, searchRoots);
-    final values = <String, String>{};
-    if (file != null && file.existsSync()) {
-      try {
-        final decoded = jsonDecode(file.readAsStringSync());
-        if (decoded is Map) {
-          for (final entry in decoded.entries) {
-            final key = entry.key;
-            final value = entry.value;
-            if (key is String && value is String && value.isNotEmpty) {
-              values[key] = value;
-            }
-          }
-        }
-      } catch (_) {
-        // Malformed local env files should not prevent explicit CLI/env config.
-      }
-    }
-    return DartInferenceRuntimeEnv._(values, filePath: file?.path);
-  }
-
-  String? value(String name) {
-    final envValue = Platform.environment[name];
-    if (envValue != null && envValue.isNotEmpty) {
-      return envValue;
-    }
-    final fileValue = fileValues[name];
-    if (fileValue != null && fileValue.isNotEmpty) {
-      return fileValue;
-    }
-    return null;
-  }
-
-  List<String> splitPaths(String name) => _splitRuntimePathList(value(name));
-
-  List<String> onnxPreloadLibraryDirectories({
-    Iterable<String> extraDirectories = const [],
-  }) {
-    final dirs = <String>[
-      ...extraDirectories,
-      ...splitPaths('DART_INFERENCE_NATIVE_LIBRARY_DIRS'),
-      ...splitPaths('DART_INFERENCE_CUDA_LIBRARY_DIRS'),
-      ...splitPaths('DART_INFERENCE_CUDA_LIB_DIRS'),
-      ...splitPaths('DART_INFERENCE_TENSORRT_LIBRARY_DIRS'),
-      ?value('DART_INFERENCE_CUDA_LIB_DIR'),
-      ?value('DART_INFERENCE_TENSORRT_LIB_DIR'),
-    ];
-    for (final name in const [
-      'DART_INFERENCE_ORT_RUNTIME_LIBRARY',
-      'DART_INFERENCE_ORT_LIBRARY',
-    ]) {
-      final library = value(name);
-      if (library == null || library.isEmpty) {
-        continue;
-      }
-      final file = File(library).absolute;
-      final libDir = file.parent;
-      dirs.add(libDir.path);
-      final ortRoot = libDir.parent;
-      final runtimeRoot = ortRoot.parent;
-      dirs.add('${runtimeRoot.path}/cuda/lib');
-      dirs.add('${runtimeRoot.path}/tensorrt/lib');
-    }
-    return _dedupeExistingDirectories(dirs);
-  }
-}
-
 List<String> discoverDefaultOnnxRuntimePreloadLibraries({
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
@@ -245,15 +165,11 @@ List<String> discoverDefaultOnnxRuntimePreloadLibraries({
   String? runtimeEnvFile,
   Iterable<String> runtimeEnvSearchRoots = const [],
 }) {
-  final runtimeEnv = DartInferenceRuntimeEnv.load(
+  return _ortLibs(
     runtimeEnvFile: runtimeEnvFile,
-    searchRoots: runtimeEnvSearchRoots,
-  );
-  return discoverOnnxRuntimePreloadLibraries(
+    runtimeEnvSearchRoots: runtimeEnvSearchRoots,
     explicitLibraries: explicitLibraries,
-    libraryDirectories: runtimeEnv.onnxPreloadLibraryDirectories(
-      extraDirectories: libraryDirectories,
-    ),
+    libraryDirectories: libraryDirectories,
     libraryNames: libraryNames,
   );
 }
@@ -262,93 +178,59 @@ List<String> discoverOnnxRuntimePreloadLibraries({
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
   Iterable<String> libraryNames = onnxCudaPreloadLibraryNames,
-}) {
-  final seen = <String>{};
-  final out = <String>[];
-  void add(String path) {
-    if (path.isEmpty) {
-      return;
-    }
-    final absolute = File(path).absolute.path;
-    if (seen.add(absolute)) {
-      out.add(absolute);
-    }
-  }
-
-  for (final path in explicitLibraries) {
-    if (File(path).existsSync()) {
-      add(path);
-    }
-  }
-  for (final directory in libraryDirectories) {
-    if (directory.isEmpty || !Directory(directory).existsSync()) {
-      continue;
-    }
-    for (final name in libraryNames) {
-      final path = '$directory/$name';
-      if (File(path).existsSync()) {
-        add(path);
-      }
-    }
-  }
-  return out;
-}
+}) => _ortLibs(
+  explicitLibraries: explicitLibraries,
+  libraryDirectories: libraryDirectories,
+  libraryNames: libraryNames,
+);
 
 String encodeOnnxRuntimePreloadLibraries(Iterable<String> libraries) {
   return libraries.where((path) => path.isNotEmpty).join(':');
 }
 
-File? _resolveRuntimeEnvFile(
+List<String> _ortLibs({
   String? runtimeEnvFile,
-  Iterable<String> searchRoots,
-) {
-  for (final candidate in [
-    runtimeEnvFile,
-    Platform.environment['DART_INFERENCE_RUNTIME_ENV_FILE'],
-    '${Directory.current.path}/.dart_inference_runtime_env.json',
-    for (final root in searchRoots) '$root/.dart_inference_runtime_env.json',
-  ]) {
-    if (candidate == null || candidate.isEmpty) {
-      continue;
+  Iterable<String> runtimeEnvSearchRoots = const [],
+  Iterable<String> explicitLibraries = const [],
+  Iterable<String> libraryDirectories = const [],
+  Iterable<String> libraryNames = onnxCudaPreloadLibraryNames,
+}) {
+  final envFile = _nativeText(runtimeEnvFile ?? '');
+  final roots = _nativeText(_pack(runtimeEnvSearchRoots));
+  final explicit = _nativeText(_pack(explicitLibraries));
+  final dirs = _nativeText(_pack(libraryDirectories));
+  final names = _nativeText(_pack(libraryNames));
+  ffi.Pointer<ffi.Char> result = ffi.nullptr;
+  try {
+    result = native.ortLibsJson(envFile, roots, explicit, dirs, names);
+    if (result == ffi.nullptr) {
+      return const [];
     }
-    final file = File(candidate).absolute;
-    if (file.existsSync()) {
-      return file;
+    final decoded = jsonDecode(result.cast<Utf8>().toDartString());
+    if (decoded is! List) {
+      return const [];
     }
+    return [
+      for (final value in decoded)
+        if (value is String && value.isNotEmpty) value,
+    ];
+  } finally {
+    if (result != ffi.nullptr) {
+      native.freeStr(result);
+    }
+    calloc
+      ..free(envFile)
+      ..free(roots)
+      ..free(explicit)
+      ..free(dirs)
+      ..free(names);
   }
-  return null;
 }
 
-List<String> _splitRuntimePathList(String? raw) {
-  if (raw == null || raw.isEmpty) {
-    return const [];
-  }
-  final separators = Platform.isWindows
-      ? RegExp(r'[;,\n\r]+')
-      : RegExp(r'[:,;\n\r]+');
-  final out = <String>[];
-  final seen = <String>{};
-  for (final part in raw.split(separators)) {
-    final path = part.trim();
-    if (path.isEmpty || !seen.add(path)) {
-      continue;
-    }
-    out.add(path);
-  }
-  return out;
+ffi.Pointer<ffi.Char> _nativeText(String value) {
+  return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
 }
 
-List<String> _dedupeExistingDirectories(Iterable<String> dirs) {
-  final out = <String>[];
-  final seen = <String>{};
-  for (final dir in dirs) {
-    if (dir.isEmpty) {
-      continue;
-    }
-    final absolute = Directory(dir).absolute.path;
-    if (seen.add(absolute) && Directory(absolute).existsSync()) {
-      out.add(absolute);
-    }
-  }
-  return out;
+String _pack(Iterable<String> values) {
+  return values.where((value) => value.isNotEmpty).join('\n');
 }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
 
 const pinned_zig_version = "0.16.0";
@@ -159,6 +160,21 @@ fn backendJson() []const u8 {
 
 fn copyBackendJson() [*c]u8 {
     return copyString(backendJson());
+}
+
+fn optionalCString(value: [*c]const u8) ?[]const u8 {
+    if (value == null) {
+        return null;
+    }
+    const len = std.mem.len(value);
+    if (len == 0) {
+        return null;
+    }
+    return value[0..len];
+}
+
+fn cStringOrEmpty(value: [*c]const u8) []const u8 {
+    return optionalCString(value) orelse "";
 }
 
 fn linuxMemoryInfoJson(allocator: std.mem.Allocator) MemoryError![*c]u8 {
@@ -802,6 +818,27 @@ export fn dinf_mem_json() [*c]u8 {
         return linuxMemoryInfoJson(std.heap.c_allocator) catch cpp.dinf_cpp_mem_json();
     }
     return cpp.dinf_cpp_mem_json();
+}
+
+export fn dinf_ort_libs_json(
+    runtime_env_file: [*c]const u8,
+    search_roots: [*c]const u8,
+    explicit_libraries: [*c]const u8,
+    library_dirs: [*c]const u8,
+    library_names: [*c]const u8,
+) [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const json = rt_env.ortLibsJson(
+        allocator,
+        std.Io.Threaded.global_single_threaded.io(),
+        optionalCString(runtime_env_file),
+        cStringOrEmpty(search_roots),
+        cStringOrEmpty(explicit_libraries),
+        cStringOrEmpty(library_dirs),
+        cStringOrEmpty(library_names),
+    ) catch return copyString("[]");
+    defer allocator.free(json);
+    return copyString(json);
 }
 
 export fn dinf_diag_json(handle: ?*anyopaque) [*c]u8 {
