@@ -58,7 +58,8 @@ Input memory:
 - The scratch buffers are owned by the session and reused across runs.
 - Names and shapes are cached per session to avoid per-run allocation.
 - True zero-copy input uses `NativeTensorBuffer`, which allocates through Zig
-  and exposes native memory as Dart typed-data views.
+  and exposes native memory as Dart typed-data views. Zig computes dtype/shape
+  byte lengths for these buffers so Dart does not duplicate tensor layout rules.
 
 Output memory:
 

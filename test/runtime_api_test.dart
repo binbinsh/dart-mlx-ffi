@@ -223,6 +223,27 @@ void main() {
         buffer.close();
       }
     });
+
+    test('uses Zig tensor allocation validation', () {
+      final empty = NativeTensorBuffer.float32([0, 3]);
+      try {
+        expect(empty.byteLength, 0);
+        expect(empty.bytes, isEmpty);
+      } finally {
+        empty.close();
+      }
+
+      expect(
+        () => NativeTensorBuffer.float32([-1]),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('invalid shape'),
+          ),
+        ),
+      );
+    });
   });
 
   group('runtime metadata JSON', () {

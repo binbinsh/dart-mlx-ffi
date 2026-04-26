@@ -80,25 +80,45 @@ final class NativeTensorBuffer {
   factory NativeTensorBuffer.allocate({
     required RuntimeTensorDataType dtype,
     required List<int> shape,
-    int? byteLength,
   }) {
-    final resolvedByteLength =
-        byteLength ?? _runtimeTensorByteLength(dtype, shape);
-    if (resolvedByteLength < 0) {
-      throw RangeError.value(
-        resolvedByteLength,
-        'byteLength',
-        'Must be non-negative',
+    if (shape.length > 0x7fffffff) {
+      throw RangeError.value(shape.length, 'shape', 'Rank must fit int32');
+    }
+    final rank = shape.length;
+    final shapePointer = rank == 0 ? ffi.nullptr : calloc<ffi.Int64>(rank);
+    final byteLength = calloc<ffi.IntPtr>();
+    final error = calloc<ffi.Pointer<ffi.Char>>();
+    try {
+      if (rank > 0) {
+        shapePointer.asTypedList(rank).setAll(0, shape);
+      }
+      final pointer = native.dart_inference_runtime_alloc_tensor_buffer(
+        _dtypeId(dtype),
+        shapePointer,
+        rank,
+        byteLength,
+        error,
       );
+      final resolvedByteLength = byteLength.value;
+      if (pointer == ffi.nullptr) {
+        if (error.value != ffi.nullptr) {
+          throw StateError(_takeError(error));
+        }
+        if (resolvedByteLength == 0) {
+          return NativeTensorBuffer._(dtype, shape, 0, ffi.nullptr);
+        }
+      }
+      if (pointer == ffi.nullptr) {
+        throw StateError('Failed to allocate native tensor buffer.');
+      }
+      return NativeTensorBuffer._(dtype, shape, resolvedByteLength, pointer);
+    } finally {
+      if (shapePointer != ffi.nullptr) {
+        calloc.free(shapePointer);
+      }
+      calloc.free(byteLength);
+      calloc.free(error);
     }
-    if (resolvedByteLength == 0) {
-      return NativeTensorBuffer._(dtype, shape, 0, ffi.nullptr);
-    }
-    final pointer = native.dart_inference_runtime_alloc(resolvedByteLength);
-    if (pointer == ffi.nullptr) {
-      throw StateError('Failed to allocate native tensor buffer.');
-    }
-    return NativeTensorBuffer._(dtype, shape, resolvedByteLength, pointer);
   }
 
   factory NativeTensorBuffer.float32(List<int> shape) =>
@@ -670,24 +690,3 @@ Uint8List _nativeBytes(ffi.Pointer<ffi.Void> pointer, int byteLength) {
   }
   return pointer.cast<ffi.Uint8>().asTypedList(byteLength);
 }
-
-int _runtimeTensorByteLength(RuntimeTensorDataType dtype, List<int> shape) {
-  var elementCount = 1;
-  for (final dim in shape) {
-    if (dim < 0) {
-      throw RangeError.value(dim, 'shape', 'Dimensions must be non-negative');
-    }
-    elementCount *= dim;
-  }
-  return elementCount * _runtimeTensorDtypeSize(dtype);
-}
-
-int _runtimeTensorDtypeSize(RuntimeTensorDataType dtype) => switch (dtype) {
-  RuntimeTensorDataType.float32 => 4,
-  RuntimeTensorDataType.int32 => 4,
-  RuntimeTensorDataType.int64 => 8,
-  RuntimeTensorDataType.uint8 => 1,
-  RuntimeTensorDataType.float64 => 8,
-  RuntimeTensorDataType.float16 => 2,
-  RuntimeTensorDataType.boolean => 1,
-};

@@ -24,7 +24,8 @@ Current shape:
 - `mlx_backend` metadata reports `enabled: true` on Apple linked builds and
   lists the currently registered MLX artifact/executor surface.
 - Hot input paths can allocate native memory through Zig and pass
-  `NativeTensorBuffer` views directly into `dart_inference_runtime_run`.
+  `NativeTensorBuffer` views directly into `dart_inference_runtime_run`; Zig
+  computes the dtype/shape byte length for those buffers.
 - Zig is pinned by the repository `.zigversion` file and
   `native/zig_runtime/toolchain.json`.
 

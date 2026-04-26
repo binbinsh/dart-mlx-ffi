@@ -102,6 +102,23 @@ external ffi.Pointer<ffi.Char> dart_inference_runtime_diagnostics_json(
 )
 external ffi.Pointer<ffi.Void> dart_inference_runtime_alloc(int byteLength);
 
+@ffi.Native<
+  ffi.Pointer<ffi.Void> Function(
+    ffi.Int32,
+    ffi.Pointer<ffi.Int64>,
+    ffi.Int32,
+    ffi.Pointer<ffi.IntPtr>,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+  )
+>(symbol: 'dart_inference_runtime_alloc_tensor_buffer')
+external ffi.Pointer<ffi.Void> dart_inference_runtime_alloc_tensor_buffer(
+  int dtype,
+  ffi.Pointer<ffi.Int64> shape,
+  int rank,
+  ffi.Pointer<ffi.IntPtr> byteLength,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> error,
+);
+
 @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>(
   symbol: 'dart_inference_runtime_free_buffer',
 )

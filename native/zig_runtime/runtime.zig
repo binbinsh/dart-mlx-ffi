@@ -46,6 +46,13 @@ const MemoryError = error{
     OutOfMemory,
 };
 
+const TensorAllocError = error{
+    UnsupportedDtype,
+    InvalidShape,
+    ByteLengthOverflow,
+    OutOfMemory,
+};
+
 const Session = struct {
     engine: i32,
     mode: SessionMode,
@@ -208,6 +215,47 @@ fn dtypeSize(dtype: i32) usize {
         @intFromEnum(Dtype.uint8), @intFromEnum(Dtype.boolean) => 1,
         @intFromEnum(Dtype.float16) => 2,
         else => 0,
+    };
+}
+
+fn tensorByteLength(
+    dtype: i32,
+    shape: [*c]const i64,
+    rank: i32,
+) TensorAllocError!usize {
+    const item_size = dtypeSize(dtype);
+    if (item_size == 0) {
+        return error.UnsupportedDtype;
+    }
+    if (rank < 0) {
+        return error.InvalidShape;
+    }
+    if (rank > 0 and shape == null) {
+        return error.InvalidShape;
+    }
+
+    var elements: usize = 1;
+    const count: usize = @intCast(rank);
+    var index: usize = 0;
+    while (index < count) : (index += 1) {
+        const dim = shape[index];
+        if (dim < 0) {
+            return error.InvalidShape;
+        }
+        const dim_usize: usize = @intCast(dim);
+        elements = std.math.mul(usize, elements, dim_usize) catch
+            return error.ByteLengthOverflow;
+    }
+    return std.math.mul(usize, elements, item_size) catch
+        error.ByteLengthOverflow;
+}
+
+fn tensorAllocErrorMessage(err: TensorAllocError) []const u8 {
+    return switch (err) {
+        error.UnsupportedDtype => "Zig runtime tensor allocation received an unsupported dtype.",
+        error.InvalidShape => "Zig runtime tensor allocation received an invalid shape.",
+        error.ByteLengthOverflow => "Zig runtime tensor allocation byte length overflowed.",
+        error.OutOfMemory => "Zig runtime tensor allocation ran out of memory.",
     };
 }
 
@@ -702,6 +750,37 @@ export fn dart_inference_runtime_alloc(byte_length: isize) ?*anyopaque {
     return std.c.malloc(len);
 }
 
+export fn dart_inference_runtime_alloc_tensor_buffer(
+    dtype: i32,
+    shape: [*c]const i64,
+    rank: i32,
+    byte_length_out: ?*isize,
+    error_out: ?*[*c]u8,
+) ?*anyopaque {
+    const out = byte_length_out orelse {
+        setError(error_out, "byte_length_out is null");
+        return null;
+    };
+    out.* = 0;
+    const byte_length = tensorByteLength(dtype, shape, rank) catch |err| {
+        setError(error_out, tensorAllocErrorMessage(err));
+        return null;
+    };
+    if (byte_length > std.math.maxInt(isize)) {
+        setError(error_out, tensorAllocErrorMessage(error.ByteLengthOverflow));
+        return null;
+    }
+    out.* = @intCast(byte_length);
+    if (byte_length == 0) {
+        return null;
+    }
+    return std.c.malloc(byte_length) orelse {
+        out.* = 0;
+        setError(error_out, tensorAllocErrorMessage(error.OutOfMemory));
+        return null;
+    };
+}
+
 export fn dart_inference_runtime_free_buffer(value: ?*anyopaque) void {
     if (value) |ptr| {
         std.c.free(ptr);
@@ -784,6 +863,59 @@ test "memory info is owned by Zig on Linux" {
         try std.testing.expect(std.mem.indexOf(u8, text, "\"native_backend\":\"zig\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, text, "\"peak_memory_bytes\"") != null);
     }
+}
+
+test "runtime tensor buffer allocation computes byte length in Zig" {
+    const shape = [_]i64{ 2, 3 };
+    var byte_length: isize = 0;
+    var error_value: [*c]u8 = null;
+    const pointer = dart_inference_runtime_alloc_tensor_buffer(
+        @intFromEnum(Dtype.float32),
+        shape[0..].ptr,
+        @intCast(shape.len),
+        &byte_length,
+        &error_value,
+    );
+    defer dart_inference_runtime_free_buffer(pointer);
+    defer dart_inference_runtime_free_string(error_value);
+    try std.testing.expect(pointer != null);
+    try std.testing.expectEqual(@as(isize, 24), byte_length);
+    try std.testing.expect(error_value == null);
+}
+
+test "runtime tensor buffer allocation keeps zero-sized tensors allocation-free" {
+    const shape = [_]i64{ 0, 3 };
+    var byte_length: isize = -1;
+    var error_value: [*c]u8 = null;
+    const pointer = dart_inference_runtime_alloc_tensor_buffer(
+        @intFromEnum(Dtype.float32),
+        shape[0..].ptr,
+        @intCast(shape.len),
+        &byte_length,
+        &error_value,
+    );
+    defer dart_inference_runtime_free_string(error_value);
+    try std.testing.expect(pointer == null);
+    try std.testing.expectEqual(@as(isize, 0), byte_length);
+    try std.testing.expect(error_value == null);
+}
+
+test "runtime tensor buffer allocation rejects invalid shapes in Zig" {
+    const shape = [_]i64{-1};
+    var byte_length: isize = -1;
+    var error_value: [*c]u8 = null;
+    const pointer = dart_inference_runtime_alloc_tensor_buffer(
+        @intFromEnum(Dtype.float32),
+        shape[0..].ptr,
+        @intCast(shape.len),
+        &byte_length,
+        &error_value,
+    );
+    defer dart_inference_runtime_free_string(error_value);
+    try std.testing.expect(pointer == null);
+    try std.testing.expectEqual(@as(isize, 0), byte_length);
+    try std.testing.expect(error_value != null);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(error_value), "invalid shape") != null);
 }
 
 test "MLX output batch moves into runtime ABI tensors" {
