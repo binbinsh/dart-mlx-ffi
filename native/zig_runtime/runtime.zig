@@ -529,6 +529,20 @@ export fn dinf_artifact_matches(
     )) 1 else 0;
 }
 
+export fn dinf_artifact_path(
+    root_path: [*c]const u8,
+    artifact_path: [*c]const u8,
+) [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const resolved = policy.artifactPath(
+        allocator,
+        cStringOrEmpty(root_path),
+        cStringOrEmpty(artifact_path),
+    ) catch return copyString("");
+    defer allocator.free(resolved);
+    return copyString(resolved);
+}
+
 export fn dinf_open(
     engine: i32,
     model_path: [*c]const u8,
@@ -964,6 +978,9 @@ test "runtime resolver policy is reported from Zig" {
         "model.safetensors",
         0,
     ));
+    const path = dinf_artifact_path("/models", "model.onnx");
+    defer dinf_free_str(path);
+    try std.testing.expectEqualStrings("/models/model.onnx", std.mem.span(path));
 }
 
 test "runtime mode is parsed from Zig-owned options JSON" {

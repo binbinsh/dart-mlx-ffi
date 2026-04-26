@@ -115,6 +115,14 @@ external int artifactMatches(
   int allowPreviewMlx,
 );
 
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
+>(symbol: 'dinf_artifact_path')
+external ffi.Pointer<ffi.Char> artifactPath(
+  ffi.Pointer<ffi.Char> rootPath,
+  ffi.Pointer<ffi.Char> artifactPath,
+);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
 external ffi.Pointer<ffi.Char> memJson();
 

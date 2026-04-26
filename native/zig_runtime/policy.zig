@@ -102,6 +102,25 @@ pub fn artifactMatches(
     return allow_preview_mlx or mlxArtifactRegistered(format, artifact_path);
 }
 
+pub fn artifactPath(
+    allocator: std.mem.Allocator,
+    root_path: []const u8,
+    artifact_path: []const u8,
+) ![]u8 {
+    if (std.mem.indexOf(u8, artifact_path, "://") != null or
+        std.mem.startsWith(u8, artifact_path, "/") or
+        root_path.len == 0)
+    {
+        return allocator.dupe(u8, artifact_path) catch return error.OutOfMemory;
+    }
+    if (std.mem.endsWith(u8, root_path, "/")) {
+        return std.fmt.allocPrint(allocator, "{s}{s}", .{ root_path, artifact_path }) catch
+            return error.OutOfMemory;
+    }
+    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ root_path, artifact_path }) catch
+        return error.OutOfMemory;
+}
+
 fn platformAllowed(platform: i32, target_platforms: ?[]const u8) bool {
     const raw = target_platforms orelse return true;
     const trimmed = std.mem.trim(u8, raw, separators());
@@ -176,4 +195,23 @@ test "runtime policy matches artifacts by platform and MLX status" {
         "model.safetensors",
         true,
     ));
+}
+
+test "runtime policy resolves artifact paths like Dart did" {
+    const allocator = std.testing.allocator;
+    const absolute = try artifactPath(allocator, "/models", "/tmp/model.onnx");
+    defer allocator.free(absolute);
+    try std.testing.expectEqualStrings("/tmp/model.onnx", absolute);
+
+    const uri = try artifactPath(allocator, "/models", "hf://org/repo/model.onnx");
+    defer allocator.free(uri);
+    try std.testing.expectEqualStrings("hf://org/repo/model.onnx", uri);
+
+    const joined = try artifactPath(allocator, "/models", "model.onnx");
+    defer allocator.free(joined);
+    try std.testing.expectEqualStrings("/models/model.onnx", joined);
+
+    const trailing = try artifactPath(allocator, "/models/", "model.onnx");
+    defer allocator.free(trailing);
+    try std.testing.expectEqualStrings("/models/model.onnx", trailing);
 }

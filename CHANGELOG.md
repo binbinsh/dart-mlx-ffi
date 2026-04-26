@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.55`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.56`.
+- Moved model bundle artifact path resolution into Zig through `dinf_artifact_path`.
 - Moved runtime artifact platform compatibility and MLX preview gating into Zig through `dinf_artifact_matches`.
 - Split Zig runtime policy into `policy.zig` and moved Dart's registered MLX artifact detection behind `dinf_mlx_artifact_registered`.
 - Moved runtime resolver engine order and default accelerator policy into Zig through `dinf_engine_order_json` and `dinf_engine_accels_json`.

@@ -120,12 +120,24 @@ final class ModelBundle {
 
   /// Resolve the artifact path relative to [rootPath] when needed.
   String get artifactPath {
-    final path = artifact.path;
-    if (path.contains('://')) return path;
-    if (path.startsWith('/')) return path;
-    if (rootPath.isEmpty) return path;
-    if (rootPath.endsWith('/')) return '$rootPath$path';
-    return '$rootPath/$path';
+    final root = rootPath.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    final path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    ffi.Pointer<ffi.Char> result = ffi.nullptr;
+    try {
+      result = native.artifactPath(root, path);
+      if (result == ffi.nullptr) {
+        return artifact.path;
+      }
+      final resolved = result.cast<Utf8>().toDartString();
+      return resolved.isEmpty ? artifact.path : resolved;
+    } finally {
+      if (result != ffi.nullptr) {
+        native.freeStr(result);
+      }
+      calloc
+        ..free(root)
+        ..free(path);
+    }
   }
 }
 
