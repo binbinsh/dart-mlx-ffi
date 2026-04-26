@@ -3,9 +3,10 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.63`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.64`.
 - Moved runtime engine/artifact selection into Zig through `dinf_resolve_json`, leaving Dart to pass a compact request and unwrap the selected artifact.
 - Moved registered-runtime fallback selection into Zig through `dinf_fallback_json`, leaving Dart to pass registered engine ids and unwrap the selected fallback artifact.
+- Moved Hugging Face default cache root platform/env policy into Zig through `dinf_hf_cache_root`.
 - Split Zig runtime tensor ABI, validation, and native buffer ownership helpers into `abi.zig` to keep `runtime.zig` below the source-size limit before further migration.
 - Moved Hugging Face artifact reference parsing, directory artifact policy, and cache path construction into Zig through `dinf_hf_*`.
 - Moved unresolved remote artifact detection into Zig through `dinf_artifact_remote`.

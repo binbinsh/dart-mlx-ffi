@@ -500,6 +500,11 @@ void main() {
   });
 
   group('HuggingFaceArtifactCache', () {
+    test('uses Zig-owned default cache root', () {
+      final cache = HuggingFaceArtifactCache();
+      expect(cache.cacheRoot, isNotEmpty);
+    });
+
     test('downloads single-file artifacts and reuses cache', () async {
       final server = await _startHfServer({
         '/acme/demo/resolve/main/onnx/model.onnx': 'onnx-bytes',

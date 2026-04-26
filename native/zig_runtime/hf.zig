@@ -1,6 +1,34 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const path = std.Io.Dir.path;
+
+pub fn defaultCacheRoot(allocator: std.mem.Allocator) ![]u8 {
+    if (try getenvOwned(allocator, "DART_INFERENCE_HF_CACHE")) |value| {
+        return value;
+    }
+    if (builtin.os.tag == .windows) {
+        if (try getenvOwned(allocator, "LOCALAPPDATA")) |base| {
+            defer allocator.free(base);
+            return path.join(allocator, &.{ base, "dart_inference", "huggingface" }) catch
+                return error.OutOfMemory;
+        }
+        if (try getenvOwned(allocator, "APPDATA")) |base| {
+            defer allocator.free(base);
+            return path.join(allocator, &.{ base, "dart_inference", "huggingface" }) catch
+                return error.OutOfMemory;
+        }
+    }
+    if (try getenvOwned(allocator, "HOME")) |home| {
+        defer allocator.free(home);
+        return path.join(allocator, &.{ home, ".cache", "dart_inference", "huggingface" }) catch
+            return error.OutOfMemory;
+    }
+    const temp_root = try tempRoot(allocator);
+    defer allocator.free(temp_root);
+    return path.join(allocator, &.{ temp_root, "dart_inference", "huggingface" }) catch
+        return error.OutOfMemory;
+}
 
 pub fn refJson(
     allocator: std.mem.Allocator,
@@ -205,6 +233,33 @@ fn endsWithIgnoreCase(value: []const u8, suffix: []const u8) bool {
     return std.ascii.eqlIgnoreCase(value[value.len - suffix.len ..], suffix);
 }
 
+fn getenvOwned(allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
+    const key = allocator.dupeZ(u8, name) catch return error.OutOfMemory;
+    defer allocator.free(key);
+    const raw = std.c.getenv(key.ptr) orelse return null;
+    const value = std.mem.span(raw);
+    if (value.len == 0) {
+        return null;
+    }
+    return allocator.dupe(u8, value) catch return error.OutOfMemory;
+}
+
+fn tempRoot(allocator: std.mem.Allocator) ![]u8 {
+    if (builtin.os.tag == .windows) {
+        if (try getenvOwned(allocator, "TEMP")) |value| {
+            return value;
+        }
+        if (try getenvOwned(allocator, "TMP")) |value| {
+            return value;
+        }
+        return allocator.dupe(u8, "C:\\Temp") catch return error.OutOfMemory;
+    }
+    if (try getenvOwned(allocator, "TMPDIR")) |value| {
+        return value;
+    }
+    return allocator.dupe(u8, "/tmp") catch return error.OutOfMemory;
+}
+
 fn jsonString(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: []const u8) !void {
     try out.append(allocator, '"');
     try jsonStringBody(allocator, out, value);
@@ -222,6 +277,12 @@ fn jsonStringBody(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: 
             else => try out.append(allocator, byte),
         }
     }
+}
+
+test "HF default cache root is Zig-owned" {
+    const value = try defaultCacheRoot(std.testing.allocator);
+    defer std.testing.allocator.free(value);
+    try std.testing.expect(value.len > 0);
 }
 
 test "HF ref JSON prefers metadata" {

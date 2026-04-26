@@ -717,6 +717,13 @@ export fn dinf_hf_ref_json(
     return copyString(json);
 }
 
+export fn dinf_hf_cache_root() [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const value = hf.defaultCacheRoot(allocator) catch return copyString("");
+    defer allocator.free(value);
+    return copyString(value);
+}
+
 export fn dinf_hf_cache_path(
     cache_root: [*c]const u8,
     repo: [*c]const u8,

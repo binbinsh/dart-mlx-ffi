@@ -143,6 +143,9 @@ external ffi.Pointer<ffi.Char> hfRefJson(
   ffi.Pointer<ffi.Char> revision,
 );
 
+@ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_hf_cache_root')
+external ffi.Pointer<ffi.Char> hfCacheRoot();
+
 @ffi.Native<
   ffi.Pointer<ffi.Char> Function(
     ffi.Pointer<ffi.Char>,

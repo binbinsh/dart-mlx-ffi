@@ -7,7 +7,6 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
-import 'package:path/path.dart' as p;
 
 import '../models/shared/runtime_metadata.dart';
 import 'native_bindings.dart' as native;
@@ -134,6 +133,22 @@ String _cachePath(
   }
 }
 
+String _cacheRoot() {
+  final result = native.hfCacheRoot();
+  if (result == ffi.nullptr) {
+    throw StateError('Failed to resolve Hugging Face cache root.');
+  }
+  try {
+    final value = result.cast<Utf8>().toDartString();
+    if (value.isEmpty) {
+      throw StateError('Failed to resolve Hugging Face cache root.');
+    }
+    return value;
+  } finally {
+    native.freeStr(result);
+  }
+}
+
 ffi.Pointer<ffi.Char> _nativeText(String value) {
   return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
 }
@@ -150,7 +165,7 @@ final class HuggingFaceArtifactCache implements RuntimeArtifactResolver {
     String? token,
     this.refresh = false,
     this.timeout = const Duration(seconds: 30),
-  }) : cacheRoot = cacheRoot ?? _defaultCacheRoot(),
+  }) : cacheRoot = cacheRoot ?? _cacheRoot(),
        endpoint = Uri.parse(endpoint),
        token =
            token ??
@@ -419,22 +434,4 @@ Future<String> _readError(HttpClientResponse response) async {
   final body = await utf8.decodeStream(response).catchError((Object _) => '');
   if (body.isEmpty) return '';
   return body.length <= 300 ? body : body.substring(0, 300);
-}
-
-String _defaultCacheRoot() {
-  final env = Platform.environment;
-  if (env['DART_INFERENCE_HF_CACHE'] case final value? when value.isNotEmpty) {
-    return value;
-  }
-  if (Platform.isWindows) {
-    final base = env['LOCALAPPDATA'] ?? env['APPDATA'];
-    if (base != null && base.isNotEmpty) {
-      return p.join(base, 'dart_inference', 'huggingface');
-    }
-  }
-  final home = env['HOME'];
-  if (home != null && home.isNotEmpty) {
-    return p.join(home, '.cache', 'dart_inference', 'huggingface');
-  }
-  return p.join(Directory.systemTemp.path, 'dart_inference', 'huggingface');
 }
