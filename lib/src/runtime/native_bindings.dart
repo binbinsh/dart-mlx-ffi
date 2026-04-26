@@ -92,6 +92,11 @@ external ffi.Pointer<ffi.Char> ortLibsJson(
   ffi.Pointer<ffi.Char> libraryNames,
 );
 
+@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'dinf_coreml_layout_json',
+)
+external ffi.Pointer<ffi.Char> coremlLayoutJson(ffi.Pointer<ffi.Char> rootPath);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Void>)>(
   symbol: 'dinf_diag_json',
 )

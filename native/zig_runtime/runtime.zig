@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const coreml = @import("coreml.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
 
@@ -837,6 +838,17 @@ export fn dinf_ort_libs_json(
         cStringOrEmpty(library_dirs),
         cStringOrEmpty(library_names),
     ) catch return copyString("[]");
+    defer allocator.free(json);
+    return copyString(json);
+}
+
+export fn dinf_coreml_layout_json(root_path: [*c]const u8) [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const json = coreml.layoutJson(
+        allocator,
+        std.Io.Threaded.global_single_threaded.io(),
+        cStringOrEmpty(root_path),
+    ) catch return copyString("{}");
     defer allocator.free(json);
     return copyString(json);
 }

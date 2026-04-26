@@ -1,7 +1,12 @@
 /// Core ML artifact layout helpers.
 library;
 
-import 'dart:io';
+import 'dart:convert';
+import 'dart:ffi' as ffi;
+
+import 'package:ffi/ffi.dart';
+
+import 'native_bindings.dart' as native;
 
 /// Discovered CoreML-LLM-style model bundle layout.
 final class CoreMlBundleLayout {
@@ -37,86 +42,44 @@ final class CoreMlBundleLayout {
 
   /// Discover a Core ML bundle rooted at [rootPath].
   factory CoreMlBundleLayout.discover(String rootPath) {
-    final file = File(rootPath);
-    if (file.existsSync() && rootPath.endsWith('.json')) {
-      return CoreMlBundleLayout(rootPath: rootPath, pipelineSpecPath: rootPath);
-    }
-    final root = Directory(rootPath);
-    if (!root.existsSync()) {
-      return CoreMlBundleLayout(rootPath: rootPath);
-    }
-
-    final entries = root.listSync().toList();
-    final config = File('${root.path}/model_config.json');
-    final decode = <_IndexedPath>[];
-    final prefill = <_IndexedPath>[];
-    final sidecars = <String>[];
-    String? monolithic;
-
-    for (final entry in entries) {
-      final name = _basename(entry.path);
-      if (_isCoreMlBundle(name)) {
-        if (name == 'model.mlmodelc' || name == 'model.mlpackage') {
-          monolithic = entry.path;
-          continue;
-        }
-        final decodeIndex = _chunkIndex(name, 'chunk');
-        if (decodeIndex != null) {
-          decode.add(_IndexedPath(decodeIndex, entry.path));
-          continue;
-        }
-        final prefillIndex = _chunkIndex(name, 'prefill_chunk');
-        if (prefillIndex != null) {
-          prefill.add(_IndexedPath(prefillIndex, entry.path));
-          continue;
-        }
+    final path = rootPath.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    ffi.Pointer<ffi.Char> result = ffi.nullptr;
+    try {
+      result = native.coremlLayoutJson(path);
+      if (result == ffi.nullptr) {
+        return CoreMlBundleLayout(rootPath: rootPath);
       }
-      if (entry is File && name != 'model_config.json') {
-        sidecars.add(entry.path);
+      final decoded = jsonDecode(result.cast<Utf8>().toDartString());
+      if (decoded is! Map<String, Object?>) {
+        return CoreMlBundleLayout(rootPath: rootPath);
       }
+      return CoreMlBundleLayout(
+        rootPath: _string(decoded['root_path']) ?? rootPath,
+        pipelineSpecPath: _string(decoded['pipeline_spec_path']),
+        modelConfigPath: _string(decoded['model_config_path']),
+        monolithicModelPath: _string(decoded['monolithic_model_path']),
+        decodeChunks: _strings(decoded['decode_chunks']),
+        prefillChunks: _strings(decoded['prefill_chunks']),
+        sidecars: _strings(decoded['sidecars']),
+      );
+    } finally {
+      if (result != ffi.nullptr) {
+        native.freeStr(result);
+      }
+      calloc.free(path);
     }
-
-    decode.sort();
-    prefill.sort();
-    sidecars.sort();
-    return CoreMlBundleLayout(
-      rootPath: root.path,
-      modelConfigPath: config.existsSync() ? config.path : null,
-      monolithicModelPath: monolithic,
-      decodeChunks: decode.map((chunk) => chunk.path).toList(),
-      prefillChunks: prefill.map((chunk) => chunk.path).toList(),
-      sidecars: sidecars,
-    );
   }
 }
 
-final class _IndexedPath implements Comparable<_IndexedPath> {
-  const _IndexedPath(this.index, this.path);
+String? _string(Object? value) =>
+    value is String && value.isNotEmpty ? value : null;
 
-  final int index;
-  final String path;
-
-  @override
-  int compareTo(_IndexedPath other) => index.compareTo(other.index);
-}
-
-bool _isCoreMlBundle(String name) =>
-    name.endsWith('.mlmodelc') || name.endsWith('.mlpackage');
-
-int? _chunkIndex(String name, String prefix) {
-  final stem = name
-      .replaceFirst(RegExp(r'\.mlmodelc$'), '')
-      .replaceFirst(RegExp(r'\.mlpackage$'), '');
-  if (prefix == 'chunk' && stem == 'chunk_head') {
-    return 1000000;
+List<String> _strings(Object? value) {
+  if (value is! List) {
+    return const [];
   }
-  final match = RegExp('^${RegExp.escape(prefix)}_?(\\d+)\$').firstMatch(stem);
-  if (match == null) return null;
-  return int.parse(match.group(1)!);
-}
-
-String _basename(String path) {
-  final normalized = path.replaceAll('\\', '/');
-  final index = normalized.lastIndexOf('/');
-  return index < 0 ? normalized : normalized.substring(index + 1);
+  return [
+    for (final item in value)
+      if (item is String && item.isNotEmpty) item,
+  ];
 }
