@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const mlx_artifact = @import("mlx_artifact.zig");
 const mlx_c = @import("mlx_c.zig");
 const mlx_input = @import("mlx_input.zig");
 const mlx_output = @import("mlx_output.zig");
@@ -28,9 +29,6 @@ const MlxMapStringToStringIterator = mlx_c.MlxMapStringToStringIterator;
 const MlxStream = mlx_c.MlxStream;
 const MlxVectorArray = mlx_c.MlxVectorArray;
 const MlxImportedFunction = mlx_c.MlxImportedFunction;
-
-const path = std.Io.Dir.path;
-const max_config_json_bytes = 2 * 1024 * 1024;
 
 const native = if (linked and !builtin.is_test) struct {
     extern fn mlx_string_new() MlxString;
@@ -125,23 +123,9 @@ pub const VersionError = error{
     OutOfMemory,
 };
 
-pub const ArtifactKind = enum {
-    single_mlx_function,
-    directory_mlx_function,
-    single_safetensors,
-    directory_model_safetensors,
-    directory_sharded_safetensors,
-    directory_safetensors,
-};
-
-pub const SessionError = error{
-    InvalidPath,
-    ArtifactNotFound,
-    UnsupportedArtifact,
-    InvalidConfig,
-    MlxCallFailed,
-    OutOfMemory,
-};
+pub const ArtifactKind = mlx_artifact.ArtifactKind;
+pub const SessionError = mlx_artifact.SessionError;
+const ModelMetadata = mlx_artifact.Metadata;
 
 const Weights = struct {
     params: MlxMapStringToArray,
@@ -171,40 +155,6 @@ const Weights = struct {
     }
 };
 
-const ModelMetadata = struct {
-    config_path: ?[]u8,
-    tokenizer_path: ?[]u8,
-    generation_config_path: ?[]u8,
-    model_type: ?[]u8,
-    architecture: ?[]u8,
-    quantization_mode: ?[]u8,
-    quantization_bits: ?i64,
-    quantization_group_size: ?i64,
-
-    fn empty() ModelMetadata {
-        return .{
-            .config_path = null,
-            .tokenizer_path = null,
-            .generation_config_path = null,
-            .model_type = null,
-            .architecture = null,
-            .quantization_mode = null,
-            .quantization_bits = null,
-            .quantization_group_size = null,
-        };
-    }
-
-    fn deinit(self: *ModelMetadata, allocator: std.mem.Allocator) void {
-        freeOptionalString(allocator, &self.config_path);
-        freeOptionalString(allocator, &self.tokenizer_path);
-        freeOptionalString(allocator, &self.generation_config_path);
-        freeOptionalString(allocator, &self.model_type);
-        freeOptionalString(allocator, &self.architecture);
-        freeOptionalString(allocator, &self.quantization_mode);
-        self.* = ModelMetadata.empty();
-    }
-};
-
 pub const Session = struct {
     allocator: std.mem.Allocator,
     model_path: []u8,
@@ -223,26 +173,11 @@ pub const Session = struct {
             _ = native.mlx_imported_function_free(self.imported_function);
         }
         self.weights.deinit();
-        freeStringList(self.allocator, self.weight_paths);
+        mlx_artifact.freeStringList(self.allocator, self.weight_paths);
         self.allocator.free(self.model_path);
         self.allocator.free(self.primary_artifact_path);
-        freeOptionalString(self.allocator, &self.function_path);
+        mlx_artifact.freeOptionalString(self.allocator, &self.function_path);
         self.allocator.destroy(self);
-    }
-};
-
-const ArtifactLayout = struct {
-    kind: ArtifactKind,
-    primary_artifact_path: []u8,
-    function_path: ?[]u8,
-    weight_paths: [][]u8,
-    weight_file_count: usize,
-
-    fn deinit(self: ArtifactLayout, allocator: std.mem.Allocator) void {
-        allocator.free(self.primary_artifact_path);
-        var function_path = self.function_path;
-        freeOptionalString(allocator, &function_path);
-        freeStringList(allocator, self.weight_paths);
     }
 };
 
@@ -254,9 +189,9 @@ pub fn createSession(
     if (model_path.len == 0 or std.mem.indexOf(u8, model_path, "://") != null) {
         return error.InvalidPath;
     }
-    const layout = try discoverArtifact(allocator, io, model_path);
+    const layout = try mlx_artifact.discover(allocator, io, model_path);
     errdefer layout.deinit(allocator);
-    var metadata = try loadModelMetadata(allocator, io, model_path);
+    var metadata = try mlx_artifact.loadMetadata(allocator, io, model_path);
     errdefer metadata.deinit(allocator);
     var weights = try loadWeights(allocator, layout.weight_paths);
     errdefer weights.deinit();
@@ -321,14 +256,7 @@ pub fn sessionErrorMessage(err: SessionError) []const u8 {
 }
 
 pub fn artifactKindName(kind: ArtifactKind) []const u8 {
-    return switch (kind) {
-        .single_mlx_function => "single_mlx_function",
-        .directory_mlx_function => "directory_mlx_function",
-        .single_safetensors => "single_safetensors",
-        .directory_model_safetensors => "directory_model_safetensors",
-        .directory_sharded_safetensors => "directory_sharded_safetensors",
-        .directory_safetensors => "directory_safetensors",
-    };
+    return mlx_artifact.kindName(kind);
 }
 
 pub fn versionString(allocator: std.mem.Allocator) VersionError![]u8 {
@@ -349,351 +277,6 @@ pub fn versionString(allocator: std.mem.Allocator) VersionError![]u8 {
     }
     const len = std.mem.len(data);
     return allocator.dupe(u8, data[0..len]) catch error.OutOfMemory;
-}
-
-fn discoverArtifact(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    model_path: []const u8,
-) SessionError!ArtifactLayout {
-    const stat = std.Io.Dir.cwd().statFile(io, model_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return error.ArtifactNotFound,
-        else => return error.InvalidPath,
-    };
-    return switch (stat.kind) {
-        .file => discoverFileArtifact(allocator, model_path),
-        .directory => discoverDirectoryArtifact(allocator, io, model_path),
-        else => error.UnsupportedArtifact,
-    };
-}
-
-fn discoverFileArtifact(
-    allocator: std.mem.Allocator,
-    model_path: []const u8,
-) SessionError!ArtifactLayout {
-    if (std.mem.endsWith(u8, model_path, ".mlxfn")) {
-        const primary = allocator.dupe(u8, model_path) catch return error.OutOfMemory;
-        errdefer allocator.free(primary);
-        const function_path = allocator.dupe(u8, model_path) catch return error.OutOfMemory;
-        errdefer allocator.free(function_path);
-        const weight_paths = try emptyPathList(allocator);
-        errdefer allocator.free(weight_paths);
-        return .{
-            .kind = .single_mlx_function,
-            .primary_artifact_path = primary,
-            .function_path = function_path,
-            .weight_paths = weight_paths,
-            .weight_file_count = 0,
-        };
-    }
-    if (!std.mem.endsWith(u8, model_path, ".safetensors")) {
-        return error.UnsupportedArtifact;
-    }
-    const primary = allocator.dupe(u8, model_path) catch return error.OutOfMemory;
-    errdefer allocator.free(primary);
-    const weight_paths = try singlePathList(allocator, model_path);
-    errdefer freeStringList(allocator, weight_paths);
-    return .{
-        .kind = .single_safetensors,
-        .primary_artifact_path = primary,
-        .function_path = null,
-        .weight_paths = weight_paths,
-        .weight_file_count = 1,
-    };
-}
-
-fn discoverDirectoryArtifact(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    model_path: []const u8,
-) SessionError!ArtifactLayout {
-    var dir = std.Io.Dir.cwd().openDir(io, model_path, .{
-        .access_sub_paths = true,
-        .iterate = true,
-    }) catch return error.InvalidPath;
-    defer dir.close(io);
-
-    if (fileExists(dir, io, "function.mlxfn")) {
-        const function_path = try joinPath(allocator, model_path, "function.mlxfn");
-        errdefer allocator.free(function_path);
-        const primary = allocator.dupe(u8, function_path) catch return error.OutOfMemory;
-        errdefer allocator.free(primary);
-        const weight_paths = try emptyPathList(allocator);
-        errdefer allocator.free(weight_paths);
-        return .{
-            .kind = .directory_mlx_function,
-            .primary_artifact_path = primary,
-            .function_path = function_path,
-            .weight_paths = weight_paths,
-            .weight_file_count = 0,
-        };
-    }
-
-    if (fileExists(dir, io, "model.safetensors")) {
-        const primary = try joinPath(allocator, model_path, "model.safetensors");
-        errdefer allocator.free(primary);
-        return .{
-            .kind = .directory_model_safetensors,
-            .primary_artifact_path = primary,
-            .function_path = null,
-            .weight_paths = try singlePathList(allocator, primary),
-            .weight_file_count = 1,
-        };
-    }
-
-    if (fileExists(dir, io, "model.safetensors.index.json")) {
-        const scan = try scanSafetensors(allocator, io, dir, model_path);
-        errdefer scan.deinit(allocator);
-        if (scan.count == 0) {
-            return error.UnsupportedArtifact;
-        }
-        return .{
-            .kind = .directory_sharded_safetensors,
-            .primary_artifact_path = try joinPath(allocator, model_path, "model.safetensors.index.json"),
-            .function_path = null,
-            .weight_paths = scan.paths,
-            .weight_file_count = scan.count,
-        };
-    }
-
-    const scan = try scanSafetensors(allocator, io, dir, model_path);
-    errdefer scan.deinit(allocator);
-    if (scan.count > 0) {
-        const primary = allocator.dupe(u8, scan.paths[0]) catch return error.OutOfMemory;
-        return .{
-            .kind = .directory_safetensors,
-            .primary_artifact_path = primary,
-            .function_path = null,
-            .weight_paths = scan.paths,
-            .weight_file_count = scan.count,
-        };
-    }
-    return error.UnsupportedArtifact;
-}
-
-const SafetensorsScan = struct {
-    count: usize,
-    paths: [][]u8,
-
-    fn deinit(self: SafetensorsScan, allocator: std.mem.Allocator) void {
-        freeStringList(allocator, self.paths);
-    }
-};
-
-fn scanSafetensors(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    dir: std.Io.Dir,
-    model_path: []const u8,
-) SessionError!SafetensorsScan {
-    var iter = dir.iterate();
-    var paths: std.ArrayList([]u8) = .empty;
-    defer paths.deinit(allocator);
-    errdefer freeStringsOnly(allocator, paths.items);
-
-    while (iter.next(io) catch return error.InvalidPath) |entry| {
-        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".safetensors")) {
-            continue;
-        }
-        const weight_path = try joinPath(allocator, model_path, entry.name);
-        errdefer allocator.free(weight_path);
-        paths.append(allocator, weight_path) catch return error.OutOfMemory;
-    }
-    std.sort.insertion([]u8, paths.items, {}, pathLessThan);
-    const owned = paths.toOwnedSlice(allocator) catch return error.OutOfMemory;
-    return .{ .count = owned.len, .paths = owned };
-}
-
-fn fileExists(dir: std.Io.Dir, io: std.Io, file_name: []const u8) bool {
-    const stat = dir.statFile(io, file_name, .{}) catch return false;
-    return stat.kind == .file;
-}
-
-fn joinPath(
-    allocator: std.mem.Allocator,
-    parent: []const u8,
-    child: []const u8,
-) SessionError![]u8 {
-    return path.join(allocator, &.{ parent, child }) catch error.OutOfMemory;
-}
-
-fn loadModelMetadata(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    model_path: []const u8,
-) SessionError!ModelMetadata {
-    const stat = std.Io.Dir.cwd().statFile(io, model_path, .{}) catch return error.InvalidPath;
-    if (stat.kind != .directory) {
-        return ModelMetadata.empty();
-    }
-
-    var dir = std.Io.Dir.cwd().openDir(io, model_path, .{}) catch return error.InvalidPath;
-    defer dir.close(io);
-
-    var metadata = ModelMetadata.empty();
-    errdefer metadata.deinit(allocator);
-    metadata.config_path = try optionalJoinedFile(allocator, dir, io, model_path, "config.json");
-    metadata.tokenizer_path = try optionalJoinedFile(allocator, dir, io, model_path, "tokenizer.json");
-    metadata.generation_config_path = try optionalJoinedFile(allocator, dir, io, model_path, "generation_config.json");
-    if (metadata.config_path) |config_path| {
-        try parseModelConfig(allocator, io, config_path, &metadata);
-    }
-    return metadata;
-}
-
-fn optionalJoinedFile(
-    allocator: std.mem.Allocator,
-    dir: std.Io.Dir,
-    io: std.Io,
-    parent: []const u8,
-    file_name: []const u8,
-) SessionError!?[]u8 {
-    if (!fileExists(dir, io, file_name)) {
-        return null;
-    }
-    return try joinPath(allocator, parent, file_name);
-}
-
-fn parseModelConfig(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    config_path: []const u8,
-    metadata: *ModelMetadata,
-) SessionError!void {
-    const bytes = std.Io.Dir.cwd().readFileAlloc(
-        io,
-        config_path,
-        allocator,
-        .limited(max_config_json_bytes),
-    ) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        else => return error.InvalidConfig,
-    };
-    defer allocator.free(bytes);
-
-    const parsed = std.json.parseFromSlice(
-        std.json.Value,
-        allocator,
-        bytes,
-        .{ .duplicate_field_behavior = .use_last },
-    ) catch return error.InvalidConfig;
-    defer parsed.deinit();
-
-    const object = switch (parsed.value) {
-        .object => |value| value,
-        else => return error.InvalidConfig,
-    };
-    metadata.model_type = try copyStringField(allocator, object, "model_type");
-    metadata.architecture = try copyFirstStringField(allocator, object, "architectures");
-    try parseQuantizationMetadata(allocator, object, metadata);
-}
-
-fn parseQuantizationMetadata(
-    allocator: std.mem.Allocator,
-    object: std.json.ObjectMap,
-    metadata: *ModelMetadata,
-) SessionError!void {
-    const quantization = objectField(object, "quantization") orelse
-        objectField(object, "quantization_config") orelse return;
-    metadata.quantization_mode = try copyStringField(allocator, quantization, "mode") orelse
-        try copyStringField(allocator, quantization, "quant_method");
-    metadata.quantization_bits = integerField(quantization, "bits");
-    metadata.quantization_group_size = integerField(quantization, "group_size");
-    if (metadata.quantization_mode == null and
-        (metadata.quantization_bits != null or metadata.quantization_group_size != null))
-    {
-        metadata.quantization_mode = allocator.dupe(u8, "affine") catch return error.OutOfMemory;
-    }
-}
-
-fn objectField(
-    object: std.json.ObjectMap,
-    key: []const u8,
-) ?std.json.ObjectMap {
-    const value = object.get(key) orelse return null;
-    return switch (value) {
-        .object => |item| item,
-        else => null,
-    };
-}
-
-fn integerField(
-    object: std.json.ObjectMap,
-    key: []const u8,
-) ?i64 {
-    const value = object.get(key) orelse return null;
-    return switch (value) {
-        .integer => |integer| integer,
-        else => null,
-    };
-}
-
-fn copyStringField(
-    allocator: std.mem.Allocator,
-    object: std.json.ObjectMap,
-    key: []const u8,
-) SessionError!?[]u8 {
-    const value = object.get(key) orelse return null;
-    return switch (value) {
-        .string => |text| allocator.dupe(u8, text) catch return error.OutOfMemory,
-        else => null,
-    };
-}
-
-fn copyFirstStringField(
-    allocator: std.mem.Allocator,
-    object: std.json.ObjectMap,
-    key: []const u8,
-) SessionError!?[]u8 {
-    const value = object.get(key) orelse return null;
-    return switch (value) {
-        .array => |items| {
-            if (items.items.len == 0) {
-                return null;
-            }
-            return switch (items.items[0]) {
-                .string => |text| allocator.dupe(u8, text) catch return error.OutOfMemory,
-                else => null,
-            };
-        },
-        else => null,
-    };
-}
-
-fn pathLessThan(_: void, lhs: []u8, rhs: []u8) bool {
-    return std.mem.lessThan(u8, lhs, rhs);
-}
-
-fn emptyPathList(allocator: std.mem.Allocator) SessionError![][]u8 {
-    return allocator.alloc([]u8, 0) catch error.OutOfMemory;
-}
-
-fn singlePathList(
-    allocator: std.mem.Allocator,
-    item: []const u8,
-) SessionError![][]u8 {
-    const list = allocator.alloc([]u8, 1) catch return error.OutOfMemory;
-    errdefer allocator.free(list);
-    list[0] = allocator.dupe(u8, item) catch return error.OutOfMemory;
-    return list;
-}
-
-fn freeStringList(allocator: std.mem.Allocator, items: [][]u8) void {
-    freeStringsOnly(allocator, items);
-    allocator.free(items);
-}
-
-fn freeStringsOnly(allocator: std.mem.Allocator, items: [][]u8) void {
-    for (items) |item| {
-        allocator.free(item);
-    }
-}
-
-fn freeOptionalString(allocator: std.mem.Allocator, value: *?[]u8) void {
-    if (value.*) |bytes| {
-        allocator.free(bytes);
-        value.* = null;
-    }
 }
 
 fn loadWeights(
@@ -1034,92 +617,4 @@ test "MLX status remains Zig-owned" {
     try std.testing.expectEqualStrings("zig", owner);
     try std.testing.expectEqualStrings("mlx-c", api);
     try std.testing.expectEqual(linked, enabled);
-}
-
-test "MLX session discovers exported function bundle before sample safetensors" {
-    var tmp = std.testing.tmpDir(.{ .access_sub_paths = true, .iterate = true });
-    defer tmp.cleanup();
-    const function = try tmp.dir.createFile(std.testing.io, "function.mlxfn", .{});
-    function.close(std.testing.io);
-    const inputs = try tmp.dir.createFile(std.testing.io, "inputs.safetensors", .{});
-    inputs.close(std.testing.io);
-
-    const model_path = try path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
-    defer std.testing.allocator.free(model_path);
-    const session = try createSession(std.testing.allocator, std.testing.io, model_path);
-    defer session.deinit();
-
-    try std.testing.expectEqual(ArtifactKind.directory_mlx_function, session.artifact_kind);
-    try std.testing.expectEqual(@as(usize, 0), session.weight_file_count);
-    try std.testing.expectEqual(@as(usize, 0), session.weight_paths.len);
-    try std.testing.expect(session.function_path != null);
-    try std.testing.expect(!session.weights.loaded);
-    try std.testing.expect(session.imported_function.ctx == null);
-    const json = try sessionDiagnosticsJson(session, std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_kind\":\"directory_mlx_function\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"function_loaded\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"executor_kind\":\"imported_function\"") != null);
-}
-
-test "MLX session discovers model.safetensors directory artifacts" {
-    var tmp = std.testing.tmpDir(.{ .access_sub_paths = true, .iterate = true });
-    defer tmp.cleanup();
-    const file = try tmp.dir.createFile(std.testing.io, "model.safetensors", .{});
-    file.close(std.testing.io);
-    const config = try tmp.dir.createFile(std.testing.io, "config.json", .{});
-    var config_writer = config.writer(std.testing.io, &.{});
-    try config_writer.interface.writeAll("{\"model_type\":\"qwen3\",\"architectures\":[\"Qwen3ForCausalLM\"],\"quantization\":{\"bits\":4,\"group_size\":64}}");
-    try config_writer.interface.flush();
-    config.close(std.testing.io);
-    const tokenizer = try tmp.dir.createFile(std.testing.io, "tokenizer.json", .{});
-    tokenizer.close(std.testing.io);
-    const generation_config = try tmp.dir.createFile(std.testing.io, "generation_config.json", .{});
-    generation_config.close(std.testing.io);
-
-    const model_path = try path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
-    defer std.testing.allocator.free(model_path);
-    const session = try createSession(std.testing.allocator, std.testing.io, model_path);
-    defer session.deinit();
-
-    try std.testing.expectEqual(ArtifactKind.directory_model_safetensors, session.artifact_kind);
-    try std.testing.expectEqual(@as(usize, 1), session.weight_file_count);
-    try std.testing.expect(!session.weights.loaded);
-    try std.testing.expectEqualStrings("qwen3", session.metadata.model_type.?);
-    try std.testing.expectEqualStrings("Qwen3ForCausalLM", session.metadata.architecture.?);
-    try std.testing.expectEqualStrings("affine", session.metadata.quantization_mode.?);
-    try std.testing.expectEqual(@as(i64, 4), session.metadata.quantization_bits.?);
-    try std.testing.expectEqual(@as(i64, 64), session.metadata.quantization_group_size.?);
-    const json = try sessionDiagnosticsJson(session, std.testing.allocator);
-    defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_kind\":\"directory_model_safetensors\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"weights_loaded\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"has_config\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"has_tokenizer\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"has_generation_config\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"model_type\":\"qwen3\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"quantization_mode\":\"affine\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"quantization_bits\":4") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"executor_kind\":\"unregistered\"") != null);
-}
-
-test "MLX session discovers sharded safetensors directory artifacts" {
-    var tmp = std.testing.tmpDir(.{ .access_sub_paths = true, .iterate = true });
-    defer tmp.cleanup();
-    const index_file = try tmp.dir.createFile(std.testing.io, "model.safetensors.index.json", .{});
-    index_file.close(std.testing.io);
-    const shard_a = try tmp.dir.createFile(std.testing.io, "model-00001-of-00002.safetensors", .{});
-    shard_a.close(std.testing.io);
-    const shard_b = try tmp.dir.createFile(std.testing.io, "model-00002-of-00002.safetensors", .{});
-    shard_b.close(std.testing.io);
-
-    const model_path = try path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
-    defer std.testing.allocator.free(model_path);
-    const session = try createSession(std.testing.allocator, std.testing.io, model_path);
-    defer session.deinit();
-
-    try std.testing.expectEqual(ArtifactKind.directory_sharded_safetensors, session.artifact_kind);
-    try std.testing.expectEqual(@as(usize, 2), session.weight_file_count);
-    try std.testing.expectEqual(@as(usize, 2), session.weight_paths.len);
-    try std.testing.expect(std.mem.endsWith(u8, session.weight_paths[0], "model-00001-of-00002.safetensors"));
 }

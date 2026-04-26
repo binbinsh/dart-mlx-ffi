@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.39`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.40`.
+- Split Zig-owned MLX artifact discovery and config/quantization parsing into `mlx_artifact.zig`, leaving `mlx_backend.zig` focused on session state, weight loading, and executor dispatch.
 - Moved vendored native dependencies from `third_party/` to `vendors/` and updated native build paths plus publish filters.
 - Updated Zig MLX backend metadata so Apple builds report `enabled: true` and expose the registered `.mlxfn` plus `dart_inference_linear` executor surface.
 - Removed the second Zig-side MLX output copy by moving materialized C-allocator buffers directly into the Dart-facing runtime tensor batch.
