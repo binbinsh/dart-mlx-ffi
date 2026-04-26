@@ -6,6 +6,7 @@ const hf = @import("hf.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
 const policy = @import("policy.zig");
+const resolve = @import("resolve.zig");
 
 const pinned_zig_version = "0.16.0";
 const Engine = policy.Engine;
@@ -340,6 +341,14 @@ export fn dinf_engine_accels_json(engine: i32) [*c]u8 {
 
 export fn dinf_engine_order_json(platform: i32) [*c]u8 {
     return copyString(policy.engineOrderJson(platform));
+}
+
+export fn dinf_resolve_json(request_json: [*c]const u8) [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const text = resolve.selectJson(allocator, cStringOrEmpty(request_json)) catch
+        return copyString("{\"ok\":false,\"message\":\"Zig runtime resolver failed.\"}");
+    defer allocator.free(text);
+    return copyString(text);
 }
 
 export fn dinf_mlx_artifact_registered(
@@ -821,6 +830,15 @@ test "runtime resolver policy is reported from Zig" {
     const litert_accels = dinf_engine_accels_json(@intFromEnum(Engine.litert));
     defer dinf_free_str(litert_accels);
     try std.testing.expectEqualStrings("[\"gpu\",\"npu\",\"cpu\"]", std.mem.span(litert_accels));
+
+    const resolved = dinf_resolve_json(
+        \\{"modelId":"demo","platform":1,"requestedEngine":-1,"allowFallback":true,"prefer":[],"artifacts":[
+        \\{"engine":1,"path":"coreml","targetPlatforms":["macos"]}
+        \\]}
+    );
+    defer dinf_free_str(resolved);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(resolved), "\"engine\":1") != null);
+
     try std.testing.expectEqual(@as(i32, 1), dinf_mlx_artifact_registered(null, "bundle/function.mlxfn"));
     try std.testing.expectEqual(@as(i32, 0), dinf_artifact_matches(
         @intFromEnum(Engine.mlx),

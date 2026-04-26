@@ -78,23 +78,10 @@ external int platformId();
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(symbol: 'dinf_caps_json')
 external ffi.Pointer<ffi.Char> capsJson(int engine);
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(
-  symbol: 'dinf_engine_accels_json',
+@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'dinf_resolve_json',
 )
-external ffi.Pointer<ffi.Char> engineAccelsJson(int engine);
-
-@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(
-  symbol: 'dinf_engine_order_json',
-)
-external ffi.Pointer<ffi.Char> engineOrderJson(int platform);
-
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>(
-  symbol: 'dinf_mlx_artifact_registered',
-)
-external int mlxArtifactRegistered(
-  ffi.Pointer<ffi.Char> format,
-  ffi.Pointer<ffi.Char> artifactPath,
-);
+external ffi.Pointer<ffi.Char> resolveJson(ffi.Pointer<ffi.Char> requestJson);
 
 @ffi.Native<
   ffi.Int32 Function(

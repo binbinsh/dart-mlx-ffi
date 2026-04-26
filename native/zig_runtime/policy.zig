@@ -61,6 +61,35 @@ pub fn acceleratorsJson(engine: i32) []const u8 {
     };
 }
 
+const apple_order = [_]i32{
+    @intFromEnum(Engine.coreml),
+    @intFromEnum(Engine.mlx),
+    @intFromEnum(Engine.onnx),
+};
+const desktop_order = [_]i32{@intFromEnum(Engine.onnx)};
+const android_order = [_]i32{
+    @intFromEnum(Engine.litert),
+    @intFromEnum(Engine.onnx),
+};
+const fallback_order = [_]i32{
+    @intFromEnum(Engine.coreml),
+    @intFromEnum(Engine.onnx),
+    @intFromEnum(Engine.litert),
+};
+
+pub fn engineOrder(platform: i32) []const i32 {
+    return switch (platform) {
+        @intFromEnum(Platform.ios),
+        @intFromEnum(Platform.macos),
+        => apple_order[0..],
+        @intFromEnum(Platform.windows),
+        @intFromEnum(Platform.linux),
+        => desktop_order[0..],
+        @intFromEnum(Platform.android) => android_order[0..],
+        else => fallback_order[0..],
+    };
+}
+
 pub fn engineOrderJson(platform: i32) []const u8 {
     return switch (platform) {
         @intFromEnum(Platform.ios),

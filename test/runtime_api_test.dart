@@ -80,6 +80,17 @@ void main() {
       expect(resolver.resolve(mlxFunctionOnly).engine, RuntimeEngine.mlx);
     });
 
+    test('allows explicit preview MLX artifacts through Zig resolver', () {
+      final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
+      final resolution = resolver.resolve(
+        spec,
+        const RuntimeOptions(engine: RuntimeEngine.mlx, allowFallback: false),
+      );
+
+      expect(resolution.engine, RuntimeEngine.mlx);
+      expect(resolution.artifact.path, 'mlx');
+    });
+
     test('selects platform engines for desktop and Android', () {
       expect(
         RuntimeResolver(

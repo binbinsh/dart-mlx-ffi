@@ -460,91 +460,34 @@ final class RuntimeResolver {
   ]) {
     final platform = hostPlatform;
     final requested = options.engine;
-    if (requested != null) {
-      final artifact = _artifactFor(
-        spec,
-        requested,
-        platform,
-        allowPreviewMlx: true,
-      );
-      if (artifact != null) {
-        return RuntimeResolution(
-          platform: platform,
-          engine: requested,
-          artifact: artifact,
-          accelerators: _acceleratorsFor(requested, options),
-        );
-      }
-      if (!options.allowFallback) {
-        throw StateError(
-          'Model ${spec.id} has no ${requested.name} artifact for '
-          '${platform.name}.',
-        );
-      }
-    }
-
-    final fallbackReason = requested == null
-        ? null
-        : 'Requested ${requested.name} has no compatible artifact.';
-    for (final engine in _defaultOrder(platform, options)) {
-      final artifact = _artifactFor(spec, engine, platform);
-      if (artifact == null) continue;
-      return RuntimeResolution(
-        platform: platform,
-        engine: engine,
-        artifact: artifact,
-        accelerators: _acceleratorsFor(engine, options),
-        fallbackReason: fallbackReason,
+    final resolved = _resolveNative({
+      'modelId': spec.id,
+      'platform': _platformId(platform),
+      'requestedEngine': requested == null ? -1 : _engineId(requested),
+      'allowFallback': options.allowFallback,
+      'prefer': options.prefer.map((value) => value.name).toList(),
+      'artifacts': _resolverArtifacts(spec),
+    });
+    if (resolved['ok'] != true) {
+      throw StateError(
+        resolved['message'] as String? ??
+            'Native runtime resolver failed for ${spec.id}.',
       );
     }
-    throw StateError(
-      'Model ${spec.id} has no runtime artifact for ${platform.name}.',
-    );
-  }
-
-  RuntimeArtifact? _artifactFor(
-    ModelSpec spec,
-    RuntimeEngine engine,
-    RuntimePlatform platform, {
-    bool allowPreviewMlx = false,
-  }) {
+    final engine = _engineById((resolved['engine'] as num?)?.toInt() ?? -1);
     final artifact = spec.platformArtifacts[engine];
-    if (artifact == null) return null;
-    return _matchesArtifact(
-          engine,
-          platform,
-          artifact,
-          allowPreviewMlx: allowPreviewMlx,
-        )
-        ? artifact
-        : null;
-  }
-
-  List<RuntimeEngine> _defaultOrder(
-    RuntimePlatform platform,
-    RuntimeOptions options,
-  ) {
-    final resolved = _enginesJson(
-      native.engineOrderJson(_platformId(platform)),
-    );
-    if (resolved.isNotEmpty) {
-      return resolved;
+    if (artifact == null) {
+      throw StateError(
+        'Native runtime resolver selected missing ${engine.name} artifact.',
+      );
     }
-    return const [RuntimeEngine.onnx];
-  }
-
-  List<Accelerator> _acceleratorsFor(
-    RuntimeEngine engine,
-    RuntimeOptions options,
-  ) {
-    if (options.prefer.isNotEmpty) return options.prefer;
-    final resolved = _acceleratorsJson(
-      native.engineAccelsJson(_engineId(engine)),
+    return RuntimeResolution(
+      platform: platform,
+      engine: engine,
+      artifact: artifact,
+      accelerators: _accelerators(resolved['accelerators']),
+      fallbackReason: resolved['fallbackReason'] as String?,
     );
-    if (resolved.isNotEmpty) {
-      return resolved;
-    }
-    return const [Accelerator.cpu];
   }
 }
 
@@ -563,6 +506,54 @@ int _engineId(RuntimeEngine engine) => switch (engine) {
   RuntimeEngine.onnx => 2,
   RuntimeEngine.litert => 3,
 };
+
+RuntimeEngine _engineById(int id) => switch (id) {
+  0 => RuntimeEngine.mlx,
+  1 => RuntimeEngine.coreml,
+  2 => RuntimeEngine.onnx,
+  3 => RuntimeEngine.litert,
+  _ => throw StateError('Unsupported native runtime engine id: $id'),
+};
+
+List<Map<String, Object?>> _resolverArtifacts(ModelSpec spec) => [
+  for (final entry in spec.platformArtifacts.entries)
+    {
+      'engine': _engineId(entry.key),
+      'path': entry.value.path,
+      if (entry.value.format != null) 'format': entry.value.format,
+      if (entry.value.targetPlatforms.isNotEmpty)
+        'targetPlatforms': entry.value.targetPlatforms,
+    },
+];
+
+Map<String, Object?> _resolveNative(Map<String, Object?> request) {
+  final input = jsonEncode(
+    request,
+  ).toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  ffi.Pointer<ffi.Char> result = ffi.nullptr;
+  try {
+    result = native.resolveJson(input);
+    if (result == ffi.nullptr) {
+      return const {
+        'ok': false,
+        'message': 'Native runtime resolver returned null.',
+      };
+    }
+    final decoded = jsonDecode(result.cast<Utf8>().toDartString());
+    if (decoded is Map) {
+      return Map<String, Object?>.from(decoded);
+    }
+    return const {
+      'ok': false,
+      'message': 'Native runtime resolver returned invalid JSON.',
+    };
+  } finally {
+    if (result != ffi.nullptr) {
+      native.freeStr(result);
+    }
+    calloc.free(input);
+  }
+}
 
 bool _matchesArtifact(
   RuntimeEngine engine,
@@ -605,50 +596,18 @@ bool _matchesArtifact(
   }
 }
 
-List<RuntimeEngine> _enginesJson(ffi.Pointer<ffi.Char> ptr) {
-  if (ptr == ffi.nullptr) {
+List<Accelerator> _accelerators(Object? value) {
+  if (value is! List) {
     return const [];
   }
-  try {
-    final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
-    if (decoded is! List) {
-      return const [];
-    }
-    return [
-      for (final item in decoded)
-        switch ('$item') {
-          'mlx' => RuntimeEngine.mlx,
-          'coreml' => RuntimeEngine.coreml,
-          'onnx' => RuntimeEngine.onnx,
-          'litert' => RuntimeEngine.litert,
-          _ => null,
-        },
-    ].whereType<RuntimeEngine>().toList(growable: false);
-  } finally {
-    native.freeStr(ptr);
-  }
-}
-
-List<Accelerator> _acceleratorsJson(ffi.Pointer<ffi.Char> ptr) {
-  if (ptr == ffi.nullptr) {
-    return const [];
-  }
-  try {
-    final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
-    if (decoded is! List) {
-      return const [];
-    }
-    return [
-      for (final item in decoded)
-        switch ('$item') {
-          'ane' => Accelerator.ane,
-          'gpu' => Accelerator.gpu,
-          'npu' => Accelerator.npu,
-          'cpu' => Accelerator.cpu,
-          _ => null,
-        },
-    ].whereType<Accelerator>().toList(growable: false);
-  } finally {
-    native.freeStr(ptr);
-  }
+  return [
+    for (final item in value)
+      switch ('$item') {
+        'ane' => Accelerator.ane,
+        'gpu' => Accelerator.gpu,
+        'npu' => Accelerator.npu,
+        'cpu' => Accelerator.cpu,
+        _ => null,
+      },
+  ].whereType<Accelerator>().toList(growable: false);
 }
