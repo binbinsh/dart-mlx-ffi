@@ -1,44 +1,24 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const mlx_c = @import("mlx_c.zig");
+const mlx_output = @import("mlx_output.zig");
 
-pub const api = "mlx-c";
-pub const owner = "zig";
-pub const linked = builtin.os.tag == .macos or builtin.os.tag == .ios;
-pub const enabled = false;
-pub const status_json = if (linked)
-    "{\"owner\":\"zig\",\"api\":\"mlx-c\",\"linked\":true,\"enabled\":false}"
-else
-    "{\"owner\":\"zig\",\"api\":\"mlx-c\",\"linked\":false,\"enabled\":false}";
+pub const api = mlx_c.api;
+pub const owner = mlx_c.owner;
+pub const linked = mlx_c.linked;
+pub const enabled = mlx_c.enabled;
+pub const status_json = mlx_c.status_json;
+pub const MlxArray = mlx_c.MlxArray;
+pub const MlxDtype = mlx_c.MlxDtype;
+pub const OutputBatch = mlx_output.OutputBatch;
+pub const OutputTensor = mlx_output.OutputTensor;
 
-const MlxString = extern struct {
-    ctx: ?*anyopaque,
-};
-
-const MlxArray = extern struct {
-    ctx: ?*anyopaque,
-};
-
-const MlxMapStringToArray = extern struct {
-    ctx: ?*anyopaque,
-};
-
-const MlxMapStringToString = extern struct {
-    ctx: ?*anyopaque,
-};
-
-const MlxMapStringToArrayIterator = extern struct {
-    ctx: ?*anyopaque,
-    map_ctx: ?*anyopaque,
-};
-
-const MlxMapStringToStringIterator = extern struct {
-    ctx: ?*anyopaque,
-    map_ctx: ?*anyopaque,
-};
-
-const MlxStream = extern struct {
-    ctx: ?*anyopaque,
-};
+const MlxString = mlx_c.MlxString;
+const MlxMapStringToArray = mlx_c.MlxMapStringToArray;
+const MlxMapStringToString = mlx_c.MlxMapStringToString;
+const MlxMapStringToArrayIterator = mlx_c.MlxMapStringToArrayIterator;
+const MlxMapStringToStringIterator = mlx_c.MlxMapStringToStringIterator;
+const MlxStream = mlx_c.MlxStream;
 
 pub const InputTensor = extern struct {
     dtype: i32,
@@ -46,16 +26,6 @@ pub const InputTensor = extern struct {
     shape: [*c]const i64,
     byte_length: isize,
     data: ?*const anyopaque,
-};
-
-const MlxDtype = enum(c_int) {
-    bool = 0,
-    uint8 = 1,
-    int32 = 7,
-    int64 = 8,
-    float16 = 9,
-    float32 = 10,
-    float64 = 11,
 };
 
 const MlxManagedDtor = *const fn (?*anyopaque) callconv(.c) void;
@@ -756,6 +726,46 @@ pub const TensorError = error{
     OutOfMemory,
 };
 
+pub const ExecutionError = mlx_output.OutputError || error{
+    WeightsUnavailable,
+    UnsupportedArchitecture,
+    ExecutorNotImplemented,
+};
+
+pub fn executeSession(
+    allocator: std.mem.Allocator,
+    session: *const Session,
+    batch: InputBatch,
+) ExecutionError!OutputBatch {
+    _ = allocator;
+    _ = batch;
+    if (!linked or builtin.is_test) {
+        return error.MlxUnavailable;
+    }
+    if (!session.weights.loaded) {
+        return error.WeightsUnavailable;
+    }
+    if (session.metadata.architecture == null and session.metadata.model_type == null) {
+        return error.UnsupportedArchitecture;
+    }
+    return error.ExecutorNotImplemented;
+}
+
+pub fn executionErrorMessage(err: ExecutionError) []const u8 {
+    return switch (err) {
+        error.WeightsUnavailable => "Zig-owned MLX backend has no loaded weight maps for execution.",
+        error.UnsupportedArchitecture => "Zig-owned MLX backend could not identify a supported model architecture.",
+        error.ExecutorNotImplemented => "Zig-owned MLX backend has not registered an executor for this model architecture yet.",
+        error.MlxUnavailable,
+        error.UnsupportedDtype,
+        error.InvalidArray,
+        error.ShapeOutOfRange,
+        error.MlxCallFailed,
+        error.OutOfMemory,
+        => mlx_output.errorMessage(@errorCast(err)),
+    };
+}
+
 pub const InputBatch = struct {
     allocator: std.mem.Allocator,
     arrays: []MlxArray,
@@ -895,12 +905,7 @@ pub fn mlxDtype(runtime_dtype: i32) TensorError!MlxDtype {
 }
 
 fn dtypeSize(dtype: MlxDtype) usize {
-    return switch (dtype) {
-        .bool, .uint8 => 1,
-        .float16 => 2,
-        .int32, .float32 => 4,
-        .int64, .float64 => 8,
-    };
+    return mlx_c.dtypeSize(dtype);
 }
 
 pub fn tensorErrorMessage(err: TensorError) []const u8 {

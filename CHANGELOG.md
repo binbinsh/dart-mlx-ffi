@@ -3,8 +3,9 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.34`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.35`.
 - Moved vendored native dependencies from `third_party/` to `vendors/` and updated native build paths plus publish filters.
+- Added a Zig-owned MLX C type/output materialization layer and wired the runtime MLX path to copy future `mlx_array` executor outputs into the Dart runtime tensor ABI.
 - Added Zig-side MLX quantization metadata parsing for affine/default quantized snapshots so executor selection does not need Dart to inspect config files.
 - Added Zig-owned MLX model metadata discovery for `config.json`, `tokenizer.json`, and `generation_config.json`, including `model_type` and architecture diagnostics parsed in Zig.
 - Added an Apple-only Zig `mlx-c` safetensors weight loader that keeps loaded parameter and metadata maps inside the Zig-owned MLX session and merges multi-file safetensors layouts without involving Dart.

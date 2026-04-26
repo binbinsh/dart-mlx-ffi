@@ -1,6 +1,6 @@
 name: dart_inference
 description: Zig-backed Dart FFI inference runtime for Core ML, ONNX Runtime, LiteRT, and future MLX backends
-version: 1.2026.34
+version: 1.2026.35
 homepage: https://github.com/binbinsh/dart-inference
 repository: https://github.com/binbinsh/dart-inference
 issue_tracker: https://github.com/binbinsh/dart-inference/issues
