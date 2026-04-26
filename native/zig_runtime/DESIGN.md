@@ -64,6 +64,8 @@ Output memory:
 
 - Native backends return native-owned tensor arrays.
 - Dart wraps output bytes with external typed-data views instead of copying.
+- Zig-owned MLX output materialization moves C-allocator shape/data buffers
+  into the runtime tensor batch instead of copying them a second time.
 - `ModelOutputs.close()` releases the native output batch immediately.
 - A finalizer releases the native output batch if the caller does not close it.
 

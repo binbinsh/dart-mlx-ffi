@@ -503,12 +503,12 @@ fn runMlxSession(
     };
     defer batch.deinit();
 
-    const output_batch = mlx_backend.executeSession(allocator, mlx_session, batch) catch |err| {
+    var output_batch = mlx_backend.executeSession(allocator, mlx_session, batch) catch |err| {
         setMlxExecutionError(allocator, mlx_session, err, error_out);
         return 1;
     };
     defer output_batch.deinit();
-    return copyMlxOutputs(output_batch, outputs, output_count, error_out);
+    return copyMlxOutputs(&output_batch, outputs, output_count, error_out);
 }
 
 fn setMlxExecutionError(
@@ -539,7 +539,7 @@ fn setMlxExecutionError(
 }
 
 fn copyMlxOutputs(
-    output_batch: mlx_backend.OutputBatch,
+    output_batch: *mlx_backend.OutputBatch,
     outputs: ?*[*c]NamedTensor,
     output_count: ?*isize,
     error_out: ?*[*c]u8,
@@ -561,9 +561,9 @@ fn copyMlxOutputs(
     const out_items: [*]NamedTensor = @ptrCast(@alignCast(raw));
     var produced: usize = 0;
     while (produced < count) : (produced += 1) {
-        out_items[produced] = copyMlxOutputTensor(output_batch.tensors[produced]) orelse {
+        out_items[produced] = moveMlxOutputTensor(&output_batch.tensors[produced]) orelse {
             dart_inference_runtime_free_tensors(@ptrCast(out_items), @intCast(produced));
-            setError(error_out, "failed to copy Zig MLX output tensor");
+            setError(error_out, "failed to move Zig MLX output tensor");
             return 1;
         };
     }
@@ -572,10 +572,12 @@ fn copyMlxOutputs(
     return 0;
 }
 
-fn copyMlxOutputTensor(output: mlx_backend.OutputTensor) ?NamedTensor {
+fn moveMlxOutputTensor(output: *mlx_backend.OutputTensor) ?NamedTensor {
     if (output.shape.len > std.math.maxInt(i32) or output.bytes.len > std.math.maxInt(isize)) {
         return null;
     }
+    // MLX run paths materialize with c_allocator, so these buffers can be
+    // released by dart_inference_runtime_free_tensors after moving ownership.
     const name = copyString(output.name);
     if (name == null) {
         return null;
@@ -589,23 +591,12 @@ fn copyMlxOutputTensor(output: mlx_backend.OutputTensor) ?NamedTensor {
         .data = null,
     };
     if (output.shape.len > 0) {
-        const raw_shape = std.c.malloc(@sizeOf(i64) * output.shape.len) orelse {
-            freeString(name);
-            return null;
-        };
-        const shape: [*]i64 = @ptrCast(@alignCast(raw_shape));
-        @memcpy(shape[0..output.shape.len], output.shape);
-        tensor.shape = @ptrCast(shape);
+        tensor.shape = @ptrCast(output.shape.ptr);
+        output.shape = &.{};
     }
     if (output.bytes.len > 0) {
-        const raw_data = std.c.malloc(output.bytes.len) orelse {
-            freeString(name);
-            std.c.free(tensor.shape);
-            return null;
-        };
-        const data: [*]u8 = @ptrCast(raw_data);
-        @memcpy(data[0..output.bytes.len], output.bytes);
-        tensor.data = @ptrCast(data);
+        tensor.data = @ptrCast(output.bytes.ptr);
+        output.bytes = &.{};
     }
     return .{ .name = name, .tensor = tensor };
 }
@@ -690,8 +681,8 @@ test "backend json is stable" {
     try std.testing.expectEqualStrings(pinned_zig_version, builtin.zig_version_string);
 }
 
-test "MLX output batch copies into runtime ABI tensors" {
-    const allocator = std.testing.allocator;
+test "MLX output batch moves into runtime ABI tensors" {
+    const allocator = std.heap.c_allocator;
     const tensor_items = try allocator.alloc(mlx_backend.OutputTensor, 1);
     const name = try allocator.dupe(u8, "logits");
     errdefer allocator.free(name);
@@ -706,7 +697,7 @@ test "MLX output batch copies into runtime ABI tensors" {
         .shape = shape,
         .bytes = bytes,
     };
-    const batch = mlx_backend.OutputBatch{ .allocator = allocator, .tensors = tensor_items };
+    var batch = mlx_backend.OutputBatch{ .allocator = allocator, .tensors = tensor_items };
     defer batch.deinit();
 
     var outputs: [*c]NamedTensor = null;
@@ -714,7 +705,7 @@ test "MLX output batch copies into runtime ABI tensors" {
     var error_value: [*c]u8 = null;
     try std.testing.expectEqual(
         @as(i32, 0),
-        copyMlxOutputs(batch, &outputs, &output_count, &error_value),
+        copyMlxOutputs(&batch, &outputs, &output_count, &error_value),
     );
     defer dart_inference_runtime_free_tensors(outputs, output_count);
     try std.testing.expectEqual(@as(isize, 1), output_count);
