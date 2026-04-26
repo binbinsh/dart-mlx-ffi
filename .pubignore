@@ -34,13 +34,11 @@ vendors/mlx/examples/
 vendors/mlx/python/
 vendors/mlx/tests/
 
+vendors/mlx-c/.github/
 vendors/mlx-c/docs/
 vendors/mlx-c/examples/
-vendors/fmt/
+vendors/mlx-c/python/
 vendors/gguflib/
-vendors/metal-cpp/
-vendors/mlx/
-vendors/mlx-c/
 vendors/json/CMakeLists.txt
 vendors/json/cmake/
 vendors/json/include/
