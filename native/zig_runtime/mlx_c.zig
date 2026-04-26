@@ -39,6 +39,14 @@ pub const MlxStream = extern struct {
     ctx: ?*anyopaque,
 };
 
+pub const MlxVectorArray = extern struct {
+    ctx: ?*anyopaque,
+};
+
+pub const MlxImportedFunction = extern struct {
+    ctx: ?*anyopaque,
+};
+
 pub const MlxDtype = enum(c_int) {
     bool = 0,
     uint8 = 1,

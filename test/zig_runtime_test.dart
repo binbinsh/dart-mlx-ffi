@@ -60,6 +60,7 @@ void main() {
           final mlxSession =
               session.diagnostics['mlx_session'] as Map<Object?, Object?>;
           expect(mlxSession['artifact_kind'], 'directory_model_safetensors');
+          expect(mlxSession['function_loaded'], isFalse);
           expect(mlxSession['weight_file_count'], 1);
           expect(mlxSession['weights_loaded'], isFalse);
           expect(mlxSession['loaded_weight_file_count'], 0);
@@ -94,6 +95,52 @@ void main() {
         artifactDir.deleteSync(recursive: true);
       }
     });
+
+    test(
+      'discovers exported MLX function bundles in Zig diagnostics',
+      () {
+        final artifactDir = Directory.systemTemp.createTempSync(
+          'dart_inference_mlxfn_',
+        );
+        File(
+          '${artifactDir.path}${Platform.pathSeparator}function.mlxfn',
+        ).writeAsBytesSync(const []);
+        File(
+          '${artifactDir.path}${Platform.pathSeparator}inputs.safetensors',
+        ).writeAsBytesSync(const []);
+        const spec = ModelSpec(
+          id: 'zig_mlxfn',
+          family: 'Zig MLX function',
+          modalities: [ModelModality.embedding],
+        );
+        final bundle = ModelBundle(
+          spec: spec,
+          rootPath: artifactDir.path,
+          artifact: RuntimeArtifact(engine: RuntimeEngine.mlx, path: '.'),
+        );
+        final runtime = NativeModelRuntime(RuntimeEngine.mlx);
+        try {
+          final session = runtime.load(
+            bundle,
+            const RuntimeOptions(diagnostics: true),
+          );
+          try {
+            final mlxSession =
+                session.diagnostics['mlx_session'] as Map<Object?, Object?>;
+            expect(mlxSession['artifact_kind'], 'directory_mlx_function');
+            expect(mlxSession['function_loaded'], isFalse);
+            expect(mlxSession['weight_file_count'], 0);
+            expect(mlxSession['weights_loaded'], isFalse);
+            expect(mlxSession['executor_kind'], 'imported_function');
+          } finally {
+            session.close();
+          }
+        } finally {
+          artifactDir.deleteSync(recursive: true);
+        }
+      },
+      skip: Platform.isMacOS ? 'empty mlxfn fixture is Linux-only' : false,
+    );
 
     test('runs explicit echo mode through the model runtime ABI', () {
       const spec = ModelSpec(

@@ -3,8 +3,11 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.36`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.37`.
 - Moved vendored native dependencies from `third_party/` to `vendors/` and updated native build paths plus publish filters.
+- Added Zig-owned `.mlxfn` imported-function execution so exported MLX bundles now run through `dart_inference_runtime_* -> Zig -> mlx-c`, and moved the benchmark helper off the removed Dart MLX import runner.
+- Registered MLX in the bundled runtime registry while keeping default resolver selection limited to implemented `.mlxfn`/`mlx-function` artifacts.
+- Split Zig runtime input tensor conversion into `mlx_input.zig` to keep the MLX backend extensible under the source-file size limit.
 - Added the first real Zig MLX executor template for `dart_inference_linear`, using Zig-owned safetensors weights with `mlx_matmul`/`mlx_add` before returning runtime ABI tensors.
 - Added a Zig-owned MLX C type/output materialization layer and wired the runtime MLX path to copy future `mlx_array` executor outputs into the Dart runtime tensor ABI.
 - Added Zig-side MLX quantization metadata parsing for affine/default quantized snapshots so executor selection does not need Dart to inspect config files.

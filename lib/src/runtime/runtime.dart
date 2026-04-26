@@ -285,6 +285,7 @@ final class RuntimeRegistry {
   }) {
     final registry = RuntimeRegistry(resolver: resolver);
     registry
+      ..register(NativeModelRuntime(RuntimeEngine.mlx))
       ..register(NativeModelRuntime(RuntimeEngine.coreml))
       ..register(NativeModelRuntime(RuntimeEngine.onnx))
       ..register(NativeModelRuntime(RuntimeEngine.litert));
@@ -438,7 +439,12 @@ final class RuntimeResolver {
     final platform = hostPlatform;
     final requested = options.engine;
     if (requested != null) {
-      final artifact = _artifactFor(spec, requested, platform);
+      final artifact = _artifactFor(
+        spec,
+        requested,
+        platform,
+        allowPreviewMlx: true,
+      );
       if (artifact != null) {
         return RuntimeResolution(
           platform: platform,
@@ -477,12 +483,20 @@ final class RuntimeResolver {
   RuntimeArtifact? _artifactFor(
     ModelSpec spec,
     RuntimeEngine engine,
-    RuntimePlatform platform,
-  ) {
+    RuntimePlatform platform, {
+    bool allowPreviewMlx = false,
+  }) {
     final artifact = spec.platformArtifacts[engine];
     if (artifact == null) return null;
-    if (artifact.targetPlatforms.isEmpty) return artifact;
-    return artifact.targetPlatforms.contains(platform.name) ? artifact : null;
+    if (artifact.targetPlatforms.isNotEmpty &&
+        !artifact.targetPlatforms.contains(platform.name)) {
+      return null;
+    }
+    if (engine != RuntimeEngine.mlx) return artifact;
+    if (allowPreviewMlx || _isRegisteredMlxArtifact(artifact)) {
+      return artifact;
+    }
+    return null;
   }
 
   List<RuntimeEngine> _defaultOrder(
@@ -490,8 +504,16 @@ final class RuntimeResolver {
     RuntimeOptions options,
   ) {
     return switch (platform) {
-      RuntimePlatform.ios => const [RuntimeEngine.coreml, RuntimeEngine.onnx],
-      RuntimePlatform.macos => const [RuntimeEngine.coreml, RuntimeEngine.onnx],
+      RuntimePlatform.ios => const [
+        RuntimeEngine.coreml,
+        RuntimeEngine.mlx,
+        RuntimeEngine.onnx,
+      ],
+      RuntimePlatform.macos => const [
+        RuntimeEngine.coreml,
+        RuntimeEngine.mlx,
+        RuntimeEngine.onnx,
+      ],
       RuntimePlatform.windows => const [RuntimeEngine.onnx],
       RuntimePlatform.linux => const [RuntimeEngine.onnx],
       RuntimePlatform.android => const [
@@ -504,6 +526,15 @@ final class RuntimeResolver {
         RuntimeEngine.litert,
       ],
     };
+  }
+
+  bool _isRegisteredMlxArtifact(RuntimeArtifact artifact) {
+    final format = artifact.format;
+    if (format == 'mlx-function' || format == 'mlxfn') {
+      return true;
+    }
+    return artifact.path.endsWith('.mlxfn') ||
+        artifact.path.endsWith('/function.mlxfn');
   }
 
   List<Accelerator> _acceleratorsFor(

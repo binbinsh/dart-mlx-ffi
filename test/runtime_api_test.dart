@@ -45,19 +45,40 @@ void main() {
       expect(resolution.accelerators.first, Accelerator.ane);
     });
 
-    test(
-      'prefers Core ML on macOS until the Zig MLX backend is registered',
-      () {
-        final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
-        expect(resolver.resolve(spec).engine, RuntimeEngine.coreml);
-        expect(
-          resolver
-              .resolve(spec, const RuntimeOptions(prefer: [Accelerator.ane]))
-              .engine,
-          RuntimeEngine.coreml,
-        );
-      },
-    );
+    test('prefers Core ML over preview MLX safetensors on macOS', () {
+      final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
+      expect(resolver.resolve(spec).engine, RuntimeEngine.coreml);
+      expect(
+        resolver
+            .resolve(spec, const RuntimeOptions(prefer: [Accelerator.ane]))
+            .engine,
+        RuntimeEngine.coreml,
+      );
+    });
+
+    test('selects registered MLX function bundles on Apple platforms', () {
+      const mlxFunctionOnly = ModelSpec(
+        id: 'mlxfn',
+        family: 'MLX function',
+        modalities: [ModelModality.textGeneration],
+        platformArtifacts: {
+          RuntimeEngine.mlx: RuntimeArtifact(
+            engine: RuntimeEngine.mlx,
+            path: 'function.mlxfn',
+            format: 'mlx-function',
+            targetPlatforms: ['ios', 'macos'],
+          ),
+          RuntimeEngine.onnx: RuntimeArtifact(
+            engine: RuntimeEngine.onnx,
+            path: 'model.onnx',
+            targetPlatforms: ['macos'],
+          ),
+        },
+      );
+
+      final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
+      expect(resolver.resolve(mlxFunctionOnly).engine, RuntimeEngine.mlx);
+    });
 
     test('selects platform engines for desktop and Android', () {
       expect(

@@ -110,15 +110,16 @@ The ABI is synchronous today because every target can support it. Zig remains
 - Public Dart imports expose `runtime.dart`, `models.dart`, and a shallow
   `dart_inference.dart`.
 - No public raw `mlx-c` binding surface.
-- MLX calls move behind Zig. Until the `mlx-c` executor is implemented and
-  registered, runtime resolution must not select MLX by default; explicit MLX
-  sessions are created by Zig, validate local safetensors artifact layouts,
-  parse MLX metadata and quantization fields, load Apple `mlx-c` weight maps
-  into Zig-owned session state, materialize future `mlx_array` outputs into the
-  runtime tensor ABI, and execute registered Zig MLX architectures directly.
-  `dart_inference_linear` is the first executor template; unregistered
-  architectures must fail from the Zig-owned `mlx-c` path rather than the C/C++
-  adapter.
+- MLX calls move behind Zig. Default runtime resolution may select MLX only
+  for artifact kinds with implemented Zig executors; explicit MLX sessions are
+  created by Zig, validate local safetensors and `.mlxfn` artifact layouts,
+  parse MLX metadata and quantization fields, load Apple `mlx-c` weight maps or
+  imported functions into Zig-owned session state, materialize `mlx_array`
+  outputs into the runtime tensor ABI, and execute registered Zig MLX
+  architectures directly. Exported `.mlxfn` bundles are the generic
+  imported-function path; `dart_inference_linear` is the first safetensors
+  executor template; unregistered architectures must fail from the Zig-owned
+  `mlx-c` path rather than the C/C++ adapter.
 - The Apple build hook produces `dart_inference_mlx_c` as a private `mlx-c`
   dependency for Zig. It is not a Dart-facing code asset API.
 - The former Dart-facing MLX raw/shim/stable APIs and C++ bridge are removed

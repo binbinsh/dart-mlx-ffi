@@ -23,6 +23,7 @@ Future<void> main(List<String> args) async {
       parsed.option('platform') ?? RuntimePlatformCurrent.current().name;
   final warmup = int.parse(parsed.option('warmup') ?? '1');
   final iters = int.parse(parsed.option('iters') ?? '5');
+  final includeOutputValues = parsed.flag('include-output-values');
   final root = parsed.option('root') ?? Directory.current.path;
   final hfCacheRoot = parsed.option('hf-cache-root');
   final numThreads = parsed.option('num-threads') == null
@@ -123,7 +124,10 @@ Future<void> main(List<String> args) async {
     'platform': platformName,
     'engine': engine.name,
     'artifact': artifact,
-    'correctness': _correctness(last?.values ?? const {}),
+    'correctness': _correctness(
+      last?.values ?? const {},
+      includeAllValues: includeOutputValues,
+    ),
     'metrics': {'end_to_end_ms': perIterMs, 'peak_memory_bytes': peakMemory},
     'device_profile': {
       'runtime': 'dart_inference',
@@ -146,7 +150,10 @@ void _writeReport(Map<String, Object?> report, String? outPath) {
   stdout.writeln(text);
 }
 
-Map<String, Object?> _correctness(Map<String, Object?> outputs) {
+Map<String, Object?> _correctness(
+  Map<String, Object?> outputs, {
+  bool includeAllValues = false,
+}) {
   final outputValues = <String, Object?>{};
   final outputSummaries = <String, Object?>{};
   for (final entry in outputs.entries) {
@@ -164,7 +171,7 @@ Map<String, Object?> _correctness(Map<String, Object?> outputs) {
       summary['top_k'] = topK;
     }
     outputSummaries[entry.key] = summary;
-    if (values.length <= 4096) {
+    if (includeAllValues || values.length <= 4096) {
       outputValues[entry.key] = {
         'dtype': tensor.dtype.name,
         'shape': tensor.shape,
@@ -311,13 +318,13 @@ const _usage = '''
 Usage:
   dart run benchmark/runtime/dart_runtime_runner.dart \\
     --model-id <id> \\
-    --engine <coreml|onnx|litert> \\
+    --engine <coreml|onnx|litert|mlx> \\
     --artifact <path> \\
     --input-json <inputs.json> \\
     [--root <artifact-root>] [--warmup 1] [--iters 5] [--out report.json]
     [--num-threads N] [--provider ORT_EP] [--delegate xnnpack]
     [--coreml-mode decode|prefill] [--litert-section-index N]
-    [--hf-cache-root <dir>] [--health-check]
+    [--hf-cache-root <dir>] [--health-check] [--include-output-values]
 
 When --artifact starts with hf://, the runner resolves it through
 HuggingFaceArtifactCache before native execution.

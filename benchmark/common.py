@@ -67,10 +67,19 @@ def run_script_capture(cmd: list[str], *, env: dict[str, str]) -> str:
 
 
 def parse_last_json(raw: str) -> dict[str, object]:
-    matches = re.findall(r"\{.*?\}", raw, flags=re.DOTALL)
-    if not matches:
+    decoder = json.JSONDecoder()
+    best: tuple[int, dict[str, object]] | None = None
+    for match in re.finditer(r"\{", raw):
+        try:
+            value, end = decoder.raw_decode(raw[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            if best is None or end > best[0]:
+                best = (end, value)
+    if best is None:
         raise RuntimeError(f"No JSON payload found in output:\n{raw}")
-    return json.loads(matches[-1])
+    return best[1]
 
 
 def compare_lists(a: list[float], b: list[float]) -> tuple[float, float]:
@@ -92,30 +101,92 @@ def benchmark_dart_export(
     values_env: str = "GENERIC_VALUES_PATH",
 ) -> tuple[list[float], float]:
     temp_dir = Path(tempfile.mkdtemp())
-    values_path = temp_dir / "dart_output.safetensors"
+    input_json_path = temp_dir / "inputs.json"
+    _write_runtime_input_json(
+        mx_module=mx_module,
+        input_path=input_path,
+        input_names=input_names,
+        output_path=input_json_path,
+    )
     env = dict(os.environ)
-    env[values_env] = str(values_path)
-    env["GENERIC_WARMUP"] = str(warmup)
-    env["GENERIC_ITERS"] = str(iters)
+    env.pop(values_env, None)
     cmd = [
         "dart",
         "run",
-        "models/common/import_run.dart",
+        "benchmark/runtime/dart_runtime_runner.dart",
+        "--model-id",
+        "mlx_export",
+        "--engine",
+        "mlx",
+        "--artifact",
         str(export_path),
-        str(input_path),
+        "--input-json",
+        str(input_json_path),
+        "--warmup",
+        str(warmup),
+        "--iters",
+        str(iters),
+        "--include-output-values",
     ]
-    if input_names is not None:
-        cmd.append(json.dumps(input_names))
     raw = run_script_capture(cmd, env=env)
     payload = parse_last_json(raw)
-    values = [
-        float(v)
-        for v in mx_module.load(str(values_path))["output"]
-        .reshape([-1])
-        .astype(mx_module.float32)
-        .tolist()
-    ]
-    return values, float(payload["per_iter_ms"])
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, dict):
+        raise RuntimeError(f"Missing runtime metrics in output:\n{raw}")
+    return _runtime_output_values(payload), float(metrics["end_to_end_ms"])
+
+
+def _write_runtime_input_json(
+    *,
+    mx_module,
+    input_path: Path,
+    input_names: list[str] | None,
+    output_path: Path,
+) -> None:
+    tensors = mx_module.load(str(input_path))
+    names = input_names or sorted(tensors.keys())
+    inputs: dict[str, dict[str, object]] = {}
+    for name in names:
+        array = tensors[name]
+        inputs[name] = {
+            "dtype": _runtime_dtype_name(array.dtype),
+            "shape": [int(dim) for dim in array.shape],
+            "values": array.reshape([-1]).tolist(),
+        }
+    output_path.write_text(json.dumps({"inputs": inputs}), encoding="utf-8")
+
+
+def _runtime_dtype_name(dtype) -> str:
+    text = str(dtype).split(".")[-1]
+    aliases = {
+        "bool_": "bool",
+        "bool": "bool",
+        "uint8": "uint8",
+        "int32": "int32",
+        "int64": "int64",
+        "float16": "float16",
+        "float32": "float32",
+        "float64": "float64",
+    }
+    if text not in aliases:
+        raise ValueError(f"Unsupported runtime input dtype: {dtype}")
+    return aliases[text]
+
+
+def _runtime_output_values(payload: dict[str, object]) -> list[float]:
+    correctness = payload.get("correctness")
+    if not isinstance(correctness, dict):
+        raise RuntimeError(f"Missing runtime correctness payload: {payload}")
+    output_values = correctness.get("output_values")
+    if not isinstance(output_values, dict):
+        raise RuntimeError(f"Runtime output values were omitted: {payload}")
+    output = output_values.get("output")
+    if not isinstance(output, dict):
+        raise RuntimeError(f"Runtime output tensor 'output' was not produced: {payload}")
+    values = output.get("values")
+    if not isinstance(values, list):
+        raise RuntimeError(f"Runtime output tensor has no values: {payload}")
+    return [float(value) for value in values]
 
 
 def cleanup_mlx(mx_module) -> None:

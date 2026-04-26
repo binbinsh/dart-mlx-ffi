@@ -2,7 +2,7 @@
 ///
 /// This API is the Dart side of the Dart -> Zig -> native provider runtime.
 /// It is intended for coarse model-level inference across Core ML, ONNX
-/// Runtime, LiteRT, and future Zig-owned MLX backends.
+/// Runtime, LiteRT, and Zig-owned MLX backends.
 library;
 
 export 'src/models/shared/model_spec.dart'

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import mlx.core as mx
@@ -57,15 +58,33 @@ def main() -> None:
 
     export_path = output_dir / "function.mlxfn"
     sample_inputs_path = output_dir / "inputs.safetensors"
+    sample_inputs_json_path = output_dir / "inputs.json"
     if export_path.exists():
         export_path.unlink()
     if sample_inputs_path.exists():
         sample_inputs_path.unlink()
+    if sample_inputs_json_path.exists():
+        sample_inputs_json_path.unlink()
 
     mx.export_function(str(export_path), forward, tokens, shapeless=True)
     mx.save_safetensors(str(sample_inputs_path), {"input_ids": tokens})
+    sample_inputs_json_path.write_text(
+        json.dumps(
+            {
+                "inputs": {
+                    "input_ids": {
+                        "dtype": "int32",
+                        "shape": [1, len(token_ids)],
+                        "values": token_ids,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     print(f"exported={export_path}")
     print(f"inputs={sample_inputs_path}")
+    print(f"inputs_json={sample_inputs_json_path}")
 
 
 if __name__ == "__main__":
