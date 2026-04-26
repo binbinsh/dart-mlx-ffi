@@ -774,7 +774,7 @@ export fn dinf_mem_json() [*c]u8 {
     return cpp.dinf_cpp_mem_json();
 }
 
-export fn dinf_ort_libs_json(
+export fn dinf_ort_libs(
     runtime_env_file: [*c]const u8,
     search_roots: [*c]const u8,
     explicit_libraries: [*c]const u8,
@@ -782,7 +782,7 @@ export fn dinf_ort_libs_json(
     library_names: [*c]const u8,
 ) [*c]u8 {
     const allocator = std.heap.c_allocator;
-    const json = rt_env.ortLibsJson(
+    const text = rt_env.ortLibsText(
         allocator,
         std.Io.Threaded.global_single_threaded.io(),
         optionalCString(runtime_env_file),
@@ -790,9 +790,9 @@ export fn dinf_ort_libs_json(
         cStringOrEmpty(explicit_libraries),
         cStringOrEmpty(library_dirs),
         cStringOrEmpty(library_names),
-    ) catch return copyString("[]");
-    defer allocator.free(json);
-    return copyString(json);
+    ) catch return copyString("");
+    defer allocator.free(text);
+    return copyString(text);
 }
 
 export fn dinf_coreml_layout_json(root_path: [*c]const u8) [*c]u8 {

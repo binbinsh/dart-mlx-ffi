@@ -169,8 +169,8 @@ external ffi.Pointer<ffi.Char> memJson();
     ffi.Pointer<ffi.Char>,
     ffi.Pointer<ffi.Char>,
   )
->(symbol: 'dinf_ort_libs_json')
-external ffi.Pointer<ffi.Char> ortLibsJson(
+>(symbol: 'dinf_ort_libs')
+external ffi.Pointer<ffi.Char> ortLibs(
   ffi.Pointer<ffi.Char> runtimeEnvFile,
   ffi.Pointer<ffi.Char> searchRoots,
   ffi.Pointer<ffi.Char> explicitLibraries,

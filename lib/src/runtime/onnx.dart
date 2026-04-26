@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
@@ -180,17 +179,17 @@ List<String> _ortLibs({
   final names = _nativeText(_pack(libraryNames));
   ffi.Pointer<ffi.Char> result = ffi.nullptr;
   try {
-    result = native.ortLibsJson(envFile, roots, explicit, dirs, names);
+    result = native.ortLibs(envFile, roots, explicit, dirs, names);
     if (result == ffi.nullptr) {
       return const [];
     }
-    final decoded = jsonDecode(result.cast<Utf8>().toDartString());
-    if (decoded is! List) {
+    final text = result.cast<Utf8>().toDartString();
+    if (text.isEmpty) {
       return const [];
     }
     return [
-      for (final value in decoded)
-        if (value is String && value.isNotEmpty) value,
+      for (final value in text.split('\n'))
+        if (value.isNotEmpty) value,
     ];
   } finally {
     if (result != ffi.nullptr) {

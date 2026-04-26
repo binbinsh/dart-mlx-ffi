@@ -158,7 +158,7 @@ const List = struct {
     }
 };
 
-pub fn ortLibsJson(
+pub fn ortLibsText(
     allocator: std.mem.Allocator,
     io: std.Io,
     runtime_env_file: ?[]const u8,
@@ -196,7 +196,7 @@ pub fn ortLibsJson(
             }
         }
     }
-    return jsonList(allocator, libs.items.items);
+    return textList(allocator, libs.items.items);
 }
 
 fn addEnvDirs(dirs: *List, io: std.Io, env: *const Env) !void {
@@ -348,33 +348,16 @@ fn separators() []const u8 {
     return if (builtin.os.tag == .windows) ";,\n\r" else ":;,\n\r";
 }
 
-fn jsonList(allocator: std.mem.Allocator, values: []const []u8) ![]u8 {
+fn textList(allocator: std.mem.Allocator, values: []const []u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
-    out.append(allocator, '[') catch return error.OutOfMemory;
     for (values, 0..) |value, index| {
         if (index > 0) {
-            out.append(allocator, ',') catch return error.OutOfMemory;
+            out.append(allocator, '\n') catch return error.OutOfMemory;
         }
-        try jsonString(allocator, &out, value);
+        out.appendSlice(allocator, value) catch return error.OutOfMemory;
     }
-    out.append(allocator, ']') catch return error.OutOfMemory;
     return out.toOwnedSlice(allocator) catch error.OutOfMemory;
-}
-
-fn jsonString(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: []const u8) !void {
-    out.append(allocator, '"') catch return error.OutOfMemory;
-    for (value) |char| {
-        switch (char) {
-            '"' => out.appendSlice(allocator, "\\\"") catch return error.OutOfMemory,
-            '\\' => out.appendSlice(allocator, "\\\\") catch return error.OutOfMemory,
-            '\n' => out.appendSlice(allocator, "\\n") catch return error.OutOfMemory,
-            '\r' => out.appendSlice(allocator, "\\r") catch return error.OutOfMemory,
-            '\t' => out.appendSlice(allocator, "\\t") catch return error.OutOfMemory,
-            else => out.append(allocator, char) catch return error.OutOfMemory,
-        }
-    }
-    out.append(allocator, '"') catch return error.OutOfMemory;
 }
 
 test "ONNX preload library scan uses Zig filesystem checks" {
@@ -385,7 +368,7 @@ test "ONNX preload library scan uses Zig filesystem checks" {
 
     const root = try path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(root);
-    const json = try ortLibsJson(
+    const text = try ortLibsText(
         std.testing.allocator,
         std.testing.io,
         null,
@@ -394,8 +377,8 @@ test "ONNX preload library scan uses Zig filesystem checks" {
         root,
         "libcudart.so.12",
     );
-    defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "libcudart.so.12") != null);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "libcudart.so.12") != null);
 }
 
 test "ONNX env file derives CUDA library directories in Zig" {
@@ -427,7 +410,7 @@ test "ONNX env file derives CUDA library directories in Zig" {
     try writer.interface.flush();
     file.close(std.testing.io);
 
-    const json = try ortLibsJson(
+    const libs = try ortLibsText(
         std.testing.allocator,
         std.testing.io,
         env_file,
@@ -436,8 +419,8 @@ test "ONNX env file derives CUDA library directories in Zig" {
         "",
         "libcudart.so.12",
     );
-    defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "libcudart.so.12") != null);
+    defer std.testing.allocator.free(libs);
+    try std.testing.expect(std.mem.indexOf(u8, libs, "libcudart.so.12") != null);
 }
 
 fn makePath(root: []const u8, parts: []const []const u8) !void {
