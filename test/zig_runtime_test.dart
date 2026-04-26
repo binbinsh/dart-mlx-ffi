@@ -28,7 +28,8 @@ void main() {
       File(
         '${artifactDir.path}${Platform.pathSeparator}config.json',
       ).writeAsStringSync(
-        '{"model_type":"qwen3","architectures":["Qwen3ForCausalLM"]}',
+        '{"model_type":"qwen3","architectures":["Qwen3ForCausalLM"],'
+        '"quantization":{"bits":4,"group_size":64}}',
       );
       File(
         '${artifactDir.path}${Platform.pathSeparator}tokenizer.json',
@@ -67,6 +68,9 @@ void main() {
           expect(mlxSession['has_generation_config'], isTrue);
           expect(mlxSession['model_type'], 'qwen3');
           expect(mlxSession['architecture'], 'Qwen3ForCausalLM');
+          expect(mlxSession['quantization_mode'], 'affine');
+          expect(mlxSession['quantization_bits'], 4);
+          expect(mlxSession['quantization_group_size'], 64);
           final input = RuntimeTensor.float32([1], Float32List.fromList([1]));
           expect(
             () => session.run(ModelInputs({'x': input})),

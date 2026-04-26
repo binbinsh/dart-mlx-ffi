@@ -178,6 +178,9 @@ const ModelMetadata = struct {
     generation_config_path: ?[]u8,
     model_type: ?[]u8,
     architecture: ?[]u8,
+    quantization_mode: ?[]u8,
+    quantization_bits: ?i64,
+    quantization_group_size: ?i64,
 
     fn empty() ModelMetadata {
         return .{
@@ -186,6 +189,9 @@ const ModelMetadata = struct {
             .generation_config_path = null,
             .model_type = null,
             .architecture = null,
+            .quantization_mode = null,
+            .quantization_bits = null,
+            .quantization_group_size = null,
         };
     }
 
@@ -195,6 +201,7 @@ const ModelMetadata = struct {
         freeOptionalString(allocator, &self.generation_config_path);
         freeOptionalString(allocator, &self.model_type);
         freeOptionalString(allocator, &self.architecture);
+        freeOptionalString(allocator, &self.quantization_mode);
         self.* = ModelMetadata.empty();
     }
 };
@@ -278,6 +285,9 @@ pub fn sessionDiagnosticsJson(
             .has_generation_config = session.metadata.generation_config_path != null,
             .model_type = session.metadata.model_type,
             .architecture = session.metadata.architecture,
+            .quantization_mode = session.metadata.quantization_mode,
+            .quantization_bits = session.metadata.quantization_bits,
+            .quantization_group_size = session.metadata.quantization_group_size,
         },
         .{ .emit_null_optional_fields = false },
     );
@@ -518,6 +528,47 @@ fn parseModelConfig(
     };
     metadata.model_type = try copyStringField(allocator, object, "model_type");
     metadata.architecture = try copyFirstStringField(allocator, object, "architectures");
+    try parseQuantizationMetadata(allocator, object, metadata);
+}
+
+fn parseQuantizationMetadata(
+    allocator: std.mem.Allocator,
+    object: std.json.ObjectMap,
+    metadata: *ModelMetadata,
+) SessionError!void {
+    const quantization = objectField(object, "quantization") orelse
+        objectField(object, "quantization_config") orelse return;
+    metadata.quantization_mode = try copyStringField(allocator, quantization, "mode") orelse
+        try copyStringField(allocator, quantization, "quant_method");
+    metadata.quantization_bits = integerField(quantization, "bits");
+    metadata.quantization_group_size = integerField(quantization, "group_size");
+    if (metadata.quantization_mode == null and
+        (metadata.quantization_bits != null or metadata.quantization_group_size != null))
+    {
+        metadata.quantization_mode = allocator.dupe(u8, "affine") catch return error.OutOfMemory;
+    }
+}
+
+fn objectField(
+    object: std.json.ObjectMap,
+    key: []const u8,
+) ?std.json.ObjectMap {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .object => |item| item,
+        else => null,
+    };
+}
+
+fn integerField(
+    object: std.json.ObjectMap,
+    key: []const u8,
+) ?i64 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .integer => |integer| integer,
+        else => null,
+    };
 }
 
 fn copyStringField(
@@ -888,7 +939,7 @@ test "MLX session discovers model.safetensors directory artifacts" {
     file.close(std.testing.io);
     const config = try tmp.dir.createFile(std.testing.io, "config.json", .{});
     var config_writer = config.writer(std.testing.io, &.{});
-    try config_writer.interface.writeAll("{\"model_type\":\"qwen3\",\"architectures\":[\"Qwen3ForCausalLM\"]}");
+    try config_writer.interface.writeAll("{\"model_type\":\"qwen3\",\"architectures\":[\"Qwen3ForCausalLM\"],\"quantization\":{\"bits\":4,\"group_size\":64}}");
     try config_writer.interface.flush();
     config.close(std.testing.io);
     const tokenizer = try tmp.dir.createFile(std.testing.io, "tokenizer.json", .{});
@@ -906,6 +957,9 @@ test "MLX session discovers model.safetensors directory artifacts" {
     try std.testing.expect(!session.weights.loaded);
     try std.testing.expectEqualStrings("qwen3", session.metadata.model_type.?);
     try std.testing.expectEqualStrings("Qwen3ForCausalLM", session.metadata.architecture.?);
+    try std.testing.expectEqualStrings("affine", session.metadata.quantization_mode.?);
+    try std.testing.expectEqual(@as(i64, 4), session.metadata.quantization_bits.?);
+    try std.testing.expectEqual(@as(i64, 64), session.metadata.quantization_group_size.?);
     const json = try sessionDiagnosticsJson(session, std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_kind\":\"directory_model_safetensors\"") != null);
@@ -914,6 +968,8 @@ test "MLX session discovers model.safetensors directory artifacts" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"has_tokenizer\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"has_generation_config\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"model_type\":\"qwen3\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"quantization_mode\":\"affine\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"quantization_bits\":4") != null);
 }
 
 test "MLX session discovers sharded safetensors directory artifacts" {

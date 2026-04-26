@@ -9,7 +9,8 @@ Current shape:
   `dinf_cpp_runtime_*` symbols.
 - Apple builds also link Zig to a private `dart_inference_mlx_c` library that
   exposes `mlx-c`; explicit MLX sessions are created by Zig, discover local
-  safetensors artifact layouts, parse local MLX metadata files, load
+  safetensors artifact layouts, parse local MLX metadata and quantization
+  fields, load
   safetensors weight maps on Apple, and `run()` enters Zig-side managed
   tensor-to-`mlx_array` conversion before returning an
   executor-not-implemented error.
