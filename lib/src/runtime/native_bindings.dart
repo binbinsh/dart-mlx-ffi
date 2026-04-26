@@ -88,6 +88,14 @@ external ffi.Pointer<ffi.Char> engineAccelsJson(int engine);
 )
 external ffi.Pointer<ffi.Char> engineOrderJson(int platform);
 
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>(
+  symbol: 'dinf_mlx_artifact_registered',
+)
+external int mlxArtifactRegistered(
+  ffi.Pointer<ffi.Char> format,
+  ffi.Pointer<ffi.Char> artifactPath,
+);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
 external ffi.Pointer<ffi.Char> memJson();
 

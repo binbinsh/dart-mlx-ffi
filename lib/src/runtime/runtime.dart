@@ -519,12 +519,17 @@ final class RuntimeResolver {
   }
 
   bool _isRegisteredMlxArtifact(RuntimeArtifact artifact) {
-    final format = artifact.format;
-    if (format == 'mlx-function' || format == 'mlxfn') {
-      return true;
+    final format = (artifact.format ?? '')
+        .toNativeUtf8(allocator: calloc)
+        .cast<ffi.Char>();
+    final path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    try {
+      return native.mlxArtifactRegistered(format, path) != 0;
+    } finally {
+      calloc
+        ..free(format)
+        ..free(path);
     }
-    return artifact.path.endsWith('.mlxfn') ||
-        artifact.path.endsWith('/function.mlxfn');
   }
 
   List<Accelerator> _acceleratorsFor(

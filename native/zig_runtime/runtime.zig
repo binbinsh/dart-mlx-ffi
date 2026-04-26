@@ -3,24 +3,10 @@ const builtin = @import("builtin");
 const coreml = @import("coreml.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
+const policy = @import("policy.zig");
 
 const pinned_zig_version = "0.16.0";
-
-const Engine = enum(i32) {
-    mlx = 0,
-    coreml = 1,
-    onnx = 2,
-    litert = 3,
-};
-
-const Platform = enum(i32) {
-    ios = 0,
-    macos = 1,
-    windows = 2,
-    linux = 3,
-    android = 4,
-    unknown = 5,
-};
+const Engine = policy.Engine;
 
 const Dtype = enum(i32) {
     float32 = 1,
@@ -351,63 +337,6 @@ fn copyTensor(input: NamedTensor) ?NamedTensor {
     return output;
 }
 
-fn engineName(engine: i32) []const u8 {
-    return switch (engine) {
-        @intFromEnum(Engine.mlx) => "mlx",
-        @intFromEnum(Engine.coreml) => "coreml",
-        @intFromEnum(Engine.onnx) => "onnx",
-        @intFromEnum(Engine.litert) => "litert",
-        else => "unknown",
-    };
-}
-
-fn platformId() i32 {
-    return switch (builtin.os.tag) {
-        .ios => @intFromEnum(Platform.ios),
-        .macos => @intFromEnum(Platform.macos),
-        .windows => @intFromEnum(Platform.windows),
-        .linux => if (builtin.abi == .android)
-            @intFromEnum(Platform.android)
-        else
-            @intFromEnum(Platform.linux),
-        else => @intFromEnum(Platform.unknown),
-    };
-}
-
-fn platformName(id: i32) []const u8 {
-    return switch (id) {
-        @intFromEnum(Platform.ios) => "ios",
-        @intFromEnum(Platform.macos) => "macos",
-        @intFromEnum(Platform.windows) => "windows",
-        @intFromEnum(Platform.linux) => "linux",
-        @intFromEnum(Platform.android) => "android",
-        else => "unknown",
-    };
-}
-
-fn acceleratorsJson(engine: i32) []const u8 {
-    return switch (engine) {
-        @intFromEnum(Engine.mlx) => "[\"gpu\",\"cpu\"]",
-        @intFromEnum(Engine.coreml) => "[\"ane\",\"gpu\",\"cpu\"]",
-        @intFromEnum(Engine.onnx) => "[\"gpu\",\"cpu\"]",
-        @intFromEnum(Engine.litert) => "[\"gpu\",\"npu\",\"cpu\"]",
-        else => "[]",
-    };
-}
-
-fn engineOrderJson(platform: i32) []const u8 {
-    return switch (platform) {
-        @intFromEnum(Platform.ios),
-        @intFromEnum(Platform.macos),
-        => "[\"coreml\",\"mlx\",\"onnx\"]",
-        @intFromEnum(Platform.windows),
-        @intFromEnum(Platform.linux),
-        => "[\"onnx\"]",
-        @intFromEnum(Platform.android) => "[\"litert\",\"onnx\"]",
-        else => "[\"coreml\",\"onnx\",\"litert\"]",
-    };
-}
-
 fn runtimeModeIsEcho(options_json: [*c]const u8) bool {
     if (options_json == null) {
         return false;
@@ -547,7 +476,7 @@ export fn dinf_info_json() [*c]u8 {
 }
 
 export fn dinf_platform_id() i32 {
-    return platformId();
+    return policy.platformId();
 }
 
 export fn dinf_caps_json(engine: i32) [*c]u8 {
@@ -555,9 +484,9 @@ export fn dinf_caps_json(engine: i32) [*c]u8 {
         std.heap.c_allocator,
         "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"platform\":\"{s}\",\"accelerators\":{s}}}",
         .{
-            engineName(engine),
-            platformName(platformId()),
-            acceleratorsJson(engine),
+            policy.engineName(engine),
+            policy.platformName(policy.platformId()),
+            policy.acceleratorsJson(engine),
         },
         0,
     ) catch return copyString("{}");
@@ -565,11 +494,21 @@ export fn dinf_caps_json(engine: i32) [*c]u8 {
 }
 
 export fn dinf_engine_accels_json(engine: i32) [*c]u8 {
-    return copyString(acceleratorsJson(engine));
+    return copyString(policy.acceleratorsJson(engine));
 }
 
 export fn dinf_engine_order_json(platform: i32) [*c]u8 {
-    return copyString(engineOrderJson(platform));
+    return copyString(policy.engineOrderJson(platform));
+}
+
+export fn dinf_mlx_artifact_registered(
+    format: [*c]const u8,
+    artifact_path: [*c]const u8,
+) i32 {
+    return if (policy.mlxArtifactRegistered(
+        optionalCString(format),
+        optionalCString(artifact_path),
+    )) 1 else 0;
 }
 
 export fn dinf_open(
@@ -950,7 +889,7 @@ export fn dinf_diag_json(handle: ?*anyopaque) [*c]u8 {
         const text = std.fmt.allocPrintSentinel(
             std.heap.c_allocator,
             "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"mode\":\"mlx\",\"zig_version\":\"{s}\",\"mlx_backend\":{s},\"mlx_session\":{s}}}",
-            .{ engineName(session.engine), pinned_zig_version, mlx_backend.status_json, mlx_session_json },
+            .{ policy.engineName(session.engine), pinned_zig_version, mlx_backend.status_json, mlx_session_json },
             0,
         ) catch return copyString("{}");
         return @ptrCast(text.ptr);
@@ -963,7 +902,7 @@ export fn dinf_diag_json(handle: ?*anyopaque) [*c]u8 {
     const text = std.fmt.allocPrintSentinel(
         std.heap.c_allocator,
         "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"mode\":\"{s}\",\"zig_version\":\"{s}\",\"mlx_backend\":{s}}}",
-        .{ engineName(session.engine), mode, pinned_zig_version, mlx_backend.status_json },
+        .{ policy.engineName(session.engine), mode, pinned_zig_version, mlx_backend.status_json },
         0,
     ) catch return copyString("{}");
     return @ptrCast(text.ptr);
@@ -976,7 +915,7 @@ test "backend json is stable" {
 }
 
 test "runtime capabilities are reported from Zig" {
-    try std.testing.expectEqual(platformId(), dinf_platform_id());
+    try std.testing.expectEqual(policy.platformId(), dinf_platform_id());
     const json = dinf_caps_json(@intFromEnum(Engine.coreml));
     defer dinf_free_str(json);
     const text = std.mem.span(json);
@@ -987,17 +926,18 @@ test "runtime capabilities are reported from Zig" {
 }
 
 test "runtime resolver policy is reported from Zig" {
-    const macos_order = dinf_engine_order_json(@intFromEnum(Platform.macos));
+    const macos_order = dinf_engine_order_json(@intFromEnum(policy.Platform.macos));
     defer dinf_free_str(macos_order);
     try std.testing.expectEqualStrings("[\"coreml\",\"mlx\",\"onnx\"]", std.mem.span(macos_order));
 
-    const linux_order = dinf_engine_order_json(@intFromEnum(Platform.linux));
+    const linux_order = dinf_engine_order_json(@intFromEnum(policy.Platform.linux));
     defer dinf_free_str(linux_order);
     try std.testing.expectEqualStrings("[\"onnx\"]", std.mem.span(linux_order));
 
     const litert_accels = dinf_engine_accels_json(@intFromEnum(Engine.litert));
     defer dinf_free_str(litert_accels);
     try std.testing.expectEqualStrings("[\"gpu\",\"npu\",\"cpu\"]", std.mem.span(litert_accels));
+    try std.testing.expectEqual(@as(i32, 1), dinf_mlx_artifact_registered(null, "bundle/function.mlxfn"));
 }
 
 test "runtime mode is parsed from Zig-owned options JSON" {
