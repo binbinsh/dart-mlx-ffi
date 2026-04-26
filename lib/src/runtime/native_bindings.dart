@@ -24,6 +24,28 @@ final class NamedTensorAbi extends ffi.Struct {
   external TensorAbi tensor;
 }
 
+final class ResolveArtifactAbi extends ffi.Struct {
+  @ffi.Int32()
+  external int engine;
+
+  external ffi.Pointer<ffi.Char> path;
+
+  external ffi.Pointer<ffi.Char> format;
+
+  external ffi.Pointer<ffi.Char> targetPlatforms;
+}
+
+final class ResolveResultAbi extends ffi.Struct {
+  @ffi.Int32()
+  external int engine;
+
+  @ffi.Int32()
+  external int accelMask;
+
+  @ffi.Int32()
+  external int fallbackEngine;
+}
+
 @ffi.Native<
   ffi.Pointer<ffi.Void> Function(
     ffi.Int32,
@@ -86,15 +108,47 @@ external int platformId();
 @ffi.Native<ffi.Int32 Function(ffi.Int32)>(symbol: 'dinf_accel_mask')
 external int accelMask(int engine);
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'dinf_resolve_json',
-)
-external ffi.Pointer<ffi.Char> resolveJson(ffi.Pointer<ffi.Char> requestJson);
+@ffi.Native<
+  ffi.Int32 Function(
+    ffi.Pointer<ffi.Char>,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Pointer<ResolveArtifactAbi>,
+    ffi.IntPtr,
+    ffi.Pointer<ResolveResultAbi>,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+  )
+>(symbol: 'dinf_resolve')
+external int resolve(
+  ffi.Pointer<ffi.Char> modelId,
+  int platform,
+  int requestedEngine,
+  int allowFallback,
+  int preferMask,
+  ffi.Pointer<ResolveArtifactAbi> artifacts,
+  int artifactCount,
+  ffi.Pointer<ResolveResultAbi> result,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> error,
+);
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'dinf_fallback_json',
-)
-external ffi.Pointer<ffi.Char> fallbackJson(ffi.Pointer<ffi.Char> requestJson);
+@ffi.Native<
+  ffi.Int32 Function(
+    ffi.Int32,
+    ffi.Pointer<ffi.Int32>,
+    ffi.IntPtr,
+    ffi.Pointer<ResolveArtifactAbi>,
+    ffi.IntPtr,
+  )
+>(symbol: 'dinf_fallback')
+external int fallback(
+  int platform,
+  ffi.Pointer<ffi.Int32> registeredEngines,
+  int registeredCount,
+  ffi.Pointer<ResolveArtifactAbi> artifacts,
+  int artifactCount,
+);
 
 @ffi.Native<
   ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)

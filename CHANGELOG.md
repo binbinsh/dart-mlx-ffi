@@ -3,13 +3,14 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.68`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.69`.
+- Replaced Dart resolver/fallback JSON calls with typed `dinf_resolve` and `dinf_fallback` ABIs so runtime artifact selection no longer builds or parses JSON in Dart.
 - Moved native runtime open-option assembly into Zig through `dinf_open_opts` and removed the obsolete `dinf_open` Dart-facing entry point.
 - Replaced the capabilities JSON binding with Zig-owned accelerator bitmasks through `dinf_accel_mask`.
 - Moved unresolved remote artifact rejection fully into the Zig open path, removing the Dart preflight call and obsolete `dinf_artifact_remote` binding.
 - Moved Hugging Face auth-token environment lookup into Zig through `dinf_hf_token`.
-- Moved runtime engine/artifact selection into Zig through `dinf_resolve_json`, leaving Dart to pass a compact request and unwrap the selected artifact.
-- Moved registered-runtime fallback selection into Zig through `dinf_fallback_json`, leaving Dart to pass registered engine ids and unwrap the selected fallback artifact.
+- Moved runtime engine/artifact selection into Zig through the native resolver ABI, leaving Dart to pass compact artifact descriptors and unwrap the selected artifact.
+- Moved registered-runtime fallback selection into Zig through the native fallback ABI, leaving Dart to pass registered engine ids and unwrap the selected fallback artifact.
 - Moved Hugging Face default cache root platform/env policy into Zig through `dinf_hf_cache_root`.
 - Split Zig runtime tensor ABI, validation, and native buffer ownership helpers into `abi.zig` to keep `runtime.zig` below the source-size limit before further migration.
 - Moved Hugging Face artifact reference parsing, directory artifact policy, and cache path construction into Zig through `dinf_hf_*`.

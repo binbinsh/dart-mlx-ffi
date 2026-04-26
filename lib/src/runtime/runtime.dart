@@ -1,7 +1,6 @@
 /// Model-level runtime abstractions and resolution.
 library;
 
-import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
@@ -410,26 +409,35 @@ final class RuntimeRegistry {
     RuntimePlatform platform,
     RuntimeOptions options,
   ) {
-    final resolved = _fallbackNative({
-      'platform': _platformId(platform),
-      'registeredEngines': _runtimes.keys.map(_engineId).toList(),
-      'artifacts': _resolverArtifacts(spec),
-    });
-    if (resolved['ok'] != true) {
-      return null;
+    final artifacts = _ArtifactArena(spec);
+    final registered = _IntArena(_runtimes.keys.map(_engineId));
+    try {
+      final engineId = native.fallback(
+        _platformId(platform),
+        registered.pointer,
+        registered.count,
+        artifacts.pointer,
+        artifacts.count,
+      );
+      if (engineId < 0) {
+        return null;
+      }
+      final engine = _engineById(engineId);
+      final artifact = spec.platformArtifacts[engine];
+      if (artifact == null) {
+        return null;
+      }
+      return RuntimeResolution(
+        platform: platform,
+        engine: engine,
+        artifact: artifact,
+        accelerators: options.prefer,
+        fallbackReason: 'Selected engine has no registered runtime backend.',
+      );
+    } finally {
+      registered.close();
+      artifacts.close();
     }
-    final engine = _engineById((resolved['engine'] as num?)?.toInt() ?? -1);
-    final artifact = spec.platformArtifacts[engine];
-    if (artifact == null) {
-      return null;
-    }
-    return RuntimeResolution(
-      platform: platform,
-      engine: engine,
-      artifact: artifact,
-      accelerators: options.prefer,
-      fallbackReason: 'Selected engine has no registered runtime backend.',
-    );
   }
 }
 
@@ -460,34 +468,56 @@ final class RuntimeResolver {
   ]) {
     final platform = hostPlatform;
     final requested = options.engine;
-    final resolved = _resolveNative({
-      'modelId': spec.id,
-      'platform': _platformId(platform),
-      'requestedEngine': requested == null ? -1 : _engineId(requested),
-      'allowFallback': options.allowFallback,
-      'prefer': options.prefer.map((value) => value.name).toList(),
-      'artifacts': _resolverArtifacts(spec),
-    });
-    if (resolved['ok'] != true) {
-      throw StateError(
-        resolved['message'] as String? ??
-            'Native runtime resolver failed for ${spec.id}.',
+    final artifacts = _ArtifactArena(spec);
+    final result = calloc<native.ResolveResultAbi>();
+    final error = calloc<ffi.Pointer<ffi.Char>>();
+    final modelId = _nativeText(spec.id);
+    try {
+      final status = native.resolve(
+        modelId,
+        _platformId(platform),
+        requested == null ? -1 : _engineId(requested),
+        options.allowFallback ? 1 : 0,
+        _preferMask(options.prefer),
+        artifacts.pointer,
+        artifacts.count,
+        result,
+        error,
       );
-    }
-    final engine = _engineById((resolved['engine'] as num?)?.toInt() ?? -1);
-    final artifact = spec.platformArtifacts[engine];
-    if (artifact == null) {
-      throw StateError(
-        'Native runtime resolver selected missing ${engine.name} artifact.',
+      if (status != 0) {
+        throw StateError(
+          _takeError(error, 'Native runtime resolver failed for ${spec.id}.'),
+        );
+      }
+      final resolved = result.ref;
+      final engine = _engineById(resolved.engine);
+      final artifact = spec.platformArtifacts[engine];
+      if (artifact == null) {
+        throw StateError(
+          'Native runtime resolver selected missing ${engine.name} artifact.',
+        );
+      }
+      final fallbackEngine = resolved.fallbackEngine >= 0
+          ? _engineById(resolved.fallbackEngine)
+          : null;
+      return RuntimeResolution(
+        platform: platform,
+        engine: engine,
+        artifact: artifact,
+        accelerators: options.prefer.isNotEmpty
+            ? options.prefer
+            : _accelerators(resolved.accelMask),
+        fallbackReason: fallbackEngine == null
+            ? null
+            : 'Requested ${fallbackEngine.name} has no compatible artifact.',
       );
+    } finally {
+      artifacts.close();
+      calloc
+        ..free(modelId)
+        ..free(result)
+        ..free(error);
     }
-    return RuntimeResolution(
-      platform: platform,
-      engine: engine,
-      artifact: artifact,
-      accelerators: _accelerators(resolved['accelerators']),
-      fallbackReason: resolved['fallbackReason'] as String?,
-    );
   }
 }
 
@@ -515,78 +545,98 @@ RuntimeEngine _engineById(int id) => switch (id) {
   _ => throw StateError('Unsupported native runtime engine id: $id'),
 };
 
-List<Map<String, Object?>> _resolverArtifacts(ModelSpec spec) => [
-  for (final entry in spec.platformArtifacts.entries)
-    {
-      'engine': _engineId(entry.key),
-      'path': entry.value.path,
-      if (entry.value.format != null) 'format': entry.value.format,
-      if (entry.value.targetPlatforms.isNotEmpty)
-        'targetPlatforms': entry.value.targetPlatforms,
-    },
+int _preferMask(List<Accelerator> values) {
+  var mask = 0;
+  for (final value in values) {
+    mask |= switch (value) {
+      Accelerator.cpu => 1,
+      Accelerator.gpu => 2,
+      Accelerator.ane => 4,
+      Accelerator.npu => 8,
+    };
+  }
+  return mask;
+}
+
+List<Accelerator> _accelerators(int mask) => [
+  if ((mask & 4) != 0) Accelerator.ane,
+  if ((mask & 2) != 0) Accelerator.gpu,
+  if ((mask & 8) != 0) Accelerator.npu,
+  if ((mask & 1) != 0) Accelerator.cpu,
 ];
 
-Map<String, Object?> _resolveNative(Map<String, Object?> request) {
-  return _nativeJson(
-    request,
-    native.resolveJson,
-    'Native runtime resolver returned null.',
-    'Native runtime resolver returned invalid JSON.',
-  );
+ffi.Pointer<ffi.Char> _nativeText(String value) {
+  return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
 }
 
-Map<String, Object?> _fallbackNative(Map<String, Object?> request) {
-  return _nativeJson(
-    request,
-    native.fallbackJson,
-    'Native runtime fallback returned null.',
-    'Native runtime fallback returned invalid JSON.',
-  );
-}
-
-typedef _NativeJsonCall =
-    ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char> requestJson);
-
-Map<String, Object?> _nativeJson(
-  Map<String, Object?> request,
-  _NativeJsonCall call,
-  String nullMessage,
-  String invalidMessage,
-) {
-  final input = jsonEncode(
-    request,
-  ).toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  ffi.Pointer<ffi.Char> result = ffi.nullptr;
+String _takeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error, String fallback) {
+  final value = error.value;
+  if (value == ffi.nullptr) {
+    return fallback;
+  }
   try {
-    result = call(input);
-    if (result == ffi.nullptr) {
-      return {'ok': false, 'message': nullMessage};
-    }
-    final decoded = jsonDecode(result.cast<Utf8>().toDartString());
-    if (decoded is Map) {
-      return Map<String, Object?>.from(decoded);
-    }
-    return {'ok': false, 'message': invalidMessage};
+    return value.cast<Utf8>().toDartString();
   } finally {
-    if (result != ffi.nullptr) {
-      native.freeStr(result);
-    }
-    calloc.free(input);
+    native.freeStr(value);
+    error.value = ffi.nullptr;
   }
 }
 
-List<Accelerator> _accelerators(Object? value) {
-  if (value is! List) {
-    return const [];
+final class _ArtifactArena {
+  _ArtifactArena(ModelSpec spec)
+    : count = spec.platformArtifacts.length,
+      pointer = spec.platformArtifacts.isEmpty
+          ? ffi.nullptr
+          : calloc<native.ResolveArtifactAbi>(spec.platformArtifacts.length) {
+    var index = 0;
+    for (final entry in spec.platformArtifacts.entries) {
+      final artifact = entry.value;
+      pointer[index]
+        ..engine = _engineId(entry.key)
+        ..path = _add(artifact.path)
+        ..format = _add(artifact.format ?? '')
+        ..targetPlatforms = _add(artifact.targetPlatforms.join('\n'));
+      index += 1;
+    }
   }
-  return [
-    for (final item in value)
-      switch ('$item') {
-        'ane' => Accelerator.ane,
-        'gpu' => Accelerator.gpu,
-        'npu' => Accelerator.npu,
-        'cpu' => Accelerator.cpu,
-        _ => null,
-      },
-  ].whereType<Accelerator>().toList(growable: false);
+
+  final ffi.Pointer<native.ResolveArtifactAbi> pointer;
+  final int count;
+  final List<ffi.Pointer<ffi.Char>> _strings = [];
+
+  ffi.Pointer<ffi.Char> _add(String value) {
+    final pointer = _nativeText(value);
+    _strings.add(pointer);
+    return pointer;
+  }
+
+  void close() {
+    for (final value in _strings) {
+      calloc.free(value);
+    }
+    _strings.clear();
+    if (pointer != ffi.nullptr) {
+      calloc.free(pointer);
+    }
+  }
+}
+
+final class _IntArena {
+  _IntArena(Iterable<int> values) {
+    final list = values.toList(growable: false);
+    count = list.length;
+    pointer = count == 0 ? ffi.nullptr : calloc<ffi.Int32>(count);
+    if (count > 0) {
+      pointer.asTypedList(count).setAll(0, list);
+    }
+  }
+
+  late final ffi.Pointer<ffi.Int32> pointer;
+  late final int count;
+
+  void close() {
+    if (pointer != ffi.nullptr) {
+      calloc.free(pointer);
+    }
+  }
 }

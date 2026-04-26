@@ -14,6 +14,8 @@ const Engine = policy.Engine;
 const Dtype = abi.Dtype;
 const NativeTensor = abi.NativeTensor;
 const NamedTensor = abi.NamedTensor;
+const ResolveArtifact = resolve.Artifact;
+const ResolveResult = resolve.Result;
 const copyString = abi.copyString;
 const freeString = abi.freeString;
 const copyCString = abi.copyCString;
@@ -326,20 +328,50 @@ export fn dinf_accel_mask(engine: i32) i32 {
     return policy.acceleratorMask(engine);
 }
 
-export fn dinf_resolve_json(request_json: [*c]const u8) [*c]u8 {
-    const allocator = std.heap.c_allocator;
-    const text = resolve.selectJson(allocator, cStringOrEmpty(request_json)) catch
-        return copyString("{\"ok\":false,\"message\":\"Zig runtime resolver failed.\"}");
-    defer allocator.free(text);
-    return copyString(text);
+export fn dinf_resolve(
+    model_id: [*c]const u8,
+    platform: i32,
+    requested: i32,
+    allow_fallback: i32,
+    prefer_mask: i32,
+    artifacts: [*c]const ResolveArtifact,
+    artifact_count: isize,
+    result_out: ?*ResolveResult,
+    error_out: ?*[*c]u8,
+) i32 {
+    const out = result_out orelse {
+        setError(error_out, "runtime resolver result_out is null");
+        return 1;
+    };
+    out.* = .{ .engine = -1, .accel_mask = 0, .fallback_engine = -1 };
+    const artifact_slice = artifactSlice(artifacts, artifact_count) orelse {
+        setError(error_out, "runtime resolver received invalid artifacts");
+        return 1;
+    };
+    const result = resolve.select(
+        platform,
+        requested,
+        allow_fallback != 0,
+        prefer_mask,
+        artifact_slice,
+    ) catch |err| {
+        setResolveError(error_out, err, cStringOrEmpty(model_id), requested, platform);
+        return 1;
+    };
+    out.* = result;
+    return 0;
 }
 
-export fn dinf_fallback_json(request_json: [*c]const u8) [*c]u8 {
-    const allocator = std.heap.c_allocator;
-    const text = resolve.fallbackJson(allocator, cStringOrEmpty(request_json)) catch
-        return copyString("{\"ok\":false,\"message\":\"Zig runtime fallback failed.\"}");
-    defer allocator.free(text);
-    return copyString(text);
+export fn dinf_fallback(
+    platform: i32,
+    registered_engines: [*c]const i32,
+    registered_count: isize,
+    artifacts: [*c]const ResolveArtifact,
+    artifact_count: isize,
+) i32 {
+    const artifact_slice = artifactSlice(artifacts, artifact_count) orelse return -1;
+    const registered_slice = intSlice(registered_engines, registered_count) orelse return -1;
+    return resolve.fallback(platform, registered_slice, artifact_slice) orelse -1;
 }
 
 export fn dinf_artifact_path(
@@ -354,6 +386,65 @@ export fn dinf_artifact_path(
     ) catch return copyString("");
     defer allocator.free(resolved);
     return copyString(resolved);
+}
+
+fn artifactSlice(pointer: [*c]const ResolveArtifact, count: isize) ?[]const ResolveArtifact {
+    if (count < 0) {
+        return null;
+    }
+    if (count == 0) {
+        return &.{};
+    }
+    if (pointer == null) {
+        return null;
+    }
+    const len: usize = @intCast(count);
+    return pointer[0..len];
+}
+
+fn intSlice(pointer: [*c]const i32, count: isize) ?[]const i32 {
+    if (count < 0) {
+        return null;
+    }
+    if (count == 0) {
+        return &.{};
+    }
+    if (pointer == null) {
+        return null;
+    }
+    const len: usize = @intCast(count);
+    return pointer[0..len];
+}
+
+fn setResolveError(
+    error_out: ?*[*c]u8,
+    err: resolve.SelectError,
+    model_id: []const u8,
+    requested: i32,
+    platform: i32,
+) void {
+    const allocator = std.heap.c_allocator;
+    const id = if (model_id.len == 0) "model" else model_id;
+    const message = switch (err) {
+        error.RequestedUnavailable => std.fmt.allocPrint(
+            allocator,
+            "Model {s} has no {s} artifact for {s}.",
+            .{ id, policy.engineName(requested), policy.platformName(platform) },
+        ) catch {
+            setError(error_out, "runtime resolver failed");
+            return;
+        },
+        error.NoArtifact => std.fmt.allocPrint(
+            allocator,
+            "Model {s} has no runtime artifact for {s}.",
+            .{ id, policy.platformName(platform) },
+        ) catch {
+            setError(error_out, "runtime resolver failed");
+            return;
+        },
+    };
+    defer allocator.free(message);
+    setError(error_out, message);
 }
 
 fn openSession(
@@ -825,21 +916,50 @@ test "runtime capabilities are reported from Zig" {
 }
 
 test "runtime resolver policy is reported from Zig" {
-    const resolved = dinf_resolve_json(
-        \\{"modelId":"demo","platform":1,"requestedEngine":-1,"allowFallback":true,"prefer":[],"artifacts":[
-        \\{"engine":1,"path":"coreml","targetPlatforms":["macos"]}
-        \\]}
+    const artifacts = [_]ResolveArtifact{
+        .{
+            .engine = @intFromEnum(Engine.coreml),
+            .path = "coreml",
+            .format = "",
+            .target_platforms = "macos",
+        },
+        .{
+            .engine = @intFromEnum(Engine.onnx),
+            .path = "model.onnx",
+            .format = "",
+            .target_platforms = "macos",
+        },
+    };
+    var result: ResolveResult = undefined;
+    var error_value: [*c]u8 = null;
+    const status = dinf_resolve(
+        "demo",
+        @intFromEnum(policy.Platform.macos),
+        -1,
+        1,
+        0,
+        artifacts[0..].ptr,
+        @intCast(artifacts.len),
+        &result,
+        &error_value,
     );
-    defer dinf_free_str(resolved);
-    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(resolved), "\"engine\":1") != null);
+    defer dinf_free_str(error_value);
+    try std.testing.expectEqual(@as(i32, 0), status);
+    try std.testing.expectEqual(@as(i32, @intFromEnum(Engine.coreml)), result.engine);
+    try std.testing.expectEqual(
+        @as(i32, policy.accel_ane | policy.accel_gpu | policy.accel_cpu),
+        result.accel_mask,
+    );
 
-    const fallback = dinf_fallback_json(
-        \\{"platform":1,"registeredEngines":[2],"artifacts":[
-        \\{"engine":2,"path":"model.onnx","targetPlatforms":["macos"]}
-        \\]}
+    const registered = [_]i32{@intFromEnum(Engine.onnx)};
+    const fallback = dinf_fallback(
+        @intFromEnum(policy.Platform.macos),
+        registered[0..].ptr,
+        @intCast(registered.len),
+        artifacts[0..].ptr,
+        @intCast(artifacts.len),
     );
-    defer dinf_free_str(fallback);
-    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(fallback), "\"engine\":2") != null);
+    try std.testing.expectEqual(@as(i32, @intFromEnum(Engine.onnx)), fallback);
 
     const path = dinf_artifact_path("/models", "model.onnx");
     defer dinf_free_str(path);
