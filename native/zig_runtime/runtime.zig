@@ -229,13 +229,30 @@ fn engineName(engine: i32) []const u8 {
     };
 }
 
-fn containsEchoMode(options_json: [*c]const u8) bool {
+fn runtimeModeIsEcho(options_json: [*c]const u8) bool {
     if (options_json == null) {
         return false;
     }
     const value = options_json[0..std.mem.len(options_json)];
-    return std.mem.indexOf(u8, value, "\"zigRuntimeMode\":\"echo\"") != null or
-        std.mem.indexOf(u8, value, "\"zigRuntimeMode\": \"echo\"") != null;
+    if (value.len == 0) {
+        return false;
+    }
+    const parsed = std.json.parseFromSlice(
+        std.json.Value,
+        std.heap.c_allocator,
+        value,
+        .{ .duplicate_field_behavior = .use_last },
+    ) catch return false;
+    defer parsed.deinit();
+    const object = switch (parsed.value) {
+        .object => |object| object,
+        else => return false,
+    };
+    const mode = object.get("zigRuntimeMode") orelse return false;
+    return switch (mode) {
+        .string => |text| std.mem.eql(u8, text, "echo"),
+        else => false,
+    };
 }
 
 fn isEchoPath(model_path: [*c]const u8) bool {
@@ -360,7 +377,7 @@ export fn dart_inference_runtime_create(
         setError(error_out, "model_path is null");
         return null;
     }
-    const session = if (isEchoPath(model_path) or containsEchoMode(options_json))
+    const session = if (isEchoPath(model_path) or runtimeModeIsEcho(options_json))
         createEchoSession(engine, model_path, options_json)
     else if (engine == @intFromEnum(Engine.mlx))
         createMlxSession(engine, model_path, options_json, error_out)
@@ -680,6 +697,15 @@ test "backend json is stable" {
     try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"native_backend\":\"zig\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"mlx_backend\":{\"owner\":\"zig\",\"api\":\"mlx-c\"") != null);
     try std.testing.expectEqualStrings(pinned_zig_version, builtin.zig_version_string);
+}
+
+test "runtime mode is parsed from Zig-owned options JSON" {
+    try std.testing.expect(runtimeModeIsEcho("{\"zigRuntimeMode\":\"echo\"}"));
+    try std.testing.expect(runtimeModeIsEcho("{\"diagnostics\":true,\"zigRuntimeMode\" : \"echo\"}"));
+    try std.testing.expect(!runtimeModeIsEcho("{\"zigRuntimeMode\":\"adapter\"}"));
+    try std.testing.expect(!runtimeModeIsEcho("{\"message\":\"\\\"zigRuntimeMode\\\":\\\"echo\\\"\"}"));
+    try std.testing.expect(!runtimeModeIsEcho("{\"zigRuntimeMode\":true}"));
+    try std.testing.expect(!runtimeModeIsEcho("{"));
 }
 
 test "MLX output batch moves into runtime ABI tensors" {
