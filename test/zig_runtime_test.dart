@@ -15,7 +15,9 @@ void main() {
       final mlx = info['mlx_backend'] as Map<Object?, Object?>;
       expect(mlx['owner'], 'zig');
       expect(mlx['api'], 'mlx-c');
-      expect(mlx['enabled'], isFalse);
+      expect(mlx['enabled'], Platform.isMacOS || Platform.isIOS);
+      expect(mlx['registered_artifacts'], contains('mlxfn'));
+      expect(mlx['registered_artifacts'], contains('dart_inference_linear'));
     });
 
     test('creates MLX sessions in Zig and rejects unimplemented execution', () {

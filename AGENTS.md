@@ -3,12 +3,12 @@
 ## Versioning
 
 - This package uses the version format `1.yyyy.commit-count`.
-- The canonical release form is `1.2026.38` where:
+- The canonical release form is `1.2026.39` where:
   - `1` is the fixed package major version
   - `2026` is the 4-digit calendar year
-  - `38` is the git commit count with no zero padding
+  - `39` is the git commit count with no zero padding
 - Update [`pubspec.yaml`](pubspec.yaml) and [`CHANGELOG.md`](CHANGELOG.md) together.
-- Git tags must match the pubspec version and use the form `v<version>`, Example tag: `v1.2026.38`.
+- Git tags must match the pubspec version and use the form `v<version>`, Example tag: `v1.2026.39`.
 
 ## File Size
 
@@ -51,4 +51,4 @@
 - GitHub Actions auto-publish can be enabled after the package exists on pub.dev.
   - In pub.dev package admin, enable publishing from GitHub Actions for this repository.
   - The release tag must match the package version format: `v<1.yyyy.commit-count>`.
-  - Example: `v1.2026.38`
+  - Example: `v1.2026.39`

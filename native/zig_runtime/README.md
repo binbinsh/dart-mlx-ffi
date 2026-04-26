@@ -19,6 +19,8 @@ Current shape:
 - The Dart runtime registry includes MLX, but the default resolver only selects
   MLX automatically for implemented `.mlxfn`/`mlx-function` artifacts. Explicit
   MLX safetensors loads are still allowed for diagnostics and executor work.
+- `mlx_backend` metadata reports `enabled: true` on Apple linked builds and
+  lists the currently registered MLX artifact/executor surface.
 - Hot input paths can allocate native memory through Zig and pass
   `NativeTensorBuffer` views directly into `dart_inference_runtime_run`.
 - Zig is pinned by the repository `.zigversion` file and

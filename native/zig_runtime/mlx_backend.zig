@@ -1033,7 +1033,7 @@ pub fn statusJson() []const u8 {
 test "MLX status remains Zig-owned" {
     try std.testing.expectEqualStrings("zig", owner);
     try std.testing.expectEqualStrings("mlx-c", api);
-    try std.testing.expect(!enabled);
+    try std.testing.expectEqual(linked, enabled);
 }
 
 test "MLX session discovers exported function bundle before sample safetensors" {

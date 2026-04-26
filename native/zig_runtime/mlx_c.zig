@@ -3,11 +3,11 @@ const builtin = @import("builtin");
 pub const api = "mlx-c";
 pub const owner = "zig";
 pub const linked = builtin.os.tag == .macos or builtin.os.tag == .ios;
-pub const enabled = false;
+pub const enabled = linked;
 pub const status_json = if (linked)
-    "{\"owner\":\"zig\",\"api\":\"mlx-c\",\"linked\":true,\"enabled\":false}"
+    "{\"owner\":\"zig\",\"api\":\"mlx-c\",\"linked\":true,\"enabled\":true,\"registered_artifacts\":[\"mlxfn\",\"dart_inference_linear\"]}"
 else
-    "{\"owner\":\"zig\",\"api\":\"mlx-c\",\"linked\":false,\"enabled\":false}";
+    "{\"owner\":\"zig\",\"api\":\"mlx-c\",\"linked\":false,\"enabled\":false,\"registered_artifacts\":[\"mlxfn\",\"dart_inference_linear\"]}";
 
 pub const MlxString = extern struct {
     ctx: ?*anyopaque,
