@@ -14,6 +14,8 @@ set(RUNTIME_SRC
     ${CMAKE_CURRENT_LIST_DIR}/memory_bridge.cpp
     ${CMAKE_CURRENT_LIST_DIR}/options.cpp
     ${CMAKE_CURRENT_LIST_DIR}/litert_backend.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ort_pipeline.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ort_session.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ort_backend.cpp)
 
 if(APPLE)

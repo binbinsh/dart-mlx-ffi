@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.70`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.71`.
+- Split the ONNX C++ adapter into small session and pipeline modules so future `Dart -> Zig -> C/C++` migration work stays under the source-size limit.
 - Replaced ONNX preload-library discovery JSON with the compact `dinf_ort_libs` packed-text ABI, removing another Dart-side native JSON decode.
 - Replaced Dart resolver/fallback JSON calls with typed `dinf_resolve` and `dinf_fallback` ABIs so runtime artifact selection no longer builds or parses JSON in Dart.
 - Moved native runtime open-option assembly into Zig through `dinf_open_opts` and removed the obsolete `dinf_open` Dart-facing entry point.
