@@ -31,7 +31,7 @@ int trace_budget_from_env(const char* env_name, int default_budget) {
 }
 
 std::atomic<int> g_metal_copy_trace_remaining{
-    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
+    trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 48)};
 
 void maybe_trace_metal_copy_site(
     const array& in,

@@ -28,7 +28,7 @@ add_library(${PROJECT_NAME} SHARED ${RUNTIME_SRC})
 target_include_directories(
   ${PROJECT_NAME}
   PRIVATE ${CMAKE_CURRENT_LIST_DIR}
-          ${CMAKE_CURRENT_LIST_DIR}/../../third_party/json/single_include)
+          ${CMAKE_CURRENT_LIST_DIR}/../../vendors/json/single_include)
 
 if(DINF_ENABLE_ORT)
   if(NOT DEFINED DINF_ORT_INCLUDE_DIR OR NOT DEFINED DINF_ORT_LIBRARY)
@@ -94,7 +94,7 @@ if(DINF_BUILD_CLI)
   target_include_directories(
     dart_inference_runtime_runner
     PRIVATE ${CMAKE_CURRENT_LIST_DIR}
-            ${CMAKE_CURRENT_LIST_DIR}/../../third_party/json/single_include)
+            ${CMAKE_CURRENT_LIST_DIR}/../../vendors/json/single_include)
   target_link_libraries(dart_inference_runtime_runner PRIVATE ${PROJECT_NAME})
   set_target_properties(
     dart_inference_runtime_runner

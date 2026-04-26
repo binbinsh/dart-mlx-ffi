@@ -630,7 +630,7 @@ Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
   }
   for (final relativePath in const [
     'native',
-    'third_party',
+    'vendors',
     '.zigversion',
     'hook/build.dart',
   ]) {

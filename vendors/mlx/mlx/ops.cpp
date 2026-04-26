@@ -41,9 +41,9 @@ int trace_budget_from_env(const char* env_name, int default_budget) {
 }
 
 std::atomic<int> g_astype_site_remaining{
-    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
+    trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 48)};
 std::atomic<int> g_slice_update_site_remaining{
-    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
+    trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 48)};
 
 std::tuple<Shape, std::vector<int>, bool> compute_reduce_shape(
     const std::vector<int>& axes,
@@ -957,10 +957,10 @@ array slice_update(
 
 void reset_ops_trace_budgets() {
   g_astype_site_remaining.store(
-      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48),
+      trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 48),
       std::memory_order_relaxed);
   g_slice_update_site_remaining.store(
-      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48),
+      trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 48),
       std::memory_order_relaxed);
 }
 
@@ -2796,7 +2796,7 @@ array add(const array& a, const array& b, StreamOrDevice s /* = {} */) {
   if (out_type == float32 && a.ndim() == 3 && a.shape(0) == 1 &&
       a.shape(1) == 1 && a.shape(2) == 1024) {
     static std::atomic<int> remaining{
-        trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 24)};
+        trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 24)};
     int prev = remaining.fetch_sub(1, std::memory_order_relaxed);
     if (prev > 0) {
       std::cerr << "[mlx][add-site]"
@@ -4484,7 +4484,7 @@ array quantized_matmul(
       dtype != x.dtype() && x.ndim() == 3 && x.shape(0) == 1 &&
       x.shape(1) == 1 && x.shape(2) == 1024) {
     static std::atomic<int> remaining{
-        trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 24)};
+        trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 24)};
     int prev = remaining.fetch_sub(1, std::memory_order_relaxed);
     if (prev > 0) {
       std::cerr << "[mlx][qmm-cast]"

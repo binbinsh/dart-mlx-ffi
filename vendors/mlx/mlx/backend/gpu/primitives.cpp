@@ -41,11 +41,11 @@ int trace_budget_from_env(const char* env_name, int default_budget) {
 }
 
 std::atomic<int> g_trace_astype_remaining{
-    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48)};
+    trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 48)};
 std::atomic<int> g_trace_full_remaining{
-    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32)};
+    trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 32)};
 std::atomic<int> g_trace_slice_update_remaining{
-    trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32)};
+    trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 32)};
 
 void maybe_trace_gpu_primitive_copy(
     const char* op_name,
@@ -119,13 +119,13 @@ void maybe_trace_gpu_primitive_copy(
 
 void reset_gpu_primitive_trace_budgets() {
   g_trace_astype_remaining.store(
-      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 48),
+      trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 48),
       std::memory_order_relaxed);
   g_trace_full_remaining.store(
-      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32),
+      trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 32),
       std::memory_order_relaxed);
   g_trace_slice_update_remaining.store(
-      trace_budget_from_env("DART_MLX_DEBUG_COPY_TRACE", 32),
+      trace_budget_from_env("DART_INFERENCE_DEBUG_COPY_TRACE", 32),
       std::memory_order_relaxed);
   reset_ops_trace_budgets();
 }

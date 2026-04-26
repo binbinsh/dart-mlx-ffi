@@ -21,42 +21,42 @@ if(CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
   set(MLX_ENABLE_X64_MAC ON CACHE BOOL "" FORCE)
 endif()
 
-add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx
                  ${CMAKE_CURRENT_BINARY_DIR}/mlx)
 
 set(MLXC_SRC
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/array.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/closure.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/compile.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/cuda.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/device.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/distributed.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/distributed_group.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/error.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/export.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/fast.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/fft.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/io.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/io_types.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/linalg.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/map.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/memory.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/metal.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/ops.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/random.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/stream.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/string.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/transforms.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/transforms_impl.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/vector.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c/mlx/c/version.cpp)
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/array.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/closure.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/compile.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/cuda.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/device.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/distributed.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/distributed_group.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/error.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/export.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/fast.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/fft.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/io_types.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/linalg.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/map.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/memory.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/metal.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/ops.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/random.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/stream.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/string.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/transforms.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/transforms_impl.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/vector.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/version.cpp)
 
 add_library(${PROJECT_NAME} SHARED ${MLXC_SRC})
 
 target_include_directories(
   ${PROJECT_NAME}
-  PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx-c
-          ${CMAKE_CURRENT_LIST_DIR}/../../third_party/mlx)
+  PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c
+          ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE mlx)
 

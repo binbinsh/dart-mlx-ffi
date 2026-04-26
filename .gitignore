@@ -45,7 +45,6 @@ __pycache__/
 /benchmark/artifacts
 /output
 /tmp
-/vendors/
 
 # Native build outputs
 **/build/
