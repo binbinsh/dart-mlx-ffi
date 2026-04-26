@@ -1,12 +1,12 @@
 /// Model-level runtime abstractions and resolution.
 library;
 
-import 'dart:io';
 import 'dart:typed_data';
 
 import '../models/shared/model_spec.dart';
 import '../models/shared/runtime_metadata.dart';
 import 'artifact_resolver.dart';
+import 'native_bindings.dart' as native;
 import 'native_runtime.dart';
 
 /// Host platforms used by runtime resolution.
@@ -14,15 +14,17 @@ enum RuntimePlatform { ios, macos, windows, linux, android, unknown }
 
 extension RuntimePlatformCurrent on RuntimePlatform {
   /// Detect the current Dart VM platform.
-  static RuntimePlatform current() {
-    if (Platform.isIOS) return RuntimePlatform.ios;
-    if (Platform.isMacOS) return RuntimePlatform.macos;
-    if (Platform.isWindows) return RuntimePlatform.windows;
-    if (Platform.isLinux) return RuntimePlatform.linux;
-    if (Platform.isAndroid) return RuntimePlatform.android;
-    return RuntimePlatform.unknown;
-  }
+  static RuntimePlatform current() => _platformById(native.platformId());
 }
+
+RuntimePlatform _platformById(int id) => switch (id) {
+  0 => RuntimePlatform.ios,
+  1 => RuntimePlatform.macos,
+  2 => RuntimePlatform.windows,
+  3 => RuntimePlatform.linux,
+  4 => RuntimePlatform.android,
+  _ => RuntimePlatform.unknown,
+};
 
 /// User-selected runtime preferences.
 final class RuntimeOptions {

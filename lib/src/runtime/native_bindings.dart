@@ -72,6 +72,12 @@ external void freeStr(ffi.Pointer<ffi.Char> value);
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_info_json')
 external ffi.Pointer<ffi.Char> infoJson();
 
+@ffi.Native<ffi.Int32 Function()>(symbol: 'dinf_platform_id')
+external int platformId();
+
+@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(symbol: 'dinf_caps_json')
+external ffi.Pointer<ffi.Char> capsJson(int engine);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
 external ffi.Pointer<ffi.Char> memJson();
 

@@ -265,24 +265,7 @@ final class NativeModelRuntime implements ModelRuntime {
   NativeModelRuntime(this.engine);
 
   @override
-  RuntimeCapabilities get capabilities => RuntimeCapabilities(
-    engine: engine,
-    platform: RuntimePlatformCurrent.current(),
-    accelerators: switch (engine) {
-      RuntimeEngine.coreml => const [
-        Accelerator.ane,
-        Accelerator.gpu,
-        Accelerator.cpu,
-      ],
-      RuntimeEngine.onnx => const [Accelerator.gpu, Accelerator.cpu],
-      RuntimeEngine.litert => const [
-        Accelerator.gpu,
-        Accelerator.npu,
-        Accelerator.cpu,
-      ],
-      RuntimeEngine.mlx => const [Accelerator.gpu, Accelerator.cpu],
-    },
-  );
+  RuntimeCapabilities get capabilities => _caps(engine);
 
   final RuntimeEngine engine;
 
@@ -651,6 +634,71 @@ int _engineId(RuntimeEngine engine) => switch (engine) {
   RuntimeEngine.onnx => 2,
   RuntimeEngine.litert => 3,
 };
+
+RuntimeCapabilities _caps(RuntimeEngine engine) {
+  final ptr = native.capsJson(_engineId(engine));
+  if (ptr == ffi.nullptr) {
+    return _fallbackCaps(engine);
+  }
+  try {
+    final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
+    if (decoded is! Map) {
+      return _fallbackCaps(engine);
+    }
+    return RuntimeCapabilities(
+      engine: engine,
+      platform: _platformByName('${decoded['platform']}'),
+      accelerators: _accelerators(decoded['accelerators']),
+      details: {'nativeBackend': decoded['native_backend'] ?? 'zig'},
+    );
+  } finally {
+    native.freeStr(ptr);
+  }
+}
+
+RuntimeCapabilities _fallbackCaps(RuntimeEngine engine) => RuntimeCapabilities(
+  engine: engine,
+  platform: RuntimePlatformCurrent.current(),
+  accelerators: switch (engine) {
+    RuntimeEngine.coreml => const [
+      Accelerator.ane,
+      Accelerator.gpu,
+      Accelerator.cpu,
+    ],
+    RuntimeEngine.onnx => const [Accelerator.gpu, Accelerator.cpu],
+    RuntimeEngine.litert => const [
+      Accelerator.gpu,
+      Accelerator.npu,
+      Accelerator.cpu,
+    ],
+    RuntimeEngine.mlx => const [Accelerator.gpu, Accelerator.cpu],
+  },
+);
+
+RuntimePlatform _platformByName(String name) => switch (name) {
+  'ios' => RuntimePlatform.ios,
+  'macos' => RuntimePlatform.macos,
+  'windows' => RuntimePlatform.windows,
+  'linux' => RuntimePlatform.linux,
+  'android' => RuntimePlatform.android,
+  _ => RuntimePlatform.unknown,
+};
+
+List<Accelerator> _accelerators(Object? value) {
+  if (value is! List) {
+    return const [];
+  }
+  return [
+    for (final item in value)
+      switch ('$item') {
+        'ane' => Accelerator.ane,
+        'gpu' => Accelerator.gpu,
+        'npu' => Accelerator.npu,
+        'cpu' => Accelerator.cpu,
+        _ => null,
+      },
+  ].whereType<Accelerator>().toList(growable: false);
+}
 
 int _dtypeId(RuntimeTensorDataType dtype) => switch (dtype) {
   RuntimeTensorDataType.float32 => 1,
