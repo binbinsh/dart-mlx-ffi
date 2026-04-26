@@ -46,6 +46,7 @@ const Session = struct {
     model_path: [*c]u8,
     options_json: [*c]u8,
     adapter_handle: ?*anyopaque,
+    mlx_handle: ?*mlx_backend.Session,
 };
 
 const cpp = if (builtin.is_test) struct {
@@ -258,6 +259,7 @@ fn createEchoSession(
         .model_path = copyCString(model_path),
         .options_json = copyCString(options_json),
         .adapter_handle = null,
+        .mlx_handle = null,
     };
     if (session.model_path == null or session.options_json == null) {
         freeString(session.model_path);
@@ -293,6 +295,7 @@ fn createAdapterSession(
         .model_path = copyCString(model_path),
         .options_json = copyCString(options_json),
         .adapter_handle = adapter_handle,
+        .mlx_handle = null,
     };
     if (session.model_path == null or session.options_json == null) {
         freeString(session.model_path);
@@ -309,8 +312,21 @@ fn createMlxSession(
     engine: i32,
     model_path: [*c]const u8,
     options_json: [*c]const u8,
+    error_out: ?*[*c]u8,
 ) ?*Session {
-    const raw = std.c.malloc(@sizeOf(Session)) orelse return null;
+    const path_value = model_path[0..std.mem.len(model_path)];
+    const mlx_handle = mlx_backend.createSession(
+        std.heap.c_allocator,
+        std.Io.Threaded.global_single_threaded.io(),
+        path_value,
+    ) catch |err| {
+        setError(error_out, mlx_backend.sessionErrorMessage(err));
+        return null;
+    };
+    const raw = std.c.malloc(@sizeOf(Session)) orelse {
+        mlx_handle.deinit();
+        return null;
+    };
     const session: *Session = @ptrCast(@alignCast(raw));
     session.* = .{
         .engine = engine,
@@ -318,10 +334,12 @@ fn createMlxSession(
         .model_path = copyCString(model_path),
         .options_json = copyCString(options_json),
         .adapter_handle = null,
+        .mlx_handle = mlx_handle,
     };
     if (session.model_path == null or session.options_json == null) {
         freeString(session.model_path);
         freeString(session.options_json);
+        mlx_handle.deinit();
         std.c.free(session);
         return null;
     }
@@ -345,7 +363,7 @@ export fn dart_inference_runtime_create(
     const session = if (isEchoPath(model_path) or containsEchoMode(options_json))
         createEchoSession(engine, model_path, options_json)
     else if (engine == @intFromEnum(Engine.mlx))
-        createMlxSession(engine, model_path, options_json)
+        createMlxSession(engine, model_path, options_json, error_out)
     else
         createAdapterSession(engine, model_path, options_json, error_out);
     const resolved = session orelse {
@@ -365,7 +383,7 @@ export fn dart_inference_runtime_free(handle: ?*anyopaque) void {
     switch (session.mode) {
         .echo => {},
         .adapter => cpp.dinf_cpp_runtime_free(session.adapter_handle),
-        .mlx => {},
+        .mlx => if (session.mlx_handle) |mlx_handle| mlx_handle.deinit(),
     }
     freeString(session.model_path);
     freeString(session.options_json);
@@ -402,7 +420,7 @@ export fn dart_inference_runtime_run(
     const session: *Session = @ptrCast(@alignCast(handle.?));
     switch (session.mode) {
         .echo => {},
-        .mlx => return runMlxSession(inputs, input_count, error_out),
+        .mlx => return runMlxSession(session.mlx_handle.?, inputs, input_count, error_out),
         .adapter => return cpp.dinf_cpp_runtime_run(
             session.adapter_handle,
             inputs,
@@ -438,6 +456,7 @@ export fn dart_inference_runtime_run(
 }
 
 fn runMlxSession(
+    mlx_session: *const mlx_backend.Session,
     inputs: [*c]const NamedTensor,
     input_count: isize,
     error_out: ?*[*c]u8,
@@ -479,8 +498,8 @@ fn runMlxSession(
         defer allocator.free(version);
         const message = std.fmt.allocPrint(
             allocator,
-            "Zig-owned MLX backend converted inputs to mlx-c arrays with mlx-c {s}, but model execution is not implemented yet.",
-            .{version},
+            "Zig-owned MLX backend converted {d} input tensor(s) to mlx-c arrays for {s} with mlx-c {s}, but model execution is not implemented yet.",
+            .{ count, mlx_backend.artifactKindName(mlx_session.artifact_kind), version },
         ) catch {
             setError(error_out, mlx_backend.unavailableMessage());
             return 1;
@@ -539,9 +558,23 @@ export fn dart_inference_runtime_diagnostics_json(handle: ?*anyopaque) [*c]u8 {
     if (session.mode == .adapter) {
         return cpp.dinf_cpp_runtime_diagnostics_json(session.adapter_handle);
     }
+    if (session.mode == .mlx) {
+        const mlx_session_json = mlx_backend.sessionDiagnosticsJson(
+            session.mlx_handle.?,
+            std.heap.c_allocator,
+        ) catch return copyString("{}");
+        defer std.heap.c_allocator.free(mlx_session_json);
+        const text = std.fmt.allocPrintSentinel(
+            std.heap.c_allocator,
+            "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"mode\":\"mlx\",\"zig_version\":\"{s}\",\"mlx_backend\":{s},\"mlx_session\":{s}}}",
+            .{ engineName(session.engine), pinned_zig_version, mlx_backend.status_json, mlx_session_json },
+            0,
+        ) catch return copyString("{}");
+        return @ptrCast(text.ptr);
+    }
     const mode = switch (session.mode) {
         .echo => "echo",
-        .mlx => "mlx",
+        .mlx => unreachable,
         .adapter => unreachable,
     };
     const text = std.fmt.allocPrintSentinel(

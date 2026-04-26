@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:test/test.dart';
@@ -18,51 +19,56 @@ void main() {
     });
 
     test('creates MLX sessions in Zig and rejects unimplemented execution', () {
+      final artifactDir = Directory.systemTemp.createTempSync(
+        'dart_inference_mlx_',
+      );
+      File(
+        '${artifactDir.path}${Platform.pathSeparator}model.safetensors',
+      ).writeAsBytesSync(const []);
       const spec = ModelSpec(
         id: 'zig_mlx',
         family: 'Zig MLX',
         modalities: [ModelModality.embedding],
-        platformArtifacts: {
-          RuntimeEngine.mlx: RuntimeArtifact(
-            engine: RuntimeEngine.mlx,
-            path: 'zig://mlx-test',
-          ),
-        },
       );
-      const bundle = ModelBundle(
+      final bundle = ModelBundle(
         spec: spec,
-        rootPath: '',
-        artifact: RuntimeArtifact(
-          engine: RuntimeEngine.mlx,
-          path: 'zig://mlx-test',
-        ),
+        rootPath: artifactDir.path,
+        artifact: RuntimeArtifact(engine: RuntimeEngine.mlx, path: '.'),
       );
       final runtime = NativeModelRuntime(RuntimeEngine.mlx);
-      final session = runtime.load(
-        bundle,
-        const RuntimeOptions(diagnostics: true),
-      );
       try {
-        expect(session.diagnostics['native_backend'], 'zig');
-        expect(session.diagnostics['engine'], 'mlx');
-        expect(session.diagnostics['mode'], 'mlx');
-        final input = RuntimeTensor.float32([1], Float32List.fromList([1]));
-        expect(
-          () => session.run(ModelInputs({'x': input})),
-          throwsA(
-            isA<StateError>().having(
-              (error) => error.message,
-              'message',
-              allOf(
-                contains('Zig-owned MLX backend'),
-                contains('mlx-c'),
-                isNot(contains('C++ adapter')),
+        final session = runtime.load(
+          bundle,
+          const RuntimeOptions(diagnostics: true),
+        );
+        try {
+          expect(session.diagnostics['native_backend'], 'zig');
+          expect(session.diagnostics['engine'], 'mlx');
+          expect(session.diagnostics['mode'], 'mlx');
+          final mlxSession =
+              session.diagnostics['mlx_session'] as Map<Object?, Object?>;
+          expect(mlxSession['artifact_kind'], 'directory_model_safetensors');
+          expect(mlxSession['weight_file_count'], 1);
+          final input = RuntimeTensor.float32([1], Float32List.fromList([1]));
+          expect(
+            () => session.run(ModelInputs({'x': input})),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                allOf(
+                  contains('Zig-owned MLX backend'),
+                  contains('mlx-c'),
+                  isNot(contains('C++ adapter')),
+                ),
               ),
             ),
-          ),
-        );
+          );
+        } finally {
+          session.close();
+        }
       } finally {
-        session.close();
+        artifactDir.deleteSync(recursive: true);
       }
     });
 
