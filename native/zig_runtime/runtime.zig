@@ -321,18 +321,8 @@ export fn dinf_platform_id() i32 {
     return policy.platformId();
 }
 
-export fn dinf_caps_json(engine: i32) [*c]u8 {
-    const text = std.fmt.allocPrintSentinel(
-        std.heap.c_allocator,
-        "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"platform\":\"{s}\",\"accelerators\":{s}}}",
-        .{
-            policy.engineName(engine),
-            policy.platformName(policy.platformId()),
-            policy.acceleratorsJson(engine),
-        },
-        0,
-    ) catch return copyString("{}");
-    return @ptrCast(text.ptr);
+export fn dinf_accel_mask(engine: i32) i32 {
+    return policy.acceleratorMask(engine);
 }
 
 export fn dinf_resolve_json(request_json: [*c]const u8) [*c]u8 {
@@ -796,13 +786,14 @@ test "backend json is stable" {
 
 test "runtime capabilities are reported from Zig" {
     try std.testing.expectEqual(policy.platformId(), dinf_platform_id());
-    const json = dinf_caps_json(@intFromEnum(Engine.coreml));
-    defer dinf_free_str(json);
-    const text = std.mem.span(json);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"native_backend\":\"zig\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"engine\":\"coreml\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"platform\":\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"accelerators\":[\"ane\",\"gpu\",\"cpu\"]") != null);
+    try std.testing.expectEqual(
+        policy.accel_ane | policy.accel_gpu | policy.accel_cpu,
+        dinf_accel_mask(@intFromEnum(Engine.coreml)),
+    );
+    try std.testing.expectEqual(
+        policy.accel_gpu | policy.accel_npu | policy.accel_cpu,
+        dinf_accel_mask(@intFromEnum(Engine.litert)),
+    );
 }
 
 test "runtime resolver policy is reported from Zig" {

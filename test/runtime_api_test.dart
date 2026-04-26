@@ -45,6 +45,17 @@ void main() {
       expect(resolution.accelerators.first, Accelerator.ane);
     });
 
+    test('reports native capabilities from Zig accelerator bitmasks', () {
+      expect(
+        NativeModelRuntime(RuntimeEngine.coreml).capabilities.accelerators,
+        [Accelerator.ane, Accelerator.gpu, Accelerator.cpu],
+      );
+      expect(
+        NativeModelRuntime(RuntimeEngine.litert).capabilities.accelerators,
+        [Accelerator.gpu, Accelerator.npu, Accelerator.cpu],
+      );
+    });
+
     test('prefers Core ML over preview MLX safetensors on macOS', () {
       final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
       expect(resolver.resolve(spec).engine, RuntimeEngine.coreml);

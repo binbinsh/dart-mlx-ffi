@@ -75,8 +75,8 @@ external ffi.Pointer<ffi.Char> infoJson();
 @ffi.Native<ffi.Int32 Function()>(symbol: 'dinf_platform_id')
 external int platformId();
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(symbol: 'dinf_caps_json')
-external ffi.Pointer<ffi.Char> capsJson(int engine);
+@ffi.Native<ffi.Int32 Function(ffi.Int32)>(symbol: 'dinf_accel_mask')
+external int accelMask(int engine);
 
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)>(
   symbol: 'dinf_resolve_json',

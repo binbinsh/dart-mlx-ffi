@@ -61,6 +61,22 @@ pub fn acceleratorsJson(engine: i32) []const u8 {
     };
 }
 
+pub const accel_cpu: i32 = 1 << 0;
+pub const accel_gpu: i32 = 1 << 1;
+pub const accel_ane: i32 = 1 << 2;
+pub const accel_npu: i32 = 1 << 3;
+
+pub fn acceleratorMask(engine: i32) i32 {
+    return switch (engine) {
+        @intFromEnum(Engine.mlx),
+        @intFromEnum(Engine.onnx),
+        => accel_gpu | accel_cpu,
+        @intFromEnum(Engine.coreml) => accel_ane | accel_gpu | accel_cpu,
+        @intFromEnum(Engine.litert) => accel_gpu | accel_npu | accel_cpu,
+        else => 0,
+    };
+}
+
 const apple_order = [_]i32{
     @intFromEnum(Engine.coreml),
     @intFromEnum(Engine.mlx),
