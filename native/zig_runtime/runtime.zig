@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const coreml = @import("coreml.zig");
+const hf = @import("hf.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
 const policy = @import("policy.zig");
@@ -908,6 +909,48 @@ export fn dinf_coreml_layout_json(root_path: [*c]const u8) [*c]u8 {
     ) catch return copyString("{}");
     defer allocator.free(json);
     return copyString(json);
+}
+
+export fn dinf_hf_ref_json(
+    source_uri: [*c]const u8,
+    artifact_path: [*c]const u8,
+    repo: [*c]const u8,
+    artifact: [*c]const u8,
+    revision: [*c]const u8,
+) [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const json = hf.refJson(
+        allocator,
+        optionalCString(source_uri),
+        optionalCString(artifact_path),
+        optionalCString(repo),
+        optionalCString(artifact),
+        optionalCString(revision),
+    ) catch return copyString("{}");
+    defer allocator.free(json);
+    return copyString(json);
+}
+
+export fn dinf_hf_cache_path(
+    cache_root: [*c]const u8,
+    repo: [*c]const u8,
+    revision: [*c]const u8,
+    artifact_path: [*c]const u8,
+) [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const value = hf.cachePath(
+        allocator,
+        cStringOrEmpty(cache_root),
+        cStringOrEmpty(repo),
+        cStringOrEmpty(revision),
+        cStringOrEmpty(artifact_path),
+    ) catch return copyString("");
+    defer allocator.free(value);
+    return copyString(value);
+}
+
+export fn dinf_hf_dir_artifact(artifact_path: [*c]const u8) i32 {
+    return if (hf.isDirectoryArtifact(cStringOrEmpty(artifact_path))) 1 else 0;
 }
 
 export fn dinf_diag_json(handle: ?*anyopaque) [*c]u8 {

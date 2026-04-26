@@ -3,11 +3,14 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 
+import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/shared/runtime_metadata.dart';
+import 'native_bindings.dart' as native;
 
 /// Resolves remote runtime artifacts into local paths before native loading.
 abstract interface class RuntimeArtifactResolver {
@@ -33,40 +36,106 @@ final class HuggingFaceArtifactRef {
   String get sourceUri => 'hf://$repo/$path';
 
   static HuggingFaceArtifactRef? maybeParse(RuntimeArtifact artifact) {
-    final metadata = artifact.metadata;
-    final repo = metadata['repo'] as String?;
-    final path = metadata['artifact'] as String?;
-    final revision = metadata['revision'] as String? ?? 'main';
-    if (repo != null && path != null) {
-      return HuggingFaceArtifactRef(
-        repo: repo,
-        path: path.isEmpty ? '.' : path,
-        revision: revision,
-      );
-    }
-
-    final uri = Uri.tryParse(artifact.sourceUri ?? artifact.path);
-    if (uri == null || uri.scheme != 'hf' || uri.host.isEmpty) {
-      return null;
-    }
-    final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
-    if (segments.isEmpty) {
-      return HuggingFaceArtifactRef(
-        repo: uri.host,
-        path: '.',
-        revision: revision,
-      );
-    }
-    final repoFromUri = '${uri.host}/${segments.first}';
-    final artifactPath = segments.length == 1
-        ? '.'
-        : segments.skip(1).join('/');
+    final parsed = _hfRefJson(artifact);
+    if (parsed == null) return null;
     return HuggingFaceArtifactRef(
-      repo: repoFromUri,
-      path: artifactPath,
-      revision: revision,
+      repo: parsed.repo,
+      path: parsed.path,
+      revision: parsed.revision,
     );
   }
+}
+
+final class _HfRefJson {
+  const _HfRefJson({
+    required this.repo,
+    required this.path,
+    required this.revision,
+  });
+
+  final String repo;
+  final String path;
+  final String revision;
+}
+
+_HfRefJson? _hfRefJson(RuntimeArtifact artifact) {
+  final metadata = artifact.metadata;
+  final repoMetadata = metadata['repo'];
+  final artifactMetadata = metadata['artifact'];
+  final hasMetadata = repoMetadata is String && artifactMetadata is String;
+  final sourceUri = _nativeText(artifact.sourceUri ?? '');
+  final artifactPath = _nativeText(artifact.path);
+  final repo = _nativeText(hasMetadata ? repoMetadata : '');
+  final path = _nativeText(hasMetadata ? artifactMetadata : '');
+  final revision = _nativeText(
+    metadata['revision'] is String ? '${metadata['revision']}' : '',
+  );
+  ffi.Pointer<ffi.Char> result = ffi.nullptr;
+  try {
+    result = native.hfRefJson(sourceUri, artifactPath, repo, path, revision);
+    if (result == ffi.nullptr) return null;
+    final decoded = jsonDecode(result.cast<Utf8>().toDartString());
+    if (decoded is! Map) return null;
+    final repoValue = decoded['repo'];
+    final pathValue = decoded['path'];
+    final revisionValue = decoded['revision'];
+    if (repoValue is! String ||
+        repoValue.isEmpty ||
+        pathValue is! String ||
+        pathValue.isEmpty ||
+        revisionValue is! String ||
+        revisionValue.isEmpty) {
+      return null;
+    }
+    return _HfRefJson(
+      repo: repoValue,
+      path: pathValue,
+      revision: revisionValue,
+    );
+  } finally {
+    if (result != ffi.nullptr) native.freeStr(result);
+    calloc
+      ..free(sourceUri)
+      ..free(artifactPath)
+      ..free(repo)
+      ..free(path)
+      ..free(revision);
+  }
+}
+
+String _cachePath(
+  String cacheRoot,
+  String repo,
+  String revision,
+  String artifactPath,
+) {
+  final root = _nativeText(cacheRoot);
+  final repoPtr = _nativeText(repo);
+  final revisionPtr = _nativeText(revision);
+  final artifactPtr = _nativeText(artifactPath);
+  ffi.Pointer<ffi.Char> result = ffi.nullptr;
+  try {
+    result = native.hfCachePath(root, repoPtr, revisionPtr, artifactPtr);
+    if (result == ffi.nullptr) {
+      throw StateError('Failed to resolve Hugging Face cache path.');
+    }
+    final value = result.cast<Utf8>().toDartString();
+    if (value.isEmpty) {
+      throw StateError('Failed to resolve Hugging Face cache path.');
+    }
+    return value;
+  } finally {
+    if (result != ffi.nullptr) native.freeStr(result);
+    calloc
+      ..free(root)
+      ..free(repoPtr)
+      ..free(revisionPtr)
+      ..free(artifactPtr);
+  }
+}
+
+ffi.Pointer<ffi.Char> _nativeText(String value) {
+  return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
 }
 
 /// Downloads and caches `hf://` runtime artifacts.
@@ -179,7 +248,7 @@ final class HuggingFaceArtifactCache implements RuntimeArtifactResolver {
     String filePath,
   ) async {
     final destination = File(
-      p.joinAll([_snapshotRoot(ref), ...filePath.split('/')]),
+      _cachePath(cacheRoot, ref.repo, ref.revision, filePath),
     );
     await destination.parent.create(recursive: true);
     final tmp = File('${destination.path}.incomplete');
@@ -286,19 +355,8 @@ final class HuggingFaceArtifactCache implements RuntimeArtifactResolver {
   List<String> get _baseSegments =>
       endpoint.pathSegments.where((s) => s.isNotEmpty).toList();
 
-  String _snapshotRoot(HuggingFaceArtifactRef ref) {
-    return p.join(
-      cacheRoot,
-      'models--${ref.repo.replaceAll('/', '--')}',
-      'snapshots',
-      _safePathSegment(ref.revision),
-    );
-  }
-
-  String _localArtifactPath(HuggingFaceArtifactRef ref) {
-    if (ref.path == '.') return _snapshotRoot(ref);
-    return p.joinAll([_snapshotRoot(ref), ...ref.path.split('/')]);
-  }
+  String _localArtifactPath(HuggingFaceArtifactRef ref) =>
+      _cachePath(cacheRoot, ref.repo, ref.revision, ref.path);
 
   RuntimeArtifact _resolvedArtifact(
     RuntimeArtifact artifact,
@@ -326,12 +384,12 @@ bool _hasCachedArtifact(String path) {
 }
 
 bool _isDirectoryArtifact(String path) {
-  if (path == '.' || path.endsWith('/')) return true;
-  final lower = path.toLowerCase();
-  if (lower.endsWith('.mlmodelc') || lower.endsWith('.mlpackage')) {
-    return true;
+  final value = path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  try {
+    return native.hfDirArtifact(value) != 0;
+  } finally {
+    calloc.free(value);
   }
-  return !p.basename(path).contains('.');
 }
 
 bool _isRedirect(int statusCode) {
@@ -340,10 +398,6 @@ bool _isRedirect(int statusCode) {
       statusCode == HttpStatus.seeOther ||
       statusCode == HttpStatus.temporaryRedirect ||
       statusCode == HttpStatus.permanentRedirect;
-}
-
-String _safePathSegment(String value) {
-  return value.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
 }
 
 String? _nextLink(String? header) {

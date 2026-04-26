@@ -471,7 +471,6 @@ void main() {
         const artifact = RuntimeArtifact(
           engine: RuntimeEngine.onnx,
           path: 'hf://acme/demo/onnx/model.onnx',
-          metadata: {'repo': 'acme/demo', 'artifact': 'onnx/model.onnx'},
         );
 
         final resolved = await cache.resolve(artifact);

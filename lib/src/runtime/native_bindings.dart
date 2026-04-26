@@ -153,6 +153,43 @@ external ffi.Pointer<ffi.Char> ortLibsJson(
 )
 external ffi.Pointer<ffi.Char> coremlLayoutJson(ffi.Pointer<ffi.Char> rootPath);
 
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+  )
+>(symbol: 'dinf_hf_ref_json')
+external ffi.Pointer<ffi.Char> hfRefJson(
+  ffi.Pointer<ffi.Char> sourceUri,
+  ffi.Pointer<ffi.Char> artifactPath,
+  ffi.Pointer<ffi.Char> repo,
+  ffi.Pointer<ffi.Char> artifact,
+  ffi.Pointer<ffi.Char> revision,
+);
+
+@ffi.Native<
+  ffi.Pointer<ffi.Char> Function(
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+  )
+>(symbol: 'dinf_hf_cache_path')
+external ffi.Pointer<ffi.Char> hfCachePath(
+  ffi.Pointer<ffi.Char> cacheRoot,
+  ffi.Pointer<ffi.Char> repo,
+  ffi.Pointer<ffi.Char> revision,
+  ffi.Pointer<ffi.Char> artifactPath,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'dinf_hf_dir_artifact',
+)
+external int hfDirArtifact(ffi.Pointer<ffi.Char> artifactPath);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Void>)>(
   symbol: 'dinf_diag_json',
 )
