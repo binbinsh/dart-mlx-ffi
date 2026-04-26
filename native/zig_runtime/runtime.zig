@@ -63,7 +63,7 @@ const Session = struct {
 };
 
 const cpp = if (builtin.is_test) struct {
-    pub fn dinf_cpp_runtime_create(
+    pub fn dinf_cpp_open(
         engine: i32,
         model_path: [*c]const u8,
         options_json: [*c]const u8,
@@ -76,11 +76,11 @@ const cpp = if (builtin.is_test) struct {
         return null;
     }
 
-    pub fn dinf_cpp_runtime_free(session: ?*anyopaque) void {
+    pub fn dinf_cpp_close(session: ?*anyopaque) void {
         _ = session;
     }
 
-    pub fn dinf_cpp_runtime_run(
+    pub fn dinf_cpp_run(
         session: ?*anyopaque,
         inputs: [*c]const NamedTensor,
         input_count: isize,
@@ -97,23 +97,23 @@ const cpp = if (builtin.is_test) struct {
         return 1;
     }
 
-    pub fn dinf_cpp_runtime_memory_info_json() [*c]u8 {
+    pub fn dinf_cpp_mem_json() [*c]u8 {
         return copyString("{\"peak_memory_bytes\":0,\"native_backend\":\"zig-test\"}");
     }
 
-    pub fn dinf_cpp_runtime_diagnostics_json(session: ?*anyopaque) [*c]u8 {
+    pub fn dinf_cpp_diag_json(session: ?*anyopaque) [*c]u8 {
         _ = session;
         return copyString("{}");
     }
 } else struct {
-    extern fn dinf_cpp_runtime_create(
+    extern fn dinf_cpp_open(
         engine: i32,
         model_path: [*c]const u8,
         options_json: [*c]const u8,
         error_out: ?*[*c]u8,
     ) ?*anyopaque;
-    extern fn dinf_cpp_runtime_free(session: ?*anyopaque) void;
-    extern fn dinf_cpp_runtime_run(
+    extern fn dinf_cpp_close(session: ?*anyopaque) void;
+    extern fn dinf_cpp_run(
         session: ?*anyopaque,
         inputs: [*c]const NamedTensor,
         input_count: isize,
@@ -121,8 +121,8 @@ const cpp = if (builtin.is_test) struct {
         output_count: ?*isize,
         error_out: ?*[*c]u8,
     ) i32;
-    extern fn dinf_cpp_runtime_memory_info_json() [*c]u8;
-    extern fn dinf_cpp_runtime_diagnostics_json(session: ?*anyopaque) [*c]u8;
+    extern fn dinf_cpp_mem_json() [*c]u8;
+    extern fn dinf_cpp_diag_json(session: ?*anyopaque) [*c]u8;
 };
 
 fn copyString(value: []const u8) [*c]u8 {
@@ -154,7 +154,7 @@ fn setError(error_out: ?*[*c]u8, message: []const u8) void {
 }
 
 fn backendJson() []const u8 {
-    return "{\"native_backend\":\"zig\",\"zig_version\":\"0.16.0\",\"async_model\":\"std.Io-ready\",\"abi\":\"dart_inference_runtime_v1\",\"mlx_backend\":" ++ mlx_backend.status_json ++ "}";
+    return "{\"native_backend\":\"zig\",\"zig_version\":\"0.16.0\",\"async_model\":\"std.Io-ready\",\"abi\":\"dinf_v1\",\"mlx_backend\":" ++ mlx_backend.status_json ++ "}";
 }
 
 fn copyBackendJson() [*c]u8 {
@@ -399,7 +399,7 @@ fn createAdapterSession(
     options_json: [*c]const u8,
     error_out: ?*[*c]u8,
 ) ?*Session {
-    const adapter_handle = cpp.dinf_cpp_runtime_create(
+    const adapter_handle = cpp.dinf_cpp_open(
         engine,
         model_path,
         options_json,
@@ -407,7 +407,7 @@ fn createAdapterSession(
     ) orelse return null;
 
     const raw = std.c.malloc(@sizeOf(Session)) orelse {
-        cpp.dinf_cpp_runtime_free(adapter_handle);
+        cpp.dinf_cpp_close(adapter_handle);
         setError(error_out, "failed to allocate Zig adapter session");
         return null;
     };
@@ -424,7 +424,7 @@ fn createAdapterSession(
         freeString(session.model_path);
         freeString(session.options_json);
         std.c.free(session);
-        cpp.dinf_cpp_runtime_free(adapter_handle);
+        cpp.dinf_cpp_close(adapter_handle);
         setError(error_out, "failed to allocate Zig adapter session strings");
         return null;
     }
@@ -469,11 +469,11 @@ fn createMlxSession(
     return session;
 }
 
-export fn dart_inference_runtime_backend_json() [*c]u8 {
+export fn dinf_info_json() [*c]u8 {
     return copyBackendJson();
 }
 
-export fn dart_inference_runtime_create(
+export fn dinf_open(
     engine: i32,
     model_path: [*c]const u8,
     options_json: [*c]const u8,
@@ -500,12 +500,12 @@ export fn dart_inference_runtime_create(
     return @ptrCast(resolved);
 }
 
-export fn dart_inference_runtime_free(handle: ?*anyopaque) void {
+export fn dinf_close(handle: ?*anyopaque) void {
     const raw = handle orelse return;
     const session: *Session = @ptrCast(@alignCast(raw));
     switch (session.mode) {
         .echo => {},
-        .adapter => cpp.dinf_cpp_runtime_free(session.adapter_handle),
+        .adapter => cpp.dinf_cpp_close(session.adapter_handle),
         .mlx => if (session.mlx_handle) |mlx_handle| mlx_handle.deinit(),
     }
     freeString(session.model_path);
@@ -513,7 +513,7 @@ export fn dart_inference_runtime_free(handle: ?*anyopaque) void {
     std.c.free(session);
 }
 
-export fn dart_inference_runtime_run(
+export fn dinf_run(
     handle: ?*anyopaque,
     inputs: [*c]const NamedTensor,
     input_count: isize,
@@ -551,7 +551,7 @@ export fn dart_inference_runtime_run(
             output_count,
             error_out,
         ),
-        .adapter => return cpp.dinf_cpp_runtime_run(
+        .adapter => return cpp.dinf_cpp_run(
             session.adapter_handle,
             inputs,
             input_count,
@@ -573,12 +573,12 @@ export fn dart_inference_runtime_run(
     var produced: usize = 0;
     while (produced < count) : (produced += 1) {
         if (!validTensor(inputs[produced].tensor)) {
-            dart_inference_runtime_free_tensors(@ptrCast(out_items), @intCast(produced));
+            dinf_free_tensors(@ptrCast(out_items), @intCast(produced));
             setError(error_out, "Zig runtime received an invalid tensor.");
             return 1;
         }
         const copied = copyTensor(inputs[produced]) orelse {
-            dart_inference_runtime_free_tensors(@ptrCast(out_items), @intCast(produced));
+            dinf_free_tensors(@ptrCast(out_items), @intCast(produced));
             setError(error_out, "failed to copy output tensor");
             return 1;
         };
@@ -691,7 +691,7 @@ fn copyMlxOutputs(
     var produced: usize = 0;
     while (produced < count) : (produced += 1) {
         out_items[produced] = moveMlxOutputTensor(&output_batch.tensors[produced]) orelse {
-            dart_inference_runtime_free_tensors(@ptrCast(out_items), @intCast(produced));
+            dinf_free_tensors(@ptrCast(out_items), @intCast(produced));
             setError(error_out, "failed to move Zig MLX output tensor");
             return 1;
         };
@@ -706,7 +706,7 @@ fn moveMlxOutputTensor(output: *mlx_backend.OutputTensor) ?NamedTensor {
         return null;
     }
     // MLX run paths materialize with c_allocator, so these buffers can be
-    // released by dart_inference_runtime_free_tensors after moving ownership.
+    // released by dinf_free_tensors after moving ownership.
     const name = copyString(output.name);
     if (name == null) {
         return null;
@@ -730,7 +730,7 @@ fn moveMlxOutputTensor(output: *mlx_backend.OutputTensor) ?NamedTensor {
     return .{ .name = name, .tensor = tensor };
 }
 
-export fn dart_inference_runtime_free_tensors(tensors: [*c]NamedTensor, count: isize) void {
+export fn dinf_free_tensors(tensors: [*c]NamedTensor, count: isize) void {
     if (tensors == null) {
         return;
     }
@@ -748,11 +748,11 @@ export fn dart_inference_runtime_free_tensors(tensors: [*c]NamedTensor, count: i
     std.c.free(tensors);
 }
 
-export fn dart_inference_runtime_free_string(value: [*c]u8) void {
+export fn dinf_free_str(value: [*c]u8) void {
     freeString(value);
 }
 
-export fn dart_inference_runtime_alloc(byte_length: isize) ?*anyopaque {
+export fn dinf_alloc(byte_length: isize) ?*anyopaque {
     if (byte_length <= 0) {
         return null;
     }
@@ -760,7 +760,7 @@ export fn dart_inference_runtime_alloc(byte_length: isize) ?*anyopaque {
     return std.c.malloc(len);
 }
 
-export fn dart_inference_runtime_alloc_tensor_buffer(
+export fn dinf_alloc_tensor(
     dtype: i32,
     shape: [*c]const i64,
     rank: i32,
@@ -791,24 +791,24 @@ export fn dart_inference_runtime_alloc_tensor_buffer(
     };
 }
 
-export fn dart_inference_runtime_free_buffer(value: ?*anyopaque) void {
+export fn dinf_free_buf(value: ?*anyopaque) void {
     if (value) |ptr| {
         std.c.free(ptr);
     }
 }
 
-export fn dart_inference_runtime_memory_info_json() [*c]u8 {
+export fn dinf_mem_json() [*c]u8 {
     if (builtin.os.tag == .linux and builtin.abi != .android) {
-        return linuxMemoryInfoJson(std.heap.c_allocator) catch cpp.dinf_cpp_runtime_memory_info_json();
+        return linuxMemoryInfoJson(std.heap.c_allocator) catch cpp.dinf_cpp_mem_json();
     }
-    return cpp.dinf_cpp_runtime_memory_info_json();
+    return cpp.dinf_cpp_mem_json();
 }
 
-export fn dart_inference_runtime_diagnostics_json(handle: ?*anyopaque) [*c]u8 {
+export fn dinf_diag_json(handle: ?*anyopaque) [*c]u8 {
     const raw = handle orelse return copyString("{}");
     const session: *Session = @ptrCast(@alignCast(raw));
     if (session.mode == .adapter) {
-        return cpp.dinf_cpp_runtime_diagnostics_json(session.adapter_handle);
+        return cpp.dinf_cpp_diag_json(session.adapter_handle);
     }
     if (session.mode == .mlx) {
         const mlx_session_json = mlx_backend.sessionDiagnosticsJson(
@@ -866,8 +866,8 @@ test "Linux proc status memory fields parse as bytes" {
 }
 
 test "memory info is owned by Zig on Linux" {
-    const json = dart_inference_runtime_memory_info_json();
-    defer dart_inference_runtime_free_string(json);
+    const json = dinf_mem_json();
+    defer dinf_free_str(json);
     if (builtin.os.tag == .linux and builtin.abi != .android) {
         const text = json[0..std.mem.len(json)];
         try std.testing.expect(std.mem.indexOf(u8, text, "\"native_backend\":\"zig\"") != null);
@@ -879,15 +879,15 @@ test "runtime tensor buffer allocation computes byte length in Zig" {
     const shape = [_]i64{ 2, 3 };
     var byte_length: isize = 0;
     var error_value: [*c]u8 = null;
-    const pointer = dart_inference_runtime_alloc_tensor_buffer(
+    const pointer = dinf_alloc_tensor(
         @intFromEnum(Dtype.float32),
         shape[0..].ptr,
         @intCast(shape.len),
         &byte_length,
         &error_value,
     );
-    defer dart_inference_runtime_free_buffer(pointer);
-    defer dart_inference_runtime_free_string(error_value);
+    defer dinf_free_buf(pointer);
+    defer dinf_free_str(error_value);
     try std.testing.expect(pointer != null);
     try std.testing.expectEqual(@as(isize, 24), byte_length);
     try std.testing.expect(error_value == null);
@@ -897,14 +897,14 @@ test "runtime tensor buffer allocation keeps zero-sized tensors allocation-free"
     const shape = [_]i64{ 0, 3 };
     var byte_length: isize = -1;
     var error_value: [*c]u8 = null;
-    const pointer = dart_inference_runtime_alloc_tensor_buffer(
+    const pointer = dinf_alloc_tensor(
         @intFromEnum(Dtype.float32),
         shape[0..].ptr,
         @intCast(shape.len),
         &byte_length,
         &error_value,
     );
-    defer dart_inference_runtime_free_string(error_value);
+    defer dinf_free_str(error_value);
     try std.testing.expect(pointer == null);
     try std.testing.expectEqual(@as(isize, 0), byte_length);
     try std.testing.expect(error_value == null);
@@ -914,14 +914,14 @@ test "runtime tensor buffer allocation rejects invalid shapes in Zig" {
     const shape = [_]i64{-1};
     var byte_length: isize = -1;
     var error_value: [*c]u8 = null;
-    const pointer = dart_inference_runtime_alloc_tensor_buffer(
+    const pointer = dinf_alloc_tensor(
         @intFromEnum(Dtype.float32),
         shape[0..].ptr,
         @intCast(shape.len),
         &byte_length,
         &error_value,
     );
-    defer dart_inference_runtime_free_string(error_value);
+    defer dinf_free_str(error_value);
     try std.testing.expect(pointer == null);
     try std.testing.expectEqual(@as(isize, 0), byte_length);
     try std.testing.expect(error_value != null);
@@ -971,7 +971,7 @@ test "MLX output batch moves into runtime ABI tensors" {
         @as(i32, 0),
         copyMlxOutputs(&batch, &outputs, &output_count, &error_value),
     );
-    defer dart_inference_runtime_free_tensors(outputs, output_count);
+    defer dinf_free_tensors(outputs, output_count);
     try std.testing.expectEqual(@as(isize, 1), output_count);
     try std.testing.expectEqualStrings("logits", std.mem.span(outputs[0].name));
     try std.testing.expectEqual(@intFromEnum(Dtype.float32), outputs[0].tensor.dtype);

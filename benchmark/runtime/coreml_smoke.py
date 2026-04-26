@@ -152,11 +152,11 @@ def run_smoke(*, build_dir: Path, work_dir: Path) -> dict[str, Any]:
             "--build",
             str(build_dir),
             "--target",
-            "dart_inference_runtime_runner",
+            "dinf_runner",
             "-j2",
         ]
     )
-    runner = build_dir / "dart_inference_runtime_runner"
+    runner = build_dir / "dinf_runner"
     _run(
         [
             sys.executable,

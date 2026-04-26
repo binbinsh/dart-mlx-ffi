@@ -334,7 +334,7 @@ uv run python benchmark/runtime/adb_runner.py \
   --artifact /data/local/tmp/qwen3_5/model.tflite \
   --remote-baseline-report /data/local/tmp/qwen3_5/android_baseline.json \
   --remote-candidate-report /data/local/tmp/qwen3_5/android_candidate.json \
-  --device-runner /data/local/tmp/dart_inference_runtime_runner \
+  --device-runner /data/local/tmp/dinf_runner \
   --delegate xnnpack \
   --require-delegate
 ```
@@ -348,12 +348,12 @@ cmake -S native/runtime -B /tmp/dinf_runtime_android \
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_PLATFORM=android-26
 
-cmake --build /tmp/dinf_runtime_android --target dart_inference_runtime_runner
+cmake --build /tmp/dinf_runtime_android --target dinf_runner
 adb push /tmp/dinf_runtime_android/libdart_inference_runtime.so \
   /data/local/tmp/libdart_inference_runtime.so
-adb push /tmp/dinf_runtime_android/dart_inference_runtime_runner \
-  /data/local/tmp/dart_inference_runtime_runner
-adb shell chmod +x /data/local/tmp/dart_inference_runtime_runner
+adb push /tmp/dinf_runtime_android/dinf_runner \
+  /data/local/tmp/dinf_runner
+adb shell chmod +x /data/local/tmp/dinf_runner
 ```
 
 Use `LD_LIBRARY_PATH=/data/local/tmp` in `device_command` when the runner and

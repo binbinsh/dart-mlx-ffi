@@ -3,10 +3,11 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.48`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.49`.
+- Shortened the Dart-facing native ABI from `dart_inference_runtime_*` to `dinf_*`, shortened the private adapter symbols to `dinf_cpp_*`, and renamed the code-asset marker file to `rt_bindings.dart`.
 - Routed runtime tensor dtype/shape/byte-length validation through Zig's shared tensor layout rules before echo, MLX, or private adapter execution.
-- Moved `NativeTensorBuffer` dtype/shape byte-length computation into Zig through `dart_inference_runtime_alloc_tensor_buffer`, so Dart no longer duplicates tensor layout rules for zero-copy input buffers.
-- Moved Linux memory snapshots into Zig by reading `/proc/self/status` directly from `dart_inference_runtime_memory_info_json`, while leaving non-Linux platform-specific memory probes behind the private adapter.
+- Moved `NativeTensorBuffer` dtype/shape byte-length computation into Zig through `dinf_alloc_tensor`, so Dart no longer duplicates tensor layout rules for zero-copy input buffers.
+- Moved Linux memory snapshots into Zig by reading `/proc/self/status` directly from `dinf_mem_json`, while leaving non-Linux platform-specific memory probes behind the private adapter.
 - Moved `zigRuntimeMode` dispatch to Zig-owned JSON parsing instead of substring matching the Dart-encoded options string.
 - Removed the stale unused `dart_inference_bindings_generated.dart` raw-binding placeholder from the public package surface.
 - Renamed the private Apple `mlx-c` dependency to `dinf_zig_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside Zig.
@@ -16,7 +17,7 @@
 - Moved vendored native dependencies from `third_party/` to `vendors/` and updated native build paths plus publish filters.
 - Updated Zig MLX backend metadata so Apple builds report `enabled: true` and expose the registered `.mlxfn` plus `dart_inference_linear` executor surface.
 - Removed the second Zig-side MLX output copy by moving materialized C-allocator buffers directly into the Dart-facing runtime tensor batch.
-- Added Zig-owned `.mlxfn` imported-function execution so exported MLX bundles now run through `dart_inference_runtime_* -> Zig -> mlx-c`, and moved the benchmark helper off the removed Dart MLX import runner.
+- Added Zig-owned `.mlxfn` imported-function execution so exported MLX bundles now run through `dinf_* -> Zig -> mlx-c`, and moved the benchmark helper off the removed Dart MLX import runner.
 - Registered MLX in the bundled runtime registry while keeping default resolver selection limited to implemented `.mlxfn`/`mlx-function` artifacts.
 - Split Zig runtime input tensor conversion into `mlx_input.zig` to keep the MLX backend extensible under the source-file size limit.
 - Added the first real Zig MLX executor template for `dart_inference_linear`, using Zig-owned safetensors weights with `mlx_matmul`/`mlx_add` before returning runtime ABI tensors.
@@ -30,7 +31,7 @@
 - Routed explicit MLX runtime loads through the Zig runtime boundary so future `mlx-c` execution cannot silently fall back to the private C++ adapter path.
 - Added an Apple-only private `mlx-c` build target and linked it from the Zig runtime so MLX migration work can call `mlx-c` from Zig instead of Dart.
 - Removed the former raw/shim/stable APIs, legacy model runners, legacy tests, old Dart-facing MLX C++ bridge, and stale local MLX benchmark/probe/example entry points from the package source.
-- Renamed native runtime adapter internals to the `DINF/dinf_` prefix, keeping only `dart_inference_runtime_*` as the Dart-facing ABI.
+- Renamed native runtime adapter internals to the `DINF/dinf_` prefix.
 - Added a Dart ONNX Runtime convenience layer (`DartOnnxSession`) on top of the shared model runtime API.
 - Added Linux/NVIDIA ONNX model runners for structured UniFrontend and Kokoro TTS, including structured tokenizer, TN/SSML post-processing, Kokoro phonemization, and a composed UniFrontend+Kokoro TTS runtime.
 - Added a library-level UniFrontend+Kokoro TTS registry loader so Dart/Flutter apps can run the stack in-process without depending on the HTTP server wrapper.

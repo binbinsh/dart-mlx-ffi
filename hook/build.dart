@@ -414,7 +414,7 @@ Future<void> _buildZigRuntimeAsset(
   output.assets.code.add(
     CodeAsset(
       package: input.packageName,
-      name: '${input.packageName}_runtime_bindings_generated.dart',
+      name: 'rt_bindings.dart',
       linkMode: DynamicLoadingBundled(),
       file: libraryFile,
     ),

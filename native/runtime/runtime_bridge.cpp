@@ -13,7 +13,7 @@ void set_error(char** out, const std::string& message) {
 
 }  // namespace
 
-extern "C" DinfRuntimeSession* dinf_cpp_runtime_create(
+extern "C" DinfRuntimeSession* dinf_cpp_open(
     int32_t engine,
     const char* model_path,
     const char* options_json,
@@ -45,15 +45,15 @@ extern "C" DinfRuntimeSession* dinf_cpp_runtime_create(
   return session;
 }
 
-extern "C" void dinf_cpp_runtime_free(DinfRuntimeSession* session) {
+extern "C" void dinf_cpp_close(DinfRuntimeSession* session) {
   delete session;
 }
 
-extern "C" int32_t dinf_cpp_runtime_run(
+extern "C" int32_t dinf_cpp_run(
     DinfRuntimeSession* session,
-    const DartInferenceNamedTensor* inputs,
+    const DinfNamedTensor* inputs,
     intptr_t input_count,
-    DartInferenceNamedTensor** outputs,
+    DinfNamedTensor** outputs,
     intptr_t* output_count,
     char** error) {
   if (session == nullptr) {
@@ -81,8 +81,8 @@ extern "C" int32_t dinf_cpp_runtime_run(
   return status;
 }
 
-extern "C" void dinf_cpp_runtime_free_tensors(
-    DartInferenceNamedTensor* tensors,
+extern "C" void dinf_cpp_free_tensors(
+    DinfNamedTensor* tensors,
     intptr_t count) {
   if (tensors == nullptr) {
     return;
@@ -95,29 +95,29 @@ extern "C" void dinf_cpp_runtime_free_tensors(
   std::free(tensors);
 }
 
-extern "C" void dinf_cpp_runtime_free_string(char* value) {
+extern "C" void dinf_cpp_free_str(char* value) {
   std::free(value);
 }
 
-extern "C" char* dinf_cpp_runtime_backend_json() {
+extern "C" char* dinf_cpp_info_json() {
   return dinf_copy_string(
-      "{\"native_backend\":\"cpp-adapter\",\"abi\":\"dinf_cpp_runtime_adapter_v1\"}");
+      "{\"native_backend\":\"cpp-adapter\",\"abi\":\"dinf_cpp_v1\"}");
 }
 
-extern "C" char* dinf_cpp_runtime_diagnostics_json(DinfRuntimeSession* session) {
+extern "C" char* dinf_cpp_diag_json(DinfRuntimeSession* session) {
   if (session == nullptr) {
     return dinf_copy_string("{}");
   }
   return dinf_copy_string(session->DiagnosticsJson());
 }
 
-DartInferenceNamedTensor dinf_make_tensor(
+DinfNamedTensor dinf_make_tensor(
     const char* name,
     int32_t dtype,
     const std::vector<int64_t>& shape,
     const void* data,
     size_t byte_length) {
-  DartInferenceNamedTensor tensor{};
+  DinfNamedTensor tensor{};
   tensor.name = dinf_copy_string(name == nullptr ? "" : name);
   tensor.tensor.dtype = dtype;
   tensor.tensor.rank = static_cast<int32_t>(shape.size());

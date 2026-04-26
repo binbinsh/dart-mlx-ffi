@@ -6,7 +6,7 @@ inference through a pinned Zig runtime.
 The native call stack is intentionally narrow:
 
 ```text
-Dart API -> dart_inference_runtime_* ABI -> Zig -> private C/C++/ObjC++ libs
+Dart API -> dinf_* ABI -> Zig -> private C/C++/ObjC++ libs
 ```
 
 Dart no longer exposes raw MLX C bindings or a per-op tensor algebra layer.
@@ -18,8 +18,8 @@ MLX calls belong behind the Zig runtime boundary.
 - Package name: `dart_inference`
 - Version format: `1.yyyy.commit-count`
 - Pinned Zig release: `0.16.0`
-- Dart-facing native symbols: `dart_inference_runtime_*`
-- Private adapter symbols: `dinf_cpp_runtime_*`
+- Dart-facing native symbols: `dinf_*`
+- Private adapter symbols: `dinf_cpp_*`
 - Current native backends: Core ML, ONNX Runtime, LiteRT
 - MLX: Zig-owned `mlx-c` link layer exists for Apple targets; model execution
   is still disabled until the Zig executor is implemented and registered

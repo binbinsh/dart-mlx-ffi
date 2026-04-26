@@ -11,7 +11,7 @@ void main() {
       final info = NativeRuntimeBackend.info();
       expect(info['native_backend'], 'zig');
       expect(info['zig_version'], '0.16.0');
-      expect(info['abi'], 'dart_inference_runtime_v1');
+      expect(info['abi'], 'dinf_v1');
       final mlx = info['mlx_backend'] as Map<Object?, Object?>;
       expect(mlx['owner'], 'zig');
       expect(mlx['api'], 'mlx-c');

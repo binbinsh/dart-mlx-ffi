@@ -52,14 +52,14 @@ if(APPLE)
       "${CMAKE_CURRENT_BINARY_DIR}/dart_inference_runtime_adapter.exports")
   file(
     WRITE "${_dart_inference_exports}"
-    "_dinf_cpp_runtime_backend_json\n"
-    "_dinf_cpp_runtime_create\n"
-    "_dinf_cpp_runtime_diagnostics_json\n"
-    "_dinf_cpp_runtime_free\n"
-    "_dinf_cpp_runtime_free_string\n"
-    "_dinf_cpp_runtime_free_tensors\n"
-    "_dinf_cpp_runtime_memory_info_json\n"
-    "_dinf_cpp_runtime_run\n")
+    "_dinf_cpp_info_json\n"
+    "_dinf_cpp_open\n"
+    "_dinf_cpp_diag_json\n"
+    "_dinf_cpp_close\n"
+    "_dinf_cpp_free_str\n"
+    "_dinf_cpp_free_tensors\n"
+    "_dinf_cpp_mem_json\n"
+    "_dinf_cpp_run\n")
   target_link_options(
     ${PROJECT_NAME} PRIVATE
     "LINKER:-exported_symbols_list,${_dart_inference_exports}")
@@ -73,7 +73,7 @@ elseif(UNIX)
       "${CMAKE_CURRENT_BINARY_DIR}/dart_inference_runtime_adapter.map")
   file(
     WRITE "${_dart_inference_exports}"
-    "{ global: dinf_cpp_runtime_*; local: *; };\n")
+    "{ global: dinf_cpp_*; local: *; };\n")
   target_link_options(
     ${PROJECT_NAME} PRIVATE
     "LINKER:--version-script=${_dart_inference_exports}")
@@ -89,15 +89,15 @@ set_target_properties(
              INSTALL_RPATH "${_dart_inference_runtime_rpath}")
 
 if(DINF_BUILD_CLI)
-  add_executable(dart_inference_runtime_runner
+  add_executable(dinf_runner
                  ${CMAKE_CURRENT_LIST_DIR}/runtime_cli.cpp)
   target_include_directories(
-    dart_inference_runtime_runner
+    dinf_runner
     PRIVATE ${CMAKE_CURRENT_LIST_DIR}
             ${CMAKE_CURRENT_LIST_DIR}/../../vendors/json/single_include)
-  target_link_libraries(dart_inference_runtime_runner PRIVATE ${PROJECT_NAME})
+  target_link_libraries(dinf_runner PRIVATE ${PROJECT_NAME})
   set_target_properties(
-    dart_inference_runtime_runner
+    dinf_runner
     PROPERTIES BUILD_WITH_INSTALL_RPATH ON
                INSTALL_RPATH "${_dart_inference_runtime_rpath}")
 endif()

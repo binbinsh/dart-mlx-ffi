@@ -450,9 +450,9 @@ class OrtSessionWrapper final : public DinfRuntimeSession {
   const std::vector<std::string>& OutputNames() const { return output_names_; }
 
   int Run(
-      const DartInferenceNamedTensor* inputs,
+      const DinfNamedTensor* inputs,
       size_t input_count,
-      DartInferenceNamedTensor** outputs,
+      DinfNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     std::vector<OrtValue*> input_values(input_count);
@@ -517,7 +517,7 @@ class OrtSessionWrapper final : public DinfRuntimeSession {
       return 1;
     }
 
-    std::vector<DartInferenceNamedTensor> produced;
+    std::vector<DinfNamedTensor> produced;
     for (size_t i = 0; i < output_values.size(); ++i) {
       OrtTensorTypeAndShapeInfo* info = nullptr;
       if (!ok(api_, api_->GetTensorTypeAndShape(output_values[i], &info), error)) {
@@ -583,10 +583,10 @@ class OrtSessionWrapper final : public DinfRuntimeSession {
     release_values(output_values);
     release_names(owned_names);
     *output_count = produced.size();
-    *outputs = static_cast<DartInferenceNamedTensor*>(
-        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
+    *outputs = static_cast<DinfNamedTensor*>(
+        std::malloc(sizeof(DinfNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DinfNamedTensor) * produced.size());
     }
     return 0;
   }
@@ -751,7 +751,7 @@ std::unique_ptr<OrtSessionWrapper> create_ort_session(
       provider_appended));
 }
 
-std::vector<int64_t> tensor_shape(const DartInferenceNativeTensor& tensor) {
+std::vector<int64_t> tensor_shape(const DinfTensor& tensor) {
   std::vector<int64_t> shape;
   shape.reserve(tensor.rank);
   for (int i = 0; i < tensor.rank; ++i) {
@@ -761,15 +761,15 @@ std::vector<int64_t> tensor_shape(const DartInferenceNativeTensor& tensor) {
 }
 
 struct OwnedTensorArray {
-  DartInferenceNamedTensor* values = nullptr;
+  DinfNamedTensor* values = nullptr;
   size_t count = 0;
 
   ~OwnedTensorArray() {
-    dinf_cpp_runtime_free_tensors(values, static_cast<intptr_t>(count));
+    dinf_cpp_free_tensors(values, static_cast<intptr_t>(count));
   }
 };
 
-using TensorMap = std::map<std::string, const DartInferenceNamedTensor*>;
+using TensorMap = std::map<std::string, const DinfNamedTensor*>;
 using StringMap = std::map<std::string, std::string>;
 
 StringMap string_map_from_json(const json& value) {
@@ -812,7 +812,7 @@ std::string mapped_name(
   return found == values.end() ? fallback : found->second;
 }
 
-const DartInferenceNamedTensor* find_tensor(
+const DinfNamedTensor* find_tensor(
     const TensorMap& tensors,
     const std::string& name,
     std::string* error) {
@@ -824,7 +824,7 @@ const DartInferenceNamedTensor* find_tensor(
   return found->second;
 }
 
-int64_t index_value(const DartInferenceNativeTensor& tensor, size_t index) {
+int64_t index_value(const DinfTensor& tensor, size_t index) {
   if (tensor.dtype == DINF_DTYPE_INT64) {
     return static_cast<const int64_t*>(tensor.data)[index];
   }
@@ -908,7 +908,7 @@ OwnedTensorArray* scatter_embeddings(
       mapped_name(stage.outputs, "output", "inputs_embeds");
   auto* holder = new OwnedTensorArray();
   holder->count = 1;
-  holder->values = static_cast<DartInferenceNamedTensor*>(std::malloc(sizeof(DartInferenceNamedTensor)));
+  holder->values = static_cast<DinfNamedTensor*>(std::malloc(sizeof(DinfNamedTensor)));
   holder->values[0] = dinf_make_tensor(
       output_name.c_str(),
       base->tensor.dtype,
@@ -929,9 +929,9 @@ class OrtPipelineSession final : public DinfRuntimeSession {
         requested_outputs_(std::move(requested_outputs)) {}
 
   int Run(
-      const DartInferenceNamedTensor* inputs,
+      const DinfNamedTensor* inputs,
       size_t input_count,
-      DartInferenceNamedTensor** outputs,
+      DinfNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     TensorMap tensors;
@@ -963,7 +963,7 @@ class OrtPipelineSession final : public DinfRuntimeSession {
         continue;
       }
 
-      std::vector<DartInferenceNamedTensor> selected;
+      std::vector<DinfNamedTensor> selected;
       std::vector<std::string> selected_names;
       const auto& required = stage.session->InputNames();
       selected.reserve(required.size());
@@ -985,7 +985,7 @@ class OrtPipelineSession final : public DinfRuntimeSession {
         selected[i].name = const_cast<char*>(selected_names[i].c_str());
       }
 
-      DartInferenceNamedTensor* stage_outputs = nullptr;
+      DinfNamedTensor* stage_outputs = nullptr;
       size_t stage_output_count = 0;
       const int status = stage.session->Run(
           selected.data(),
@@ -994,7 +994,7 @@ class OrtPipelineSession final : public DinfRuntimeSession {
           &stage_output_count,
           error);
       if (status != 0) {
-        dinf_cpp_runtime_free_tensors(
+        dinf_cpp_free_tensors(
             stage_outputs,
             static_cast<intptr_t>(stage_output_count));
         return status;
@@ -1022,7 +1022,7 @@ class OrtPipelineSession final : public DinfRuntimeSession {
         requested[key] = key;
       }
     }
-    std::vector<DartInferenceNamedTensor> produced;
+    std::vector<DinfNamedTensor> produced;
     for (const auto& item : requested) {
       const auto found = tensors.find(item.second);
       if (found == tensors.end()) {
@@ -1038,10 +1038,10 @@ class OrtPipelineSession final : public DinfRuntimeSession {
           source->tensor.byte_length));
     }
     *output_count = produced.size();
-    *outputs = static_cast<DartInferenceNamedTensor*>(
-        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
+    *outputs = static_cast<DinfNamedTensor*>(
+        std::malloc(sizeof(DinfNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DinfNamedTensor) * produced.size());
     }
     return 0;
   }

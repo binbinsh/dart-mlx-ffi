@@ -155,7 +155,7 @@ uint64_t update_peak(uint64_t value) {
 
 }  // namespace
 
-extern "C" char* dinf_cpp_runtime_memory_info_json() {
+extern "C" char* dinf_cpp_mem_json() {
   std::ostringstream out;
   out << "{";
 #if defined(__APPLE__)

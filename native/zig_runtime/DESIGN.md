@@ -5,7 +5,7 @@
 `dart_inference` uses Zig as the only Dart-facing native boundary.
 
 ```text
-Dart API -> dart_inference_runtime_* C ABI -> Zig runtime -> C/C++/ObjC++ libs
+Dart API -> dinf_* C ABI -> Zig runtime -> C/C++/ObjC++ libs
 ```
 
 The Dart layer stays shallow:
@@ -29,7 +29,7 @@ bound directly from Dart.
 
 ## Hot Path ABI
 
-The hot path is `dart_inference_runtime_run`.
+The hot path is `dinf_run`.
 
 It does not use JSON. It receives an array of fixed-layout structs:
 
@@ -128,4 +128,4 @@ The ABI is synchronous today because every target can support it. Zig remains
   dependency for Zig. It is not a Dart-facing code asset API.
 - The former Dart-facing MLX raw/shim/stable APIs and C++ bridge are removed
   from the package source.
-- New native entry points use `dart_inference_runtime_*`.
+- New native entry points use `dinf_*`.

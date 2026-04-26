@@ -4,9 +4,9 @@ This directory owns the Dart-facing model runtime ABI.
 
 Current shape:
 
-- Dart binds only to `dart_inference_runtime_*` symbols exported by `runtime.zig`.
+- Dart binds only to `dinf_*` symbols exported by `runtime.zig`.
 - C/C++/Objective-C++ backends are private adapters behind Zig and export
-  `dinf_cpp_runtime_*` symbols.
+  `dinf_cpp_*` symbols.
 - Apple builds also link Zig to a private `dinf_zig_mlx_c` library that
   exposes `mlx-c`; explicit MLX sessions are created by Zig, discover local
   safetensors and `.mlxfn` artifact layouts, parse local MLX metadata and
@@ -24,7 +24,7 @@ Current shape:
 - `mlx_backend` metadata reports `enabled: true` on Apple linked builds and
   lists the currently registered MLX artifact/executor surface.
 - Hot input paths can allocate native memory through Zig and pass
-  `NativeTensorBuffer` views directly into `dart_inference_runtime_run`; Zig
+  `NativeTensorBuffer` views directly into `dinf_run`; Zig
   computes the dtype/shape byte length for those buffers.
 - Zig is pinned by the repository `.zigversion` file and
   `native/zig_runtime/toolchain.json`.

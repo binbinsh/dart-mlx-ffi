@@ -164,14 +164,14 @@ def run_smoke(
             "--build",
             str(build_dir),
             "--target",
-            "dart_inference_runtime_runner",
+            "dinf_runner",
             "-j2",
         ]
     )
     if env.runtime_library is not None:
         shutil.copy2(env.runtime_library, build_dir / env.runtime_library.name)
 
-    runner = build_dir / "dart_inference_runtime_runner"
+    runner = build_dir / "dinf_runner"
     _run(
         [
             str(runner),

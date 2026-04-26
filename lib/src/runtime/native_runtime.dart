@@ -16,14 +16,14 @@ final _nativeRuntimeTensorBuffers = Expando<NativeTensorBuffer>(
 );
 final _nativeInputFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((pointer) {
   if (pointer != ffi.nullptr) {
-    native.dart_inference_runtime_free_buffer(pointer);
+    native.freeBuf(pointer);
   }
 });
 
 /// Native runtime implementation metadata.
 abstract final class NativeRuntimeBackend {
   static Map<String, Object?> info() {
-    final ptr = native.dart_inference_runtime_backend_json();
+    final ptr = native.infoJson();
     if (ptr == ffi.nullptr) {
       return const <String, Object?>{};
     }
@@ -34,7 +34,7 @@ abstract final class NativeRuntimeBackend {
       }
       return const <String, Object?>{};
     } finally {
-      native.dart_inference_runtime_free_string(ptr);
+      native.freeStr(ptr);
     }
   }
 }
@@ -42,7 +42,7 @@ abstract final class NativeRuntimeBackend {
 /// Cross-platform memory snapshot from the native runtime bridge.
 abstract final class NativeRuntimeMemory {
   static Map<String, Object?> snapshot() {
-    final ptr = native.dart_inference_runtime_memory_info_json();
+    final ptr = native.memJson();
     if (ptr == ffi.nullptr) {
       return const <String, Object?>{};
     }
@@ -53,7 +53,7 @@ abstract final class NativeRuntimeMemory {
       }
       return const <String, Object?>{};
     } finally {
-      native.dart_inference_runtime_free_string(ptr);
+      native.freeStr(ptr);
     }
   }
 }
@@ -92,7 +92,7 @@ final class NativeTensorBuffer {
       if (rank > 0) {
         shapePointer.asTypedList(rank).setAll(0, shape);
       }
-      final pointer = native.dart_inference_runtime_alloc_tensor_buffer(
+      final pointer = native.allocTensor(
         _dtypeId(dtype),
         shapePointer,
         rank,
@@ -243,7 +243,7 @@ final class NativeTensorBuffer {
     }
     _pointer = ffi.nullptr;
     _nativeInputFinalizer.detach(this);
-    native.dart_inference_runtime_free_buffer(pointer);
+    native.freeBuf(pointer);
   }
 
   void _checkOpen() {
@@ -312,12 +312,7 @@ final class NativeModelRuntime implements ModelRuntime {
       ...options.backendOptions,
     }).toNativeUtf8().cast<ffi.Char>();
     try {
-      final handle = native.dart_inference_runtime_create(
-        _engineId(engine),
-        path,
-        optionsJson,
-        error,
-      );
+      final handle = native.open(_engineId(engine), path, optionsJson, error);
       if (handle == ffi.nullptr) {
         throw StateError(_takeError(error));
       }
@@ -354,12 +349,12 @@ final class _NativeModelSession implements ModelSession {
   ModelOutputs run(ModelInputs inputs) {
     _checkOpen();
     final tensors = _encodeInputs(inputs.values);
-    final outputPtr = calloc<ffi.Pointer<native.DartInferenceNamedTensor>>();
+    final outputPtr = calloc<ffi.Pointer<native.NamedTensorAbi>>();
     final outputCount = calloc<ffi.IntPtr>();
     final error = calloc<ffi.Pointer<ffi.Char>>();
     var outputTransferred = false;
     try {
-      final status = native.dart_inference_runtime_run(
+      final status = native.run(
         _handle,
         tensors.pointer,
         tensors.count,
@@ -384,10 +379,7 @@ final class _NativeModelSession implements ModelSession {
       );
     } finally {
       if (!outputTransferred && outputPtr.value != ffi.nullptr) {
-        native.dart_inference_runtime_free_tensors(
-          outputPtr.value,
-          outputCount.value,
-        );
+        native.freeTensors(outputPtr.value, outputCount.value);
       }
       calloc.free(outputPtr);
       calloc.free(outputCount);
@@ -403,7 +395,7 @@ final class _NativeModelSession implements ModelSession {
   @override
   void close() {
     if (_handle == ffi.nullptr) return;
-    native.dart_inference_runtime_free(_handle);
+    native.close(_handle);
     _handle = ffi.nullptr;
     for (final buffer in _inputBuffers.values) {
       buffer.close();
@@ -427,7 +419,7 @@ final class _NativeModelSession implements ModelSession {
   }
 
   Map<String, Object?> _diagnostics() {
-    final ptr = native.dart_inference_runtime_diagnostics_json(_handle);
+    final ptr = native.diagJson(_handle);
     if (ptr == ffi.nullptr) {
       return const <String, Object?>{};
     }
@@ -438,7 +430,7 @@ final class _NativeModelSession implements ModelSession {
       }
       return const <String, Object?>{};
     } finally {
-      native.dart_inference_runtime_free_string(ptr);
+      native.freeStr(ptr);
     }
   }
 
@@ -489,15 +481,15 @@ final class _NativeModelSession implements ModelSession {
 final class _EncodedInputs {
   _EncodedInputs(this.pointer, this.count);
 
-  final ffi.Pointer<native.DartInferenceNamedTensor> pointer;
+  final ffi.Pointer<native.NamedTensorAbi> pointer;
   final int count;
 }
 
 final class _InputTensorArena {
-  ffi.Pointer<native.DartInferenceNamedTensor> pointer = ffi.nullptr;
+  ffi.Pointer<native.NamedTensorAbi> pointer = ffi.nullptr;
   int capacity = 0;
 
-  ffi.Pointer<native.DartInferenceNamedTensor> pointerFor(int count) {
+  ffi.Pointer<native.NamedTensorAbi> pointerFor(int count) {
     if (count == 0) {
       return ffi.nullptr;
     }
@@ -505,7 +497,7 @@ final class _InputTensorArena {
       return pointer;
     }
     close();
-    pointer = calloc<native.DartInferenceNamedTensor>(count);
+    pointer = calloc<native.NamedTensorAbi>(count);
     capacity = count;
     return pointer;
   }
@@ -531,7 +523,7 @@ RuntimeTensor _asRuntimeTensor(String name, Object? value) {
 }
 
 Map<String, Object?> _decodeOutputs(
-  ffi.Pointer<native.DartInferenceNamedTensor> pointer,
+  ffi.Pointer<native.NamedTensorAbi> pointer,
   int count,
   Object? owner,
 ) {
@@ -584,7 +576,7 @@ final class _NativeByteBuffer {
       return;
     }
     close();
-    final allocated = native.dart_inference_runtime_alloc(byteLength);
+    final allocated = native.alloc(byteLength);
     if (allocated == ffi.nullptr) {
       throw StateError('Failed to allocate native input buffer.');
     }
@@ -596,7 +588,7 @@ final class _NativeByteBuffer {
     if (pointer == ffi.nullptr) {
       return;
     }
-    native.dart_inference_runtime_free_buffer(pointer.cast<ffi.Void>());
+    native.freeBuf(pointer.cast<ffi.Void>());
     pointer = ffi.nullptr;
     capacity = 0;
   }
@@ -607,10 +599,7 @@ final _outputFinalizer = Finalizer<_NativeOutputLease>((lease) {
 });
 
 final class _NativeOutputOwner {
-  _NativeOutputOwner(
-    ffi.Pointer<native.DartInferenceNamedTensor> pointer,
-    int count,
-  ) {
+  _NativeOutputOwner(ffi.Pointer<native.NamedTensorAbi> pointer, int count) {
     final lease = _NativeOutputLease(pointer, count);
     _lease = lease;
     _outputFinalizer.attach(this, lease, detach: this);
@@ -632,7 +621,7 @@ final class _NativeOutputOwner {
 final class _NativeOutputLease {
   _NativeOutputLease(this.pointer, this.count);
 
-  final ffi.Pointer<native.DartInferenceNamedTensor> pointer;
+  final ffi.Pointer<native.NamedTensorAbi> pointer;
   final int count;
   bool _released = false;
 
@@ -641,7 +630,7 @@ final class _NativeOutputLease {
       return;
     }
     _released = true;
-    native.dart_inference_runtime_free_tensors(pointer, count);
+    native.freeTensors(pointer, count);
   }
 }
 
@@ -651,7 +640,7 @@ String _takeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
   try {
     return value.cast<Utf8>().toDartString();
   } finally {
-    native.dart_inference_runtime_free_string(value);
+    native.freeStr(value);
     error.value = ffi.nullptr;
   }
 }

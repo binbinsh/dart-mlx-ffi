@@ -124,7 +124,7 @@ size_t array_byte_length(MLMultiArray* array) {
   return count * dtype_size;
 }
 
-MLMultiArray* make_multi_array(const DartInferenceNamedTensor& input, std::string* error) {
+MLMultiArray* make_multi_array(const DinfNamedTensor& input, std::string* error) {
   NSMutableArray<NSNumber*>* shape = [NSMutableArray array];
   for (int32_t i = 0; i < input.tensor.rank; ++i) {
     [shape addObject:@(input.tensor.shape[i])];
@@ -742,9 +742,9 @@ class CoreMlSession final : public DinfRuntimeSession {
         requested_outputs_(std::move(requested_outputs)) {}
 
   int Run(
-      const DartInferenceNamedTensor* inputs,
+      const DinfNamedTensor* inputs,
       size_t input_count,
-      DartInferenceNamedTensor** outputs,
+      DinfNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     NSMutableDictionary<NSString*, MLFeatureValue*>* dict =
@@ -840,7 +840,7 @@ class CoreMlSession final : public DinfRuntimeSession {
     NSMutableArray<NSString*>* names =
         [NSMutableArray arrayWithArray:final_outputs.allKeys];
     [names sortUsingSelector:@selector(compare:)];
-    std::vector<DartInferenceNamedTensor> produced;
+    std::vector<DinfNamedTensor> produced;
     for (NSString* name in names) {
       MLFeatureValue* value = final_outputs[name];
       MLMultiArray* array = value.multiArrayValue;
@@ -859,10 +859,10 @@ class CoreMlSession final : public DinfRuntimeSession {
           array_byte_length(array)));
     }
     *output_count = produced.size();
-    *outputs = static_cast<DartInferenceNamedTensor*>(
-        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
+    *outputs = static_cast<DinfNamedTensor*>(
+        std::malloc(sizeof(DinfNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DinfNamedTensor) * produced.size());
     }
     return 0;
   }

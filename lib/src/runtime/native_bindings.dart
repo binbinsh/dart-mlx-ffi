@@ -1,13 +1,9 @@
-// ignore_for_file: non_constant_identifier_names
-
-@ffi.DefaultAsset(
-  'package:dart_inference/dart_inference_runtime_bindings_generated.dart',
-)
+@ffi.DefaultAsset('package:dart_inference/rt_bindings.dart')
 library;
 
 import 'dart:ffi' as ffi;
 
-final class DartInferenceNativeTensor extends ffi.Struct {
+final class TensorAbi extends ffi.Struct {
   @ffi.Int32()
   external int dtype;
 
@@ -22,10 +18,10 @@ final class DartInferenceNativeTensor extends ffi.Struct {
   external ffi.Pointer<ffi.Void> data;
 }
 
-final class DartInferenceNamedTensor extends ffi.Struct {
+final class NamedTensorAbi extends ffi.Struct {
   external ffi.Pointer<ffi.Char> name;
 
-  external DartInferenceNativeTensor tensor;
+  external TensorAbi tensor;
 }
 
 @ffi.Native<
@@ -35,72 +31,57 @@ final class DartInferenceNamedTensor extends ffi.Struct {
     ffi.Pointer<ffi.Char>,
     ffi.Pointer<ffi.Pointer<ffi.Char>>,
   )
->(symbol: 'dart_inference_runtime_create')
-external ffi.Pointer<ffi.Void> dart_inference_runtime_create(
+>(symbol: 'dinf_open')
+external ffi.Pointer<ffi.Void> open(
   int engine,
   ffi.Pointer<ffi.Char> modelPath,
   ffi.Pointer<ffi.Char> optionsJson,
   ffi.Pointer<ffi.Pointer<ffi.Char>> error,
 );
 
-@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>(
-  symbol: 'dart_inference_runtime_free',
-)
-external void dart_inference_runtime_free(ffi.Pointer<ffi.Void> session);
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>(symbol: 'dinf_close')
+external void close(ffi.Pointer<ffi.Void> session);
 
 @ffi.Native<
   ffi.Int32 Function(
     ffi.Pointer<ffi.Void>,
-    ffi.Pointer<DartInferenceNamedTensor>,
+    ffi.Pointer<NamedTensorAbi>,
     ffi.IntPtr,
-    ffi.Pointer<ffi.Pointer<DartInferenceNamedTensor>>,
+    ffi.Pointer<ffi.Pointer<NamedTensorAbi>>,
     ffi.Pointer<ffi.IntPtr>,
     ffi.Pointer<ffi.Pointer<ffi.Char>>,
   )
->(symbol: 'dart_inference_runtime_run')
-external int dart_inference_runtime_run(
+>(symbol: 'dinf_run')
+external int run(
   ffi.Pointer<ffi.Void> session,
-  ffi.Pointer<DartInferenceNamedTensor> inputs,
+  ffi.Pointer<NamedTensorAbi> inputs,
   int inputCount,
-  ffi.Pointer<ffi.Pointer<DartInferenceNamedTensor>> outputs,
+  ffi.Pointer<ffi.Pointer<NamedTensorAbi>> outputs,
   ffi.Pointer<ffi.IntPtr> outputCount,
   ffi.Pointer<ffi.Pointer<ffi.Char>> error,
 );
 
-@ffi.Native<
-  ffi.Void Function(ffi.Pointer<DartInferenceNamedTensor>, ffi.IntPtr)
->(symbol: 'dart_inference_runtime_free_tensors')
-external void dart_inference_runtime_free_tensors(
-  ffi.Pointer<DartInferenceNamedTensor> tensors,
-  int count,
-);
-
-@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'dart_inference_runtime_free_string',
+@ffi.Native<ffi.Void Function(ffi.Pointer<NamedTensorAbi>, ffi.IntPtr)>(
+  symbol: 'dinf_free_tensors',
 )
-external void dart_inference_runtime_free_string(ffi.Pointer<ffi.Char> value);
+external void freeTensors(ffi.Pointer<NamedTensorAbi> tensors, int count);
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function()>(
-  symbol: 'dart_inference_runtime_backend_json',
-)
-external ffi.Pointer<ffi.Char> dart_inference_runtime_backend_json();
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Char>)>(symbol: 'dinf_free_str')
+external void freeStr(ffi.Pointer<ffi.Char> value);
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function()>(
-  symbol: 'dart_inference_runtime_memory_info_json',
-)
-external ffi.Pointer<ffi.Char> dart_inference_runtime_memory_info_json();
+@ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_info_json')
+external ffi.Pointer<ffi.Char> infoJson();
+
+@ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
+external ffi.Pointer<ffi.Char> memJson();
 
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Void>)>(
-  symbol: 'dart_inference_runtime_diagnostics_json',
+  symbol: 'dinf_diag_json',
 )
-external ffi.Pointer<ffi.Char> dart_inference_runtime_diagnostics_json(
-  ffi.Pointer<ffi.Void> session,
-);
+external ffi.Pointer<ffi.Char> diagJson(ffi.Pointer<ffi.Void> session);
 
-@ffi.Native<ffi.Pointer<ffi.Void> Function(ffi.IntPtr)>(
-  symbol: 'dart_inference_runtime_alloc',
-)
-external ffi.Pointer<ffi.Void> dart_inference_runtime_alloc(int byteLength);
+@ffi.Native<ffi.Pointer<ffi.Void> Function(ffi.IntPtr)>(symbol: 'dinf_alloc')
+external ffi.Pointer<ffi.Void> alloc(int byteLength);
 
 @ffi.Native<
   ffi.Pointer<ffi.Void> Function(
@@ -110,8 +91,8 @@ external ffi.Pointer<ffi.Void> dart_inference_runtime_alloc(int byteLength);
     ffi.Pointer<ffi.IntPtr>,
     ffi.Pointer<ffi.Pointer<ffi.Char>>,
   )
->(symbol: 'dart_inference_runtime_alloc_tensor_buffer')
-external ffi.Pointer<ffi.Void> dart_inference_runtime_alloc_tensor_buffer(
+>(symbol: 'dinf_alloc_tensor')
+external ffi.Pointer<ffi.Void> allocTensor(
   int dtype,
   ffi.Pointer<ffi.Int64> shape,
   int rank,
@@ -119,7 +100,5 @@ external ffi.Pointer<ffi.Void> dart_inference_runtime_alloc_tensor_buffer(
   ffi.Pointer<ffi.Pointer<ffi.Char>> error,
 );
 
-@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>(
-  symbol: 'dart_inference_runtime_free_buffer',
-)
-external void dart_inference_runtime_free_buffer(ffi.Pointer<ffi.Void> value);
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>(symbol: 'dinf_free_buf')
+external void freeBuf(ffi.Pointer<ffi.Void> value);

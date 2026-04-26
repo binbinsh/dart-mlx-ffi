@@ -28,7 +28,7 @@ enum DinfTensorDType {
   DINF_DTYPE_BOOL = 7,
 };
 
-struct DartInferenceNativeTensor {
+struct DinfTensor {
   int32_t dtype;
   int32_t rank;
   int64_t* shape;
@@ -36,9 +36,9 @@ struct DartInferenceNativeTensor {
   void* data;
 };
 
-struct DartInferenceNamedTensor {
+struct DinfNamedTensor {
   char* name;
-  DartInferenceNativeTensor tensor;
+  DinfTensor tensor;
 };
 
 class DinfRuntimeSession {
@@ -46,9 +46,9 @@ class DinfRuntimeSession {
   virtual ~DinfRuntimeSession() = default;
 
   virtual int Run(
-      const DartInferenceNamedTensor* inputs,
+      const DinfNamedTensor* inputs,
       size_t input_count,
-      DartInferenceNamedTensor** outputs,
+      DinfNamedTensor** outputs,
       size_t* output_count,
       std::string* error) = 0;
 
@@ -57,37 +57,37 @@ class DinfRuntimeSession {
 
 extern "C" {
 
-DINF_RUNTIME_EXPORT DinfRuntimeSession* dinf_cpp_runtime_create(
+DINF_RUNTIME_EXPORT DinfRuntimeSession* dinf_cpp_open(
     int32_t engine,
     const char* model_path,
     const char* options_json,
     char** error);
 
-DINF_RUNTIME_EXPORT void dinf_cpp_runtime_free(DinfRuntimeSession* session);
+DINF_RUNTIME_EXPORT void dinf_cpp_close(DinfRuntimeSession* session);
 
-DINF_RUNTIME_EXPORT int32_t dinf_cpp_runtime_run(
+DINF_RUNTIME_EXPORT int32_t dinf_cpp_run(
     DinfRuntimeSession* session,
-    const DartInferenceNamedTensor* inputs,
+    const DinfNamedTensor* inputs,
     intptr_t input_count,
-    DartInferenceNamedTensor** outputs,
+    DinfNamedTensor** outputs,
     intptr_t* output_count,
     char** error);
 
-DINF_RUNTIME_EXPORT void dinf_cpp_runtime_free_tensors(
-    DartInferenceNamedTensor* tensors,
+DINF_RUNTIME_EXPORT void dinf_cpp_free_tensors(
+    DinfNamedTensor* tensors,
     intptr_t count);
 
-DINF_RUNTIME_EXPORT void dinf_cpp_runtime_free_string(char* value);
+DINF_RUNTIME_EXPORT void dinf_cpp_free_str(char* value);
 
-DINF_RUNTIME_EXPORT char* dinf_cpp_runtime_backend_json();
+DINF_RUNTIME_EXPORT char* dinf_cpp_info_json();
 
-DINF_RUNTIME_EXPORT char* dinf_cpp_runtime_memory_info_json();
+DINF_RUNTIME_EXPORT char* dinf_cpp_mem_json();
 
-DINF_RUNTIME_EXPORT char* dinf_cpp_runtime_diagnostics_json(
+DINF_RUNTIME_EXPORT char* dinf_cpp_diag_json(
     DinfRuntimeSession* session);
 }
 
-DartInferenceNamedTensor dinf_make_tensor(
+DinfNamedTensor dinf_make_tensor(
     const char* name,
     int32_t dtype,
     const std::vector<int64_t>& shape,

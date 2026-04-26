@@ -140,6 +140,60 @@ std::string dtype_name(int dtype) {
   }
 }
 
+size_t dtype_size(int dtype) {
+  switch (dtype) {
+    case DINF_DTYPE_FLOAT32:
+    case DINF_DTYPE_INT32:
+      return 4;
+    case DINF_DTYPE_INT64:
+    case DINF_DTYPE_FLOAT64:
+      return 8;
+    case DINF_DTYPE_UINT8:
+    case DINF_DTYPE_BOOL:
+      return 1;
+    case DINF_DTYPE_FLOAT16:
+      return 2;
+    default:
+      return 0;
+  }
+}
+
+char* copy_string(const std::string& value) {
+  char* copy = static_cast<char*>(std::malloc(value.size() + 1));
+  if (copy == nullptr) {
+    return nullptr;
+  }
+  std::memcpy(copy, value.data(), value.size());
+  copy[value.size()] = '\0';
+  return copy;
+}
+
+DinfNamedTensor make_tensor(
+    const char* name,
+    int32_t dtype,
+    const std::vector<int64_t>& shape,
+    const void* data,
+    size_t byte_length) {
+  DinfNamedTensor tensor{};
+  tensor.name = copy_string(name == nullptr ? "" : name);
+  tensor.tensor.dtype = dtype;
+  tensor.tensor.rank = static_cast<int32_t>(shape.size());
+  tensor.tensor.byte_length = static_cast<intptr_t>(byte_length);
+  tensor.tensor.shape = static_cast<int64_t*>(
+      std::malloc(sizeof(int64_t) * shape.size()));
+  if (!shape.empty()) {
+    std::memcpy(
+        tensor.tensor.shape,
+        shape.data(),
+        sizeof(int64_t) * shape.size());
+  }
+  tensor.tensor.data = std::malloc(byte_length);
+  if (byte_length > 0 && data != nullptr) {
+    std::memcpy(tensor.tensor.data, data, byte_length);
+  }
+  return tensor;
+}
+
 int base64_value(char c) {
   if (c >= 'A' && c <= 'Z') {
     return c - 'A';
@@ -369,7 +423,7 @@ std::vector<int64_t> shape_from_json(
     const std::string& input_name) {
   std::vector<int64_t> shape;
   if (!spec.contains("shape")) {
-    const size_t width = dinf_dtype_size(dtype);
+    const size_t width = dtype_size(dtype);
     if (width == 0 || byte_length % width != 0) {
       throw std::runtime_error(
           "Input " + input_name + " byte length is not divisible by dtype width.");
@@ -383,7 +437,7 @@ std::vector<int64_t> shape_from_json(
   for (const auto& dim : spec.at("shape")) {
     shape.push_back(dim.get<int64_t>());
   }
-  const size_t width = dinf_dtype_size(dtype);
+  const size_t width = dtype_size(dtype);
   size_t expected = width;
   for (const auto dim : shape) {
     expected *= static_cast<size_t>(dim);
@@ -395,7 +449,7 @@ std::vector<int64_t> shape_from_json(
   return shape;
 }
 
-DartInferenceNamedTensor tensor_from_json(
+DinfNamedTensor tensor_from_json(
     const std::string& name,
     const json& spec,
     const std::filesystem::path& base_dir) {
@@ -406,7 +460,7 @@ DartInferenceNamedTensor tensor_from_json(
   const int id = dtype_id(dtype);
   std::vector<uint8_t> bytes =
       tensor_bytes_from_json(spec, dtype, base_dir, name);
-  return dinf_make_tensor(
+  return make_tensor(
       name.c_str(),
       id,
       shape_from_json(spec, id, bytes.size(), name),
@@ -414,7 +468,7 @@ DartInferenceNamedTensor tensor_from_json(
       bytes.size());
 }
 
-std::vector<DartInferenceNamedTensor> inputs_from_json(
+std::vector<DinfNamedTensor> inputs_from_json(
     const json& document,
     const std::filesystem::path& base_dir) {
   const json* inputs = &document;
@@ -424,14 +478,14 @@ std::vector<DartInferenceNamedTensor> inputs_from_json(
   if (!inputs->is_object()) {
     throw std::runtime_error("Input JSON must contain an object of tensors.");
   }
-  std::vector<DartInferenceNamedTensor> tensors;
+  std::vector<DinfNamedTensor> tensors;
   for (const auto& item : inputs->items()) {
     tensors.push_back(tensor_from_json(item.key(), item.value(), base_dir));
   }
   return tensors;
 }
 
-void free_inputs(std::vector<DartInferenceNamedTensor>& tensors) {
+void free_inputs(std::vector<DinfNamedTensor>& tensors) {
   for (auto& tensor : tensors) {
     std::free(tensor.name);
     std::free(tensor.tensor.shape);
@@ -445,16 +499,16 @@ json parse_json_string(char* raw) {
     return json::object();
   }
   const std::string text(raw);
-  dinf_cpp_runtime_free_string(raw);
+  dinf_cpp_free_str(raw);
   if (text.empty()) {
     return json::object();
   }
   return json::parse(text);
 }
 
-json tensor_values(const DartInferenceNativeTensor& tensor) {
+json tensor_values(const DinfTensor& tensor) {
   const auto count = static_cast<size_t>(
-      tensor.byte_length / static_cast<intptr_t>(dinf_dtype_size(tensor.dtype)));
+      tensor.byte_length / static_cast<intptr_t>(dtype_size(tensor.dtype)));
   json values = json::array();
   switch (tensor.dtype) {
     case DINF_DTYPE_FLOAT32: {
@@ -510,7 +564,7 @@ json tensor_values(const DartInferenceNativeTensor& tensor) {
   return values;
 }
 
-json tensor_shape(const DartInferenceNativeTensor& tensor) {
+json tensor_shape(const DinfTensor& tensor) {
   json shape = json::array();
   for (int i = 0; i < tensor.rank; ++i) {
     shape.push_back(tensor.shape[i]);
@@ -518,7 +572,7 @@ json tensor_shape(const DartInferenceNativeTensor& tensor) {
   return shape;
 }
 
-json correctness(DartInferenceNamedTensor* outputs, intptr_t output_count) {
+json correctness(DinfNamedTensor* outputs, intptr_t output_count) {
   json output_values = json::object();
   json output_summaries = json::object();
   for (intptr_t i = 0; i < output_count; ++i) {
@@ -608,7 +662,7 @@ void update_peak_memory(uint64_t* peak, const json& memory) {
 void usage() {
   std::cout
       << "Usage:\n"
-      << "  dart_inference_runtime_runner --model-id <id> "
+      << "  dinf_runner --model-id <id> "
       << "--engine <coreml|onnx|litert> --artifact <path> "
       << "--input-json <inputs.json> [--platform android] [--out report.json]\n";
 }
@@ -631,32 +685,32 @@ int main(int argc, char** argv) {
     const int iters = std::stoi(args.option("iters", "5"));
 
     char* error = nullptr;
-    DinfRuntimeSession* session = dinf_cpp_runtime_create(
+    DinfRuntimeSession* session = dinf_cpp_open(
         engine_id(engine),
         artifact.c_str(),
         runtime_options(args).dump().c_str(),
         &error);
     if (session == nullptr) {
       const std::string message = error == nullptr ? "runtime create failed" : error;
-      dinf_cpp_runtime_free_string(error);
+      dinf_cpp_free_str(error);
       throw std::runtime_error(message);
     }
 
     auto inputs = inputs_from_json(
         read_json_file(input_path),
         std::filesystem::path(input_path).parent_path());
-    DartInferenceNamedTensor* outputs = nullptr;
+    DinfNamedTensor* outputs = nullptr;
     intptr_t output_count = 0;
-    const json memory_before = parse_json_string(dinf_cpp_runtime_memory_info_json());
+    const json memory_before = parse_json_string(dinf_cpp_mem_json());
     uint64_t peak_memory = peak_memory_value(memory_before);
 
     for (int i = 0; i < warmup; ++i) {
       if (outputs != nullptr) {
-        dinf_cpp_runtime_free_tensors(outputs, output_count);
+        dinf_cpp_free_tensors(outputs, output_count);
         outputs = nullptr;
         output_count = 0;
       }
-      if (dinf_cpp_runtime_run(
+      if (dinf_cpp_run(
               session,
               inputs.data(),
               static_cast<intptr_t>(inputs.size()),
@@ -664,23 +718,23 @@ int main(int argc, char** argv) {
               &output_count,
               &error) != 0) {
         const std::string message = error == nullptr ? "runtime run failed" : error;
-        dinf_cpp_runtime_free_string(error);
+        dinf_cpp_free_str(error);
         throw std::runtime_error(message);
       }
       update_peak_memory(
           &peak_memory,
-          parse_json_string(dinf_cpp_runtime_memory_info_json()));
+          parse_json_string(dinf_cpp_mem_json()));
     }
 
     double timed_ms = 0.0;
     for (int i = 0; i < iters; ++i) {
       if (outputs != nullptr) {
-        dinf_cpp_runtime_free_tensors(outputs, output_count);
+        dinf_cpp_free_tensors(outputs, output_count);
         outputs = nullptr;
         output_count = 0;
       }
       const auto start = std::chrono::steady_clock::now();
-      if (dinf_cpp_runtime_run(
+      if (dinf_cpp_run(
               session,
               inputs.data(),
               static_cast<intptr_t>(inputs.size()),
@@ -688,19 +742,19 @@ int main(int argc, char** argv) {
               &output_count,
               &error) != 0) {
         const std::string message = error == nullptr ? "runtime run failed" : error;
-        dinf_cpp_runtime_free_string(error);
+        dinf_cpp_free_str(error);
         throw std::runtime_error(message);
       }
       const auto end = std::chrono::steady_clock::now();
       timed_ms += millis_since(start, end);
       update_peak_memory(
           &peak_memory,
-          parse_json_string(dinf_cpp_runtime_memory_info_json()));
+          parse_json_string(dinf_cpp_mem_json()));
     }
 
-    const json memory_after = parse_json_string(dinf_cpp_runtime_memory_info_json());
+    const json memory_after = parse_json_string(dinf_cpp_mem_json());
     update_peak_memory(&peak_memory, memory_after);
-    const json diagnostics = parse_json_string(dinf_cpp_runtime_diagnostics_json(session));
+    const json diagnostics = parse_json_string(dinf_cpp_diag_json(session));
     const double per_iter_ms = iters > 0 ? timed_ms / iters : 0.0;
 
     json report = {
@@ -733,13 +787,13 @@ int main(int argc, char** argv) {
     std::cout << report.dump(2) << "\n";
 
     if (outputs != nullptr) {
-      dinf_cpp_runtime_free_tensors(outputs, output_count);
+      dinf_cpp_free_tensors(outputs, output_count);
     }
     free_inputs(inputs);
-    dinf_cpp_runtime_free(session);
+    dinf_cpp_close(session);
     return 0;
   } catch (const std::exception& error) {
-    std::cerr << "dart_inference_runtime_runner failed: " << error.what() << "\n";
+    std::cerr << "dinf_runner failed: " << error.what() << "\n";
     return 2;
   }
 }

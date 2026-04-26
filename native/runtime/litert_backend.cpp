@@ -651,7 +651,7 @@ bool add_symbol_delegate(
 bool resolve_input_indices(
     const LiteRtApi& api,
     TfLiteInterpreter* interpreter,
-    const DartInferenceNamedTensor* inputs,
+    const DinfNamedTensor* inputs,
     size_t input_count,
     std::vector<int32_t>* indices,
     std::string* error) {
@@ -787,9 +787,9 @@ class LiteRtSession final : public DinfRuntimeSession {
   }
 
   int Run(
-      const DartInferenceNamedTensor* inputs,
+      const DinfNamedTensor* inputs,
       size_t input_count,
-      DartInferenceNamedTensor** outputs,
+      DinfNamedTensor** outputs,
       size_t* output_count,
       std::string* error) override {
     std::vector<int32_t> input_indices;
@@ -838,7 +838,7 @@ class LiteRtSession final : public DinfRuntimeSession {
       return 1;
     }
     const int32_t count = api_.OutputTensorCount(interpreter_);
-    std::vector<DartInferenceNamedTensor> produced;
+    std::vector<DinfNamedTensor> produced;
     for (int32_t i = 0; i < count; ++i) {
       const TfLiteTensor* tensor = api_.OutputTensor(interpreter_, i);
       if (tensor == nullptr) {
@@ -868,10 +868,10 @@ class LiteRtSession final : public DinfRuntimeSession {
           data.size()));
     }
     *output_count = produced.size();
-    *outputs = static_cast<DartInferenceNamedTensor*>(
-        std::malloc(sizeof(DartInferenceNamedTensor) * produced.size()));
+    *outputs = static_cast<DinfNamedTensor*>(
+        std::malloc(sizeof(DinfNamedTensor) * produced.size()));
     if (!produced.empty()) {
-      std::memcpy(*outputs, produced.data(), sizeof(DartInferenceNamedTensor) * produced.size());
+      std::memcpy(*outputs, produced.data(), sizeof(DinfNamedTensor) * produced.size());
     }
     return 0;
   }
