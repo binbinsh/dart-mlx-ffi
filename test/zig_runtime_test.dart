@@ -208,6 +208,45 @@ void main() {
       }
     });
 
+    test('rejects tensor byte length mismatches at the Zig boundary', () {
+      const bundle = ModelBundle(
+        spec: ModelSpec(
+          id: 'zig_echo_invalid_tensor',
+          family: 'Zig echo invalid tensor',
+          modalities: [ModelModality.embedding],
+        ),
+        rootPath: '',
+        artifact: RuntimeArtifact(
+          engine: RuntimeEngine.onnx,
+          path: 'zig://echo',
+        ),
+      );
+      final runtime = NativeModelRuntime(RuntimeEngine.onnx);
+      final session = runtime.load(
+        bundle,
+        const RuntimeOptions(backendOptions: {'zigRuntimeMode': 'echo'}),
+      );
+      try {
+        final badTensor = RuntimeTensor(
+          dtype: RuntimeTensorDataType.float32,
+          shape: const [2],
+          bytes: Uint8List(4),
+        );
+        expect(
+          () => session.run(ModelInputs({'x': badTensor})),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('invalid tensor'),
+            ),
+          ),
+        );
+      } finally {
+        session.close();
+      }
+    });
+
     test('reuses native input descriptors across repeated runs', () {
       const spec = ModelSpec(
         id: 'zig_echo_repeated_input',

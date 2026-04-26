@@ -269,7 +269,12 @@ fn validTensor(tensor: NativeTensor) bool {
     if (tensor.byte_length > 0 and tensor.data == null) {
         return false;
     }
-    return dtypeSize(tensor.dtype) != 0;
+    const expected = tensorByteLength(
+        tensor.dtype,
+        @ptrCast(tensor.shape),
+        tensor.rank,
+    ) catch return false;
+    return @as(usize, @intCast(tensor.byte_length)) == expected;
 }
 
 fn copyTensor(input: NamedTensor) ?NamedTensor {
@@ -567,6 +572,11 @@ export fn dart_inference_runtime_run(
     const out_items: [*]NamedTensor = @ptrCast(@alignCast(raw));
     var produced: usize = 0;
     while (produced < count) : (produced += 1) {
+        if (!validTensor(inputs[produced].tensor)) {
+            dart_inference_runtime_free_tensors(@ptrCast(out_items), @intCast(produced));
+            setError(error_out, "Zig runtime received an invalid tensor.");
+            return 1;
+        }
         const copied = copyTensor(inputs[produced]) orelse {
             dart_inference_runtime_free_tensors(@ptrCast(out_items), @intCast(produced));
             setError(error_out, "failed to copy output tensor");
@@ -916,6 +926,23 @@ test "runtime tensor buffer allocation rejects invalid shapes in Zig" {
     try std.testing.expectEqual(@as(isize, 0), byte_length);
     try std.testing.expect(error_value != null);
     try std.testing.expect(std.mem.indexOf(u8, std.mem.span(error_value), "invalid shape") != null);
+}
+
+test "runtime tensor validation rejects dtype shape byte mismatches" {
+    var shape = [_]i64{2};
+    const data = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    const invalid = NativeTensor{
+        .dtype = @intFromEnum(Dtype.float32),
+        .rank = @intCast(shape.len),
+        .shape = shape[0..].ptr,
+        .byte_length = 4,
+        .data = @ptrCast(@constCast(data[0..].ptr)),
+    };
+    try std.testing.expect(!validTensor(invalid));
+
+    var valid = invalid;
+    valid.byte_length = 8;
+    try std.testing.expect(validTensor(valid));
 }
 
 test "MLX output batch moves into runtime ABI tensors" {
