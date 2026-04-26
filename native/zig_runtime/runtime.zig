@@ -351,10 +351,6 @@ export fn dinf_fallback_json(request_json: [*c]const u8) [*c]u8 {
     return copyString(text);
 }
 
-export fn dinf_artifact_remote(artifact_path: [*c]const u8) i32 {
-    return if (policy.artifactRemote(optionalCString(artifact_path))) 1 else 0;
-}
-
 export fn dinf_artifact_path(
     root_path: [*c]const u8,
     artifact_path: [*c]const u8,
@@ -377,6 +373,10 @@ export fn dinf_open(
 ) ?*anyopaque {
     if (model_path == null) {
         setError(error_out, "model_path is null");
+        return null;
+    }
+    if (policy.artifactRemote(optionalCString(model_path))) {
+        setError(error_out, "Runtime artifact must be resolved to a local path before native execution.");
         return null;
     }
     const session = if (isEchoPath(model_path) or runtimeModeIsEcho(options_json))
@@ -834,6 +834,20 @@ test "runtime mode is parsed from Zig-owned options JSON" {
     try std.testing.expect(!runtimeModeIsEcho("{\"message\":\"\\\"zigRuntimeMode\\\":\\\"echo\\\"\"}"));
     try std.testing.expect(!runtimeModeIsEcho("{\"zigRuntimeMode\":true}"));
     try std.testing.expect(!runtimeModeIsEcho("{"));
+}
+
+test "runtime open rejects unresolved remote artifacts in Zig" {
+    var error_value: [*c]u8 = null;
+    const handle = dinf_open(
+        @intFromEnum(Engine.onnx),
+        "hf://acme/demo/model.onnx",
+        "{}",
+        &error_value,
+    );
+    defer dinf_free_str(error_value);
+    try std.testing.expect(handle == null);
+    try std.testing.expect(error_value != null);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(error_value), "local path") != null);
 }
 
 test "Linux proc status memory fields parse as bytes" {

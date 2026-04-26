@@ -3,14 +3,15 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.65`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.66`.
+- Moved unresolved remote artifact rejection fully into `dinf_open`, removing the Dart preflight call and obsolete `dinf_artifact_remote` binding.
 - Moved Hugging Face auth-token environment lookup into Zig through `dinf_hf_token`.
 - Moved runtime engine/artifact selection into Zig through `dinf_resolve_json`, leaving Dart to pass a compact request and unwrap the selected artifact.
 - Moved registered-runtime fallback selection into Zig through `dinf_fallback_json`, leaving Dart to pass registered engine ids and unwrap the selected fallback artifact.
 - Moved Hugging Face default cache root platform/env policy into Zig through `dinf_hf_cache_root`.
 - Split Zig runtime tensor ABI, validation, and native buffer ownership helpers into `abi.zig` to keep `runtime.zig` below the source-size limit before further migration.
 - Moved Hugging Face artifact reference parsing, directory artifact policy, and cache path construction into Zig through `dinf_hf_*`.
-- Moved unresolved remote artifact detection into Zig through `dinf_artifact_remote`.
+- Moved unresolved remote artifact detection into Zig resolver policy.
 - Moved the default ONNX Runtime CUDA/TensorRT preload library list out of Dart so `dinf_ort_libs_json` owns the default names.
 - Moved model bundle artifact path resolution into Zig through `dinf_artifact_path`.
 - Moved runtime artifact platform compatibility, MLX preview gating, registered MLX artifact detection, engine order, and default accelerator policy into Zig resolver policy.

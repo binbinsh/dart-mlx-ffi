@@ -88,11 +88,6 @@ external ffi.Pointer<ffi.Char> resolveJson(ffi.Pointer<ffi.Char> requestJson);
 )
 external ffi.Pointer<ffi.Char> fallbackJson(ffi.Pointer<ffi.Char> requestJson);
 
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'dinf_artifact_remote',
-)
-external int artifactRemote(ffi.Pointer<ffi.Char> artifactPath);
-
 @ffi.Native<
   ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
 >(symbol: 'dinf_artifact_path')

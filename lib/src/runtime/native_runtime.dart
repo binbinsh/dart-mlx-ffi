@@ -277,14 +277,6 @@ final class NativeModelRuntime implements ModelRuntime {
         'runtime ${engine.name}.',
       );
     }
-    if (_artifactRemote(bundle.artifact.path)) {
-      throw StateError(
-        'Runtime artifact ${bundle.artifact.path} must be resolved to a local '
-        'path before native execution. Use RuntimeRegistry.loadAsync(), '
-        'HuggingFaceArtifactCache.resolve(), benchmark/runtime/resolve_hf_artifacts.py, '
-        'or provide a local RuntimeArtifact path.',
-      );
-    }
     final error = calloc<ffi.Pointer<ffi.Char>>();
     final path = bundle.artifactPath.toNativeUtf8().cast<ffi.Char>();
     final optionsJson = jsonEncode({
@@ -634,15 +626,6 @@ int _engineId(RuntimeEngine engine) => switch (engine) {
   RuntimeEngine.onnx => 2,
   RuntimeEngine.litert => 3,
 };
-
-bool _artifactRemote(String path) {
-  final value = path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  try {
-    return native.artifactRemote(value) != 0;
-  } finally {
-    calloc.free(value);
-  }
-}
 
 RuntimeCapabilities _caps(RuntimeEngine engine) {
   final ptr = native.capsJson(_engineId(engine));
