@@ -642,20 +642,52 @@ double millis_since(
   return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
-uint64_t peak_memory_value(const json& memory) {
-  if (memory.contains("peak_memory_bytes")) {
-    return memory.value("peak_memory_bytes", 0ULL);
+uint64_t peak_memory_value(const DinfMemoryInfo& memory) {
+  if (memory.peak_memory_bytes != 0) {
+    return memory.peak_memory_bytes;
   }
-  if (memory.contains("vm_hwm")) {
-    return memory.value("vm_hwm", 0ULL);
+  if (memory.vm_hwm != 0) {
+    return memory.vm_hwm;
   }
-  if (memory.contains("resident_size")) {
-    return memory.value("resident_size", 0ULL);
+  if (memory.resident_size != 0) {
+    return memory.resident_size;
   }
   return 0;
 }
 
-void update_peak_memory(uint64_t* peak, const json& memory) {
+DinfMemoryInfo memory_info() {
+  DinfMemoryInfo info{};
+  dinf_cpp_mem(&info);
+  return info;
+}
+
+json memory_json(const DinfMemoryInfo& memory) {
+  json out = {{"peak_memory_bytes", memory.peak_memory_bytes}};
+#if defined(__APPLE__)
+  out["phys_footprint"] = memory.phys_footprint;
+  out["resident_size"] = memory.resident_size;
+  out["virtual_size"] = memory.virtual_size;
+#elif defined(_WIN32)
+  out["peak_working_set"] = memory.peak_working_set;
+  out["working_set"] = memory.working_set;
+#elif defined(__ANDROID__)
+  out["android_peak_pss"] = memory.android_peak_pss;
+  out["android_pss"] = memory.android_pss;
+  out["android_rss"] = memory.android_rss;
+  out["android_native_heap_pss"] = memory.android_native_heap_pss;
+  out["android_java_heap_pss"] = memory.android_java_heap_pss;
+  out["android_native_heap_private_dirty"] =
+      memory.android_native_heap_private_dirty;
+  out["android_java_heap_private_dirty"] =
+      memory.android_java_heap_private_dirty;
+#elif defined(__linux__)
+  out["vm_hwm"] = memory.vm_hwm;
+  out["vm_rss"] = memory.vm_rss;
+#endif
+  return out;
+}
+
+void update_peak_memory(uint64_t* peak, const DinfMemoryInfo& memory) {
   *peak = std::max(*peak, peak_memory_value(memory));
 }
 
@@ -701,7 +733,7 @@ int main(int argc, char** argv) {
         std::filesystem::path(input_path).parent_path());
     DinfNamedTensor* outputs = nullptr;
     intptr_t output_count = 0;
-    const json memory_before = parse_json_string(dinf_cpp_mem_json());
+    const DinfMemoryInfo memory_before = memory_info();
     uint64_t peak_memory = peak_memory_value(memory_before);
 
     for (int i = 0; i < warmup; ++i) {
@@ -721,9 +753,7 @@ int main(int argc, char** argv) {
         dinf_cpp_free_str(error);
         throw std::runtime_error(message);
       }
-      update_peak_memory(
-          &peak_memory,
-          parse_json_string(dinf_cpp_mem_json()));
+      update_peak_memory(&peak_memory, memory_info());
     }
 
     double timed_ms = 0.0;
@@ -747,15 +777,15 @@ int main(int argc, char** argv) {
       }
       const auto end = std::chrono::steady_clock::now();
       timed_ms += millis_since(start, end);
-      update_peak_memory(
-          &peak_memory,
-          parse_json_string(dinf_cpp_mem_json()));
+      update_peak_memory(&peak_memory, memory_info());
     }
 
-    const json memory_after = parse_json_string(dinf_cpp_mem_json());
+    const DinfMemoryInfo memory_after = memory_info();
     update_peak_memory(&peak_memory, memory_after);
     const json diagnostics = parse_json_string(dinf_cpp_diag_json(session));
     const double per_iter_ms = iters > 0 ? timed_ms / iters : 0.0;
+    const json memory_before_json = memory_json(memory_before);
+    const json memory_after_json = memory_json(memory_after);
 
     json report = {
         {"model_id", model_id},
@@ -769,12 +799,12 @@ int main(int argc, char** argv) {
             {
                 {"runtime", "dart_inference_native_cli"},
                 {"runtime_diagnostics", diagnostics},
-                {"memory_before", memory_before},
-                {"memory_after", memory_after},
+                {"memory_before", memory_before_json},
+                {"memory_after", memory_after_json},
                 {"raw_peak_memory_field",
-                 memory_after.contains("android_peak_pss")
+                 memory_after_json.contains("android_peak_pss")
                      ? "android_peak_pss"
-                     : (memory_after.contains("vm_hwm")
+                     : (memory_after_json.contains("vm_hwm")
                             ? "VmHWM"
                             : "peak_memory_bytes")},
             },

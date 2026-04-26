@@ -60,7 +60,6 @@ if(APPLE)
     "_dinf_cpp_free_str\n"
     "_dinf_cpp_free_tensors\n"
     "_dinf_cpp_mem\n"
-    "_dinf_cpp_mem_json\n"
     "_dinf_cpp_run\n")
   target_link_options(
     ${PROJECT_NAME} PRIVATE

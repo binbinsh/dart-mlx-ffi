@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -17,15 +16,6 @@
 #endif
 
 namespace {
-
-std::string json_pair(const char* key, uint64_t value, bool comma = true) {
-  std::ostringstream out;
-  out << "\"" << key << "\":" << value;
-  if (comma) {
-    out << ",";
-  }
-  return out.str();
-}
 
 #if defined(__linux__)
 uint64_t proc_status_kb(const char* key) {
@@ -202,43 +192,4 @@ extern "C" void dinf_cpp_mem(DinfMemoryInfo* out) {
   out->vm_hwm = peak;
   out->vm_rss = rss;
 #endif
-}
-
-extern "C" char* dinf_cpp_mem_json() {
-  DinfMemoryInfo info{};
-  dinf_cpp_mem(&info);
-  std::ostringstream out;
-  out << "{";
-#if defined(__APPLE__)
-  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
-  out << json_pair("phys_footprint", info.phys_footprint);
-  out << json_pair("resident_size", info.resident_size);
-  out << json_pair("virtual_size", info.virtual_size, false);
-#elif defined(_WIN32)
-  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
-  out << json_pair("peak_working_set", info.peak_working_set);
-  out << json_pair("working_set", info.working_set, false);
-#elif defined(__ANDROID__)
-  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
-  out << json_pair("android_peak_pss", info.android_peak_pss);
-  out << json_pair("android_pss", info.android_pss);
-  out << json_pair("android_rss", info.android_rss);
-  out << json_pair("android_native_heap_pss", info.android_native_heap_pss);
-  out << json_pair("android_java_heap_pss", info.android_java_heap_pss);
-  out << json_pair(
-      "android_native_heap_private_dirty",
-      info.android_native_heap_private_dirty);
-  out << json_pair(
-      "android_java_heap_private_dirty",
-      info.android_java_heap_private_dirty,
-      false);
-#elif defined(__linux__)
-  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
-  out << json_pair("vm_hwm", info.vm_hwm);
-  out << json_pair("vm_rss", info.vm_rss, false);
-#else
-  out << json_pair("peak_memory_bytes", 0, false);
-#endif
-  out << "}";
-  return dinf_copy_string(out.str());
 }
