@@ -505,6 +505,11 @@ void main() {
       expect(cache.cacheRoot, isNotEmpty);
     });
 
+    test('uses Zig-owned default auth token lookup', () {
+      final cache = HuggingFaceArtifactCache();
+      expect(cache.token == null || cache.token!.isNotEmpty, isTrue);
+    });
+
     test('downloads single-file artifacts and reuses cache', () async {
       final server = await _startHfServer({
         '/acme/demo/resolve/main/onnx/model.onnx': 'onnx-bytes',

@@ -724,6 +724,14 @@ export fn dinf_hf_cache_root() [*c]u8 {
     return copyString(value);
 }
 
+export fn dinf_hf_token() [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const value = hf.authToken(allocator) catch return copyString("");
+    const token = value orelse return copyString("");
+    defer allocator.free(token);
+    return copyString(token);
+}
+
 export fn dinf_hf_cache_path(
     cache_root: [*c]const u8,
     repo: [*c]const u8,

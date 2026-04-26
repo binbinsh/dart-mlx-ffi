@@ -149,6 +149,19 @@ String _cacheRoot() {
   }
 }
 
+String? _authToken() {
+  final result = native.hfToken();
+  if (result == ffi.nullptr) {
+    return null;
+  }
+  try {
+    final value = result.cast<Utf8>().toDartString();
+    return value.isEmpty ? null : value;
+  } finally {
+    native.freeStr(result);
+  }
+}
+
 ffi.Pointer<ffi.Char> _nativeText(String value) {
   return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
 }
@@ -167,10 +180,7 @@ final class HuggingFaceArtifactCache implements RuntimeArtifactResolver {
     this.timeout = const Duration(seconds: 30),
   }) : cacheRoot = cacheRoot ?? _cacheRoot(),
        endpoint = Uri.parse(endpoint),
-       token =
-           token ??
-           Platform.environment['HF_TOKEN'] ??
-           Platform.environment['HUGGINGFACE_HUB_TOKEN'];
+       token = token ?? _authToken();
 
   final String cacheRoot;
   final Uri endpoint;

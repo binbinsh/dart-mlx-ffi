@@ -30,6 +30,13 @@ pub fn defaultCacheRoot(allocator: std.mem.Allocator) ![]u8 {
         return error.OutOfMemory;
 }
 
+pub fn authToken(allocator: std.mem.Allocator) !?[]u8 {
+    if (try getenvOwned(allocator, "HF_TOKEN")) |value| {
+        return value;
+    }
+    return getenvOwned(allocator, "HUGGINGFACE_HUB_TOKEN");
+}
+
 pub fn refJson(
     allocator: std.mem.Allocator,
     source_uri: ?[]const u8,
@@ -283,6 +290,14 @@ test "HF default cache root is Zig-owned" {
     const value = try defaultCacheRoot(std.testing.allocator);
     defer std.testing.allocator.free(value);
     try std.testing.expect(value.len > 0);
+}
+
+test "HF auth token lookup is Zig-owned" {
+    const value = try authToken(std.testing.allocator);
+    if (value) |token| {
+        defer std.testing.allocator.free(token);
+        try std.testing.expect(token.len > 0);
+    }
 }
 
 test "HF ref JSON prefers metadata" {

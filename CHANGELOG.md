@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.64`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.65`.
+- Moved Hugging Face auth-token environment lookup into Zig through `dinf_hf_token`.
 - Moved runtime engine/artifact selection into Zig through `dinf_resolve_json`, leaving Dart to pass a compact request and unwrap the selected artifact.
 - Moved registered-runtime fallback selection into Zig through `dinf_fallback_json`, leaving Dart to pass registered engine ids and unwrap the selected fallback artifact.
 - Moved Hugging Face default cache root platform/env policy into Zig through `dinf_hf_cache_root`.
