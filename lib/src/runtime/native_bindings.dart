@@ -78,6 +78,16 @@ external int platformId();
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(symbol: 'dinf_caps_json')
 external ffi.Pointer<ffi.Char> capsJson(int engine);
 
+@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(
+  symbol: 'dinf_engine_accels_json',
+)
+external ffi.Pointer<ffi.Char> engineAccelsJson(int engine);
+
+@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Int32)>(
+  symbol: 'dinf_engine_order_json',
+)
+external ffi.Pointer<ffi.Char> engineOrderJson(int platform);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
 external ffi.Pointer<ffi.Char> memJson();
 

@@ -395,6 +395,19 @@ fn acceleratorsJson(engine: i32) []const u8 {
     };
 }
 
+fn engineOrderJson(platform: i32) []const u8 {
+    return switch (platform) {
+        @intFromEnum(Platform.ios),
+        @intFromEnum(Platform.macos),
+        => "[\"coreml\",\"mlx\",\"onnx\"]",
+        @intFromEnum(Platform.windows),
+        @intFromEnum(Platform.linux),
+        => "[\"onnx\"]",
+        @intFromEnum(Platform.android) => "[\"litert\",\"onnx\"]",
+        else => "[\"coreml\",\"onnx\",\"litert\"]",
+    };
+}
+
 fn runtimeModeIsEcho(options_json: [*c]const u8) bool {
     if (options_json == null) {
         return false;
@@ -549,6 +562,14 @@ export fn dinf_caps_json(engine: i32) [*c]u8 {
         0,
     ) catch return copyString("{}");
     return @ptrCast(text.ptr);
+}
+
+export fn dinf_engine_accels_json(engine: i32) [*c]u8 {
+    return copyString(acceleratorsJson(engine));
+}
+
+export fn dinf_engine_order_json(platform: i32) [*c]u8 {
+    return copyString(engineOrderJson(platform));
 }
 
 export fn dinf_open(
@@ -963,6 +984,20 @@ test "runtime capabilities are reported from Zig" {
     try std.testing.expect(std.mem.indexOf(u8, text, "\"engine\":\"coreml\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"platform\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"accelerators\":[\"ane\",\"gpu\",\"cpu\"]") != null);
+}
+
+test "runtime resolver policy is reported from Zig" {
+    const macos_order = dinf_engine_order_json(@intFromEnum(Platform.macos));
+    defer dinf_free_str(macos_order);
+    try std.testing.expectEqualStrings("[\"coreml\",\"mlx\",\"onnx\"]", std.mem.span(macos_order));
+
+    const linux_order = dinf_engine_order_json(@intFromEnum(Platform.linux));
+    defer dinf_free_str(linux_order);
+    try std.testing.expectEqualStrings("[\"onnx\"]", std.mem.span(linux_order));
+
+    const litert_accels = dinf_engine_accels_json(@intFromEnum(Engine.litert));
+    defer dinf_free_str(litert_accels);
+    try std.testing.expectEqualStrings("[\"gpu\",\"npu\",\"cpu\"]", std.mem.span(litert_accels));
 }
 
 test "runtime mode is parsed from Zig-owned options JSON" {

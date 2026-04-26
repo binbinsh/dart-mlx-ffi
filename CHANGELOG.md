@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.52`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.53`.
+- Moved runtime resolver engine order and default accelerator policy into Zig through `dinf_engine_order_json` and `dinf_engine_accels_json`.
 - Moved runtime platform/capability discovery into Zig through `dinf_platform_id` and `dinf_caps_json`, so Dart no longer owns native backend accelerator defaults.
 - Moved Core ML bundle layout discovery into Zig through `dinf_coreml_layout_json`, so Dart no longer owns CoreML-LLM chunk sorting, monolithic bundle detection, pipeline JSON detection, or sidecar scanning.
 - Moved ONNX Runtime preload library discovery into Zig through `dinf_ort_libs_json`, so Dart no longer owns runtime env-file parsing, CUDA/TensorRT directory inference, or preload library filesystem scanning for session setup.

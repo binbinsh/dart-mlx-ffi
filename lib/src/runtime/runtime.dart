@@ -1,7 +1,11 @@
 /// Model-level runtime abstractions and resolution.
 library;
 
+import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:typed_data';
+
+import 'package:ffi/ffi.dart';
 
 import '../models/shared/model_spec.dart';
 import '../models/shared/runtime_metadata.dart';
@@ -505,29 +509,13 @@ final class RuntimeResolver {
     RuntimePlatform platform,
     RuntimeOptions options,
   ) {
-    return switch (platform) {
-      RuntimePlatform.ios => const [
-        RuntimeEngine.coreml,
-        RuntimeEngine.mlx,
-        RuntimeEngine.onnx,
-      ],
-      RuntimePlatform.macos => const [
-        RuntimeEngine.coreml,
-        RuntimeEngine.mlx,
-        RuntimeEngine.onnx,
-      ],
-      RuntimePlatform.windows => const [RuntimeEngine.onnx],
-      RuntimePlatform.linux => const [RuntimeEngine.onnx],
-      RuntimePlatform.android => const [
-        RuntimeEngine.litert,
-        RuntimeEngine.onnx,
-      ],
-      RuntimePlatform.unknown => const [
-        RuntimeEngine.coreml,
-        RuntimeEngine.onnx,
-        RuntimeEngine.litert,
-      ],
-    };
+    final resolved = _enginesJson(
+      native.engineOrderJson(_platformId(platform)),
+    );
+    if (resolved.isNotEmpty) {
+      return resolved;
+    }
+    return const [RuntimeEngine.onnx];
   }
 
   bool _isRegisteredMlxArtifact(RuntimeArtifact artifact) {
@@ -544,19 +532,76 @@ final class RuntimeResolver {
     RuntimeOptions options,
   ) {
     if (options.prefer.isNotEmpty) return options.prefer;
-    return switch (engine) {
-      RuntimeEngine.mlx => const [Accelerator.gpu, Accelerator.cpu],
-      RuntimeEngine.coreml => const [
-        Accelerator.ane,
-        Accelerator.gpu,
-        Accelerator.cpu,
-      ],
-      RuntimeEngine.onnx => const [Accelerator.gpu, Accelerator.cpu],
-      RuntimeEngine.litert => const [
-        Accelerator.gpu,
-        Accelerator.npu,
-        Accelerator.cpu,
-      ],
-    };
+    final resolved = _acceleratorsJson(
+      native.engineAccelsJson(_engineId(engine)),
+    );
+    if (resolved.isNotEmpty) {
+      return resolved;
+    }
+    return const [Accelerator.cpu];
+  }
+}
+
+int _platformId(RuntimePlatform platform) => switch (platform) {
+  RuntimePlatform.ios => 0,
+  RuntimePlatform.macos => 1,
+  RuntimePlatform.windows => 2,
+  RuntimePlatform.linux => 3,
+  RuntimePlatform.android => 4,
+  RuntimePlatform.unknown => 5,
+};
+
+int _engineId(RuntimeEngine engine) => switch (engine) {
+  RuntimeEngine.mlx => 0,
+  RuntimeEngine.coreml => 1,
+  RuntimeEngine.onnx => 2,
+  RuntimeEngine.litert => 3,
+};
+
+List<RuntimeEngine> _enginesJson(ffi.Pointer<ffi.Char> ptr) {
+  if (ptr == ffi.nullptr) {
+    return const [];
+  }
+  try {
+    final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
+    if (decoded is! List) {
+      return const [];
+    }
+    return [
+      for (final item in decoded)
+        switch ('$item') {
+          'mlx' => RuntimeEngine.mlx,
+          'coreml' => RuntimeEngine.coreml,
+          'onnx' => RuntimeEngine.onnx,
+          'litert' => RuntimeEngine.litert,
+          _ => null,
+        },
+    ].whereType<RuntimeEngine>().toList(growable: false);
+  } finally {
+    native.freeStr(ptr);
+  }
+}
+
+List<Accelerator> _acceleratorsJson(ffi.Pointer<ffi.Char> ptr) {
+  if (ptr == ffi.nullptr) {
+    return const [];
+  }
+  try {
+    final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
+    if (decoded is! List) {
+      return const [];
+    }
+    return [
+      for (final item in decoded)
+        switch ('$item') {
+          'ane' => Accelerator.ane,
+          'gpu' => Accelerator.gpu,
+          'npu' => Accelerator.npu,
+          'cpu' => Accelerator.cpu,
+          _ => null,
+        },
+    ].whereType<Accelerator>().toList(growable: false);
+  } finally {
+    native.freeStr(ptr);
   }
 }
