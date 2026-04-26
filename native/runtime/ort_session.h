@@ -63,7 +63,7 @@ class Session final : public DinfRuntimeSession {
 
 std::unique_ptr<Session> CreateSession(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* error);
 
 std::vector<int64_t> TensorShape(const DinfTensor& tensor);

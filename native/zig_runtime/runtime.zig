@@ -71,7 +71,6 @@ const Session = struct {
     engine: i32,
     mode: SessionMode,
     model_path: [*c]u8,
-    options_json: [*c]u8,
     adapter_handle: ?*anyopaque,
     mlx_handle: ?*mlx_backend.Session,
 };
@@ -80,12 +79,14 @@ const cpp = if (builtin.is_test) struct {
     pub fn dinf_cpp_open(
         engine: i32,
         model_path: [*c]const u8,
-        options_json: [*c]const u8,
+        options: [*c]const open_opts.Entry,
+        option_count: isize,
         error_out: ?*[*c]u8,
     ) ?*anyopaque {
         _ = engine;
         _ = model_path;
-        _ = options_json;
+        _ = options;
+        _ = option_count;
         setError(error_out, "test C++ adapter is unavailable");
         return null;
     }
@@ -124,7 +125,8 @@ const cpp = if (builtin.is_test) struct {
     extern fn dinf_cpp_open(
         engine: i32,
         model_path: [*c]const u8,
-        options_json: [*c]const u8,
+        options: [*c]const open_opts.Entry,
+        option_count: isize,
         error_out: ?*[*c]u8,
     ) ?*anyopaque;
     extern fn dinf_cpp_close(session: ?*anyopaque) void;
@@ -246,7 +248,6 @@ fn isEchoPath(model_path: [*c]const u8) bool {
 fn createEchoSession(
     engine: i32,
     model_path: [*c]const u8,
-    options_json: [*c]const u8,
 ) ?*Session {
     const raw = std.c.malloc(@sizeOf(Session)) orelse return null;
     const session: *Session = @ptrCast(@alignCast(raw));
@@ -254,13 +255,11 @@ fn createEchoSession(
         .engine = engine,
         .mode = .echo,
         .model_path = copyCString(model_path),
-        .options_json = copyCString(options_json),
         .adapter_handle = null,
         .mlx_handle = null,
     };
-    if (session.model_path == null or session.options_json == null) {
+    if (session.model_path == null) {
         freeString(session.model_path);
-        freeString(session.options_json);
         std.c.free(session);
         return null;
     }
@@ -270,13 +269,14 @@ fn createEchoSession(
 fn createAdapterSession(
     engine: i32,
     model_path: [*c]const u8,
-    options_json: [*c]const u8,
+    options: []const open_opts.Entry,
     error_out: ?*[*c]u8,
 ) ?*Session {
     const adapter_handle = cpp.dinf_cpp_open(
         engine,
         model_path,
-        options_json,
+        if (options.len == 0) null else options.ptr,
+        @intCast(options.len),
         error_out,
     ) orelse return null;
 
@@ -290,16 +290,14 @@ fn createAdapterSession(
         .engine = engine,
         .mode = .adapter,
         .model_path = copyCString(model_path),
-        .options_json = copyCString(options_json),
         .adapter_handle = adapter_handle,
         .mlx_handle = null,
     };
-    if (session.model_path == null or session.options_json == null) {
+    if (session.model_path == null) {
         freeString(session.model_path);
-        freeString(session.options_json);
         std.c.free(session);
         cpp.dinf_cpp_close(adapter_handle);
-        setError(error_out, "failed to allocate Zig adapter session strings");
+        setError(error_out, "failed to allocate Zig adapter session path");
         return null;
     }
     return session;
@@ -308,7 +306,6 @@ fn createAdapterSession(
 fn createMlxSession(
     engine: i32,
     model_path: [*c]const u8,
-    options_json: [*c]const u8,
     error_out: ?*[*c]u8,
 ) ?*Session {
     const path_value = model_path[0..std.mem.len(model_path)];
@@ -329,13 +326,11 @@ fn createMlxSession(
         .engine = engine,
         .mode = .mlx,
         .model_path = copyCString(model_path),
-        .options_json = copyCString(options_json),
         .adapter_handle = null,
         .mlx_handle = mlx_handle,
     };
-    if (session.model_path == null or session.options_json == null) {
+    if (session.model_path == null) {
         freeString(session.model_path);
-        freeString(session.options_json);
         mlx_handle.deinit();
         std.c.free(session);
         return null;
@@ -489,7 +484,7 @@ fn setResolveError(
 fn openSession(
     engine: i32,
     model_path: [*c]const u8,
-    options_json: [*c]const u8,
+    options: []const open_opts.Entry,
     force_echo: bool,
     error_out: ?*[*c]u8,
 ) ?*anyopaque {
@@ -502,11 +497,11 @@ fn openSession(
         return null;
     }
     const session = if (isEchoPath(model_path) or force_echo)
-        createEchoSession(engine, model_path, options_json)
+        createEchoSession(engine, model_path)
     else if (engine == @intFromEnum(Engine.mlx))
-        createMlxSession(engine, model_path, options_json, error_out)
+        createMlxSession(engine, model_path, error_out)
     else
-        createAdapterSession(engine, model_path, options_json, error_out);
+        createAdapterSession(engine, model_path, options, error_out);
     const resolved = session orelse {
         if (error_out) |out| {
             if (out.* == null) {
@@ -534,7 +529,7 @@ export fn dinf_open(
     const metadata = entrySlice(metadata_entries, metadata_count);
     const backend = entrySlice(backend_entries, backend_count);
     const force_echo = open_opts.textEquals(metadata, backend, "zigRuntimeMode", "echo");
-    const options = open_opts.build(
+    const options = open_opts.merge(
         allocator,
         engine,
         prefer_mask,
@@ -547,7 +542,7 @@ export fn dinf_open(
         return null;
     };
     defer allocator.free(options);
-    return openSession(engine, model_path, options.ptr, force_echo, error_out);
+    return openSession(engine, model_path, options, force_echo, error_out);
 }
 
 export fn dinf_close(handle: ?*anyopaque) void {
@@ -559,7 +554,6 @@ export fn dinf_close(handle: ?*anyopaque) void {
         .mlx => if (session.mlx_handle) |mlx_handle| mlx_handle.deinit(),
     }
     freeString(session.model_path);
-    freeString(session.options_json);
     std.c.free(session);
 }
 
@@ -1058,7 +1052,7 @@ test "runtime open rejects unresolved remote artifacts in Zig" {
     const handle = openSession(
         @intFromEnum(Engine.onnx),
         "hf://acme/demo/model.onnx",
-        "{}",
+        &.{},
         false,
         &error_value,
     );

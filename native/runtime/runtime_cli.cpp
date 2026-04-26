@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <deque>
 #include <cstring>
 #include <cstdint>
 #include <cstdlib>
@@ -43,6 +44,52 @@ struct Args {
       throw std::runtime_error("Missing --" + name);
     }
     return value;
+  }
+};
+
+struct RuntimeOptionEntries {
+  std::vector<DinfOptionEntry> entries;
+  std::deque<std::string> strings;
+
+  const char* own(std::string value) {
+    strings.push_back(std::move(value));
+    return strings.back().c_str();
+  }
+
+  void add_string(const char* path, const std::string& value) {
+    if (value.empty()) {
+      return;
+    }
+    entries.push_back({
+        path,
+        DINF_OPTION_STRING,
+        own(value),
+        0,
+        0,
+        0,
+    });
+  }
+
+  void add_int(const char* path, int64_t value) {
+    entries.push_back({
+        path,
+        DINF_OPTION_INT,
+        nullptr,
+        value,
+        0,
+        0,
+    });
+  }
+
+  void add_bool(const char* path, bool value) {
+    entries.push_back({
+        path,
+        DINF_OPTION_BOOL,
+        nullptr,
+        0,
+        0,
+        value ? 1 : 0,
+    });
   }
 };
 
@@ -605,33 +652,25 @@ json correctness(DinfNamedTensor* outputs, intptr_t output_count) {
   return result;
 }
 
-json runtime_options(const Args& args) {
-  json backend_options = json::object();
-  if (!args.option("provider").empty()) {
-    backend_options["provider"] = args.option("provider");
-  }
-  if (!args.option("delegate").empty()) {
-    backend_options["delegate"] = args.option("delegate");
-  }
-  if (!args.option("coreml-mode").empty()) {
-    backend_options["coremlMode"] = args.option("coreml-mode");
-  }
+RuntimeOptionEntries runtime_options(const Args& args) {
+  RuntimeOptionEntries options;
+  options.add_bool("diagnostics", true);
+  options.add_string("provider", args.option("provider"));
+  options.add_string("delegate", args.option("delegate"));
+  options.add_string("coremlMode", args.option("coreml-mode"));
   if (!args.option("litert-section-index").empty()) {
-    backend_options["litertSectionIndex"] =
-        std::stoi(args.option("litert-section-index"));
+    options.add_int(
+        "litertSectionIndex",
+        std::stoi(args.option("litert-section-index")));
   }
   if (args.has_flag("require-provider")) {
-    backend_options["requireProvider"] = true;
+    options.add_bool("requireProvider", true);
   }
   if (args.has_flag("require-delegate")) {
-    backend_options["requireDelegate"] = true;
+    options.add_bool("requireDelegate", true);
   }
-  json options = {
-      {"diagnostics", true},
-      {"backendOptions", backend_options},
-  };
   if (!args.option("num-threads").empty()) {
-    options["numThreads"] = std::stoi(args.option("num-threads"));
+    options.add_int("numThreads", std::stoi(args.option("num-threads")));
   }
   return options;
 }
@@ -717,10 +756,12 @@ int main(int argc, char** argv) {
     const int iters = std::stoi(args.option("iters", "5"));
 
     char* error = nullptr;
+    auto options = runtime_options(args);
     DinfRuntimeSession* session = dinf_cpp_open(
         engine_id(engine),
         artifact.c_str(),
-        runtime_options(args).dump().c_str(),
+        options.entries.empty() ? nullptr : options.entries.data(),
+        static_cast<intptr_t>(options.entries.size()),
         &error);
     if (session == nullptr) {
       const std::string message = error == nullptr ? "runtime create failed" : error;

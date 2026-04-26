@@ -22,7 +22,7 @@ const null_kind: i32 = 7;
 
 const Error = error{OutOfMemory};
 
-pub fn build(
+pub fn merge(
     allocator: std.mem.Allocator,
     engine: i32,
     prefer_mask: i32,
@@ -30,31 +30,24 @@ pub fn build(
     num_threads: i32,
     metadata: []const Entry,
     backend: []const Entry,
-) Error![:0]u8 {
-    var out: std.ArrayList(u8) = .empty;
+) Error![]Entry {
+    var out: std.ArrayList(Entry) = .empty;
     errdefer out.deinit(allocator);
-    try out.append(allocator, '{');
-    var written = false;
-    try appendFields(allocator, &out, &written, backend, &.{});
-    try appendFields(allocator, &out, &written, metadata, backend);
+    try appendEntries(allocator, &out, backend, &.{});
+    try appendEntries(allocator, &out, metadata, backend);
     if (!hasRoot(backend, "accelerators") and !hasRoot(metadata, "accelerators")) {
-        try beginField(allocator, &out, &written, "accelerators");
         try appendAccelerators(allocator, &out, prefer_mask);
     }
     if (!hasRoot(backend, "diagnostics") and !hasRoot(metadata, "diagnostics")) {
-        try beginField(allocator, &out, &written, "diagnostics");
-        try out.appendSlice(allocator, if (diagnostics) "true" else "false");
+        try out.append(allocator, boolEntry("diagnostics", diagnostics));
     }
     if (num_threads > 0 and !hasRoot(backend, "numThreads") and !hasRoot(metadata, "numThreads")) {
-        try beginField(allocator, &out, &written, "numThreads");
-        try appendInt(allocator, &out, num_threads);
+        try out.append(allocator, intEntry("numThreads", num_threads));
     }
     if (!hasRoot(backend, "engine") and !hasRoot(metadata, "engine")) {
-        try beginField(allocator, &out, &written, "engine");
-        try appendString(allocator, &out, policy.engineName(engine));
+        try out.append(allocator, textEntry("engine", policy.engineName(engine).ptr));
     }
-    try out.append(allocator, '}');
-    return out.toOwnedSliceSentinel(allocator, 0) catch error.OutOfMemory;
+    return out.toOwnedSlice(allocator) catch error.OutOfMemory;
 }
 
 pub fn textEquals(
@@ -75,92 +68,43 @@ pub fn textEquals(
     return false;
 }
 
-fn appendFields(
+fn appendEntries(
     allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    written: *bool,
+    out: *std.ArrayList(Entry),
     entries: []const Entry,
     skip: []const Entry,
 ) Error!void {
-    for (entries, 0..) |entry, index| {
+    for (entries) |entry| {
         const path = entryPath(entry) orelse continue;
-        if (!isRoot(path) or hasRoot(skip, path)) {
+        if (hasRoot(skip, root(path))) {
             continue;
         }
-        try beginField(allocator, out, written, path);
-        try appendEntry(allocator, out, entries, index);
+        try out.append(allocator, entry);
     }
 }
 
-fn appendEntry(
+fn appendAccelerators(
     allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    entries: []const Entry,
-    index: usize,
+    out: *std.ArrayList(Entry),
+    mask: i32,
 ) Error!void {
-    const entry = entries[index];
-    switch (entry.kind) {
-        string_kind => try appendString(allocator, out, entryText(entry)),
-        int_kind => try appendInt64(allocator, out, entry.int_value),
-        bool_kind => try out.appendSlice(allocator, if (entry.bool_value != 0) "true" else "false"),
-        map_kind => try appendMap(allocator, out, entries, entryPath(entry) orelse ""),
-        list_kind => try appendList(allocator, out, entries, entryPath(entry) orelse ""),
-        double_kind => try appendDouble(allocator, out, entry.double_value),
-        null_kind => try out.appendSlice(allocator, "null"),
-        else => try out.appendSlice(allocator, "null"),
+    try out.append(allocator, kindEntry("accelerators", list_kind));
+    var index: usize = 0;
+    if ((mask & policy.accel_ane) != 0) {
+        try out.append(allocator, textEntry("accelerators\x1f0", "ane"));
+        index += 1;
     }
-}
-
-fn appendMap(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    entries: []const Entry,
-    parent: []const u8,
-) Error!void {
-    try out.append(allocator, '{');
-    var written = false;
-    for (entries, 0..) |entry, index| {
-        const path = entryPath(entry) orelse continue;
-        const child = directChild(parent, path) orelse continue;
-        try beginField(allocator, out, &written, child);
-        try appendEntry(allocator, out, entries, index);
+    if ((mask & policy.accel_gpu) != 0) {
+        try out.append(allocator, textEntry(acceleratorPath(index), "gpu"));
+        index += 1;
     }
-    try out.append(allocator, '}');
-}
-
-fn appendList(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    entries: []const Entry,
-    parent: []const u8,
-) Error!void {
-    try out.append(allocator, '[');
-    var written = false;
-    for (entries, 0..) |entry, index| {
-        const path = entryPath(entry) orelse continue;
-        _ = directChild(parent, path) orelse continue;
-        if (written) {
-            try out.append(allocator, ',');
-        } else {
-            written = true;
-        }
-        try appendEntry(allocator, out, entries, index);
+    if ((mask & policy.accel_npu) != 0) {
+        try out.append(allocator, textEntry(acceleratorPath(index), "npu"));
+        index += 1;
     }
-    try out.append(allocator, ']');
-}
-
-fn directChild(parent: []const u8, path: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, path, parent) or path.len <= parent.len) {
-        return null;
+    if ((mask & policy.accel_cpu) != 0) {
+        try out.append(allocator, textEntry(acceleratorPath(index), "cpu"));
     }
-    if (path[parent.len] != sep) {
-        return null;
-    }
-    const rest = path[parent.len + 1 ..];
-    if (rest.len == 0 or std.mem.indexOfScalar(u8, rest, sep) != null) {
-        return null;
-    }
-    return rest;
 }
 
 fn hasRoot(entries: []const Entry, key: []const u8) bool {
@@ -207,85 +151,42 @@ fn entryText(entry: Entry) []const u8 {
     return std.mem.span(entry.text);
 }
 
-fn beginField(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    written: *bool,
-    key: []const u8,
-) Error!void {
-    if (written.*) {
-        try out.append(allocator, ',');
-    } else {
-        written.* = true;
-    }
-    try appendString(allocator, out, key);
-    try out.append(allocator, ':');
+fn acceleratorPath(index: usize) [*c]const u8 {
+    return switch (index) {
+        0 => "accelerators\x1f0",
+        1 => "accelerators\x1f1",
+        2 => "accelerators\x1f2",
+        else => "accelerators\x1f3",
+    };
 }
 
-fn appendAccelerators(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    mask: i32,
-) Error!void {
-    try out.append(allocator, '[');
-    var written = false;
-    if ((mask & policy.accel_ane) != 0) try appendStringItem(allocator, out, &written, "ane");
-    if ((mask & policy.accel_gpu) != 0) try appendStringItem(allocator, out, &written, "gpu");
-    if ((mask & policy.accel_npu) != 0) try appendStringItem(allocator, out, &written, "npu");
-    if ((mask & policy.accel_cpu) != 0) try appendStringItem(allocator, out, &written, "cpu");
-    try out.append(allocator, ']');
-}
-
-fn appendStringItem(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    written: *bool,
-    value: []const u8,
-) Error!void {
-    if (written.*) {
-        try out.append(allocator, ',');
-    } else {
-        written.* = true;
-    }
-    try appendString(allocator, out, value);
-}
-
-fn appendString(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: []const u8) Error!void {
-    try out.append(allocator, '"');
-    for (value) |byte| {
-        switch (byte) {
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            else => try out.append(allocator, byte),
-        }
-    }
-    try out.append(allocator, '"');
-}
-
-fn appendInt(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: i32) Error!void {
-    try appendInt64(allocator, out, value);
-}
-
-fn appendInt64(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: i64) Error!void {
-    const text = std.fmt.allocPrint(allocator, "{d}", .{value}) catch return error.OutOfMemory;
-    defer allocator.free(text);
-    try out.appendSlice(allocator, text);
-}
-
-fn appendDouble(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: f64) Error!void {
-    const text = std.fmt.allocPrint(allocator, "{d}", .{value}) catch return error.OutOfMemory;
-    defer allocator.free(text);
-    try out.appendSlice(allocator, text);
+fn kindEntry(path: [*c]const u8, kind: i32) Entry {
+    return .{ .path = path, .kind = kind, .text = null, .int_value = 0, .double_value = 0, .bool_value = 0 };
 }
 
 fn textEntry(path: [*c]const u8, value: [*c]const u8) Entry {
     return .{ .path = path, .kind = string_kind, .text = value, .int_value = 0, .double_value = 0, .bool_value = 0 };
 }
 
-test "runtime open options are assembled from typed entries" {
+fn intEntry(path: [*c]const u8, value: i32) Entry {
+    return .{ .path = path, .kind = int_kind, .text = null, .int_value = value, .double_value = 0, .bool_value = 0 };
+}
+
+fn boolEntry(path: [*c]const u8, value: bool) Entry {
+    return .{ .path = path, .kind = bool_kind, .text = null, .int_value = 0, .double_value = 0, .bool_value = if (value) 1 else 0 };
+}
+
+fn findPath(entries: []const Entry, path: []const u8) ?Entry {
+    for (entries) |entry| {
+        const entry_path = entryPath(entry) orelse continue;
+        if (std.mem.eql(u8, entry_path, path)) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+test "runtime open options are merged as typed entries" {
     const backend = [_]Entry{
         textEntry("provider", "cuda"),
         textEntry("zigRuntimeMode", "echo"),
@@ -294,7 +195,7 @@ test "runtime open options are assembled from typed entries" {
         textEntry("provider", "cpu"),
         .{ .path = "diagnostics", .kind = bool_kind, .text = null, .int_value = 0, .double_value = 0, .bool_value = 0 },
     };
-    const options = try build(
+    const options = try merge(
         std.testing.allocator,
         @intFromEnum(policy.Engine.onnx),
         policy.accel_gpu | policy.accel_cpu,
@@ -304,13 +205,14 @@ test "runtime open options are assembled from typed entries" {
         &backend,
     );
     defer std.testing.allocator.free(options);
-    const text = options[0..options.len];
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"provider\":\"cuda\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"provider\":\"cpu\"") == null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"diagnostics\":false") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"diagnostics\":true") == null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"accelerators\":[\"gpu\",\"cpu\"]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"numThreads\":4") != null);
+    try std.testing.expectEqual(@as(usize, 8), options.len);
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "provider").?), "cuda"));
+    try std.testing.expectEqual(@as(i32, 0), findPath(options, "diagnostics").?.bool_value);
+    try std.testing.expectEqual(@as(i32, list_kind), findPath(options, "accelerators").?.kind);
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "accelerators\x1f0").?), "gpu"));
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "accelerators\x1f1").?), "cpu"));
+    try std.testing.expectEqual(@as(i64, 4), findPath(options, "numThreads").?.int_value);
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "engine").?), "onnx"));
 }
 
 test "runtime open options preserve nested entries" {
@@ -319,9 +221,11 @@ test "runtime open options preserve nested entries" {
         textEntry("items\x1f0", "a"),
         .{ .path = "items\x1f1", .kind = int_kind, .text = null, .int_value = 7, .double_value = 0, .bool_value = 0 },
     };
-    const options = try build(std.testing.allocator, @intFromEnum(policy.Engine.onnx), 0, false, 0, &.{}, &entries);
+    const options = try merge(std.testing.allocator, @intFromEnum(policy.Engine.onnx), 0, false, 0, &.{}, &entries);
     defer std.testing.allocator.free(options);
-    try std.testing.expect(std.mem.indexOf(u8, options, "\"items\":[\"a\",7]") != null);
+    try std.testing.expectEqual(@as(i32, list_kind), findPath(options, "items").?.kind);
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "items\x1f0").?), "a"));
+    try std.testing.expectEqual(@as(i64, 7), findPath(options, "items\x1f1").?.int_value);
 }
 
 test "runtime open text lookup honors backend overrides" {

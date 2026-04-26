@@ -1,89 +1,85 @@
 #include "options.h"
 
-#include <cctype>
 #include <cstring>
-#include <cstdlib>
 #include <string>
 
 namespace {
 
-const char* find_key(const char* json, const char* key) {
-  if (json == nullptr || key == nullptr) {
+const DinfOptionEntry* find_entry(
+    const DinfOptions* options,
+    const char* key) {
+  if (options == nullptr || options->entries == nullptr ||
+      options->count <= 0 || key == nullptr) {
     return nullptr;
   }
-  const std::string needle = std::string("\"") + key + "\"";
-  const std::string haystack(json);
-  const auto pos = haystack.find(needle);
-  if (pos == std::string::npos) {
-    return nullptr;
+  for (intptr_t i = 0; i < options->count; ++i) {
+    const DinfOptionEntry& entry = options->entries[i];
+    if (entry.path != nullptr && std::strcmp(entry.path, key) == 0) {
+      return &entry;
+    }
   }
-  const auto colon = haystack.find(':', pos + needle.size());
-  if (colon == std::string::npos) {
-    return nullptr;
-  }
-  const char* value = json + colon + 1;
-  while (*value != '\0' && std::isspace(static_cast<unsigned char>(*value))) {
-    ++value;
-  }
-  return value;
+  return nullptr;
 }
 
-std::string unescape_json_string(const char* value) {
-  std::string out;
-  if (value == nullptr || *value != '"') {
-    return out;
-  }
-  for (const char* cursor = value + 1; *cursor != '\0'; ++cursor) {
-    if (*cursor == '"') {
-      break;
-    }
-    if (*cursor == '\\' && cursor[1] != '\0') {
-      ++cursor;
-    }
-    out.push_back(*cursor);
-  }
-  return out;
+std::string entry_text(const DinfOptionEntry& entry) {
+  return entry.text == nullptr ? std::string() : std::string(entry.text);
 }
 
 }  // namespace
 
-int dinf_option_int(const char* json, const char* key, int fallback) {
-  const char* value = find_key(json, key);
-  if (value == nullptr) {
+int dinf_option_int(
+    const DinfOptions* options,
+    const char* key,
+    int fallback) {
+  const DinfOptionEntry* entry = find_entry(options, key);
+  if (entry == nullptr) {
     return fallback;
   }
-  char* end = nullptr;
-  const long parsed = std::strtol(value, &end, 10);
-  return end == value ? fallback : static_cast<int>(parsed);
-}
-
-bool dinf_option_bool(const char* json, const char* key, bool fallback) {
-  const char* value = find_key(json, key);
-  if (value == nullptr) {
-    return fallback;
+  if (entry->kind == DINF_OPTION_INT) {
+    return static_cast<int>(entry->int_value);
   }
-  if (std::strncmp(value, "true", 4) == 0) {
-    return true;
-  }
-  if (std::strncmp(value, "false", 5) == 0) {
-    return false;
+  if (entry->kind == DINF_OPTION_DOUBLE) {
+    return static_cast<int>(entry->double_value);
   }
   return fallback;
 }
 
-std::string dinf_option_string(
-    const char* json,
+bool dinf_option_bool(
+    const DinfOptions* options,
     const char* key,
-    const std::string& fallback) {
-  const char* value = find_key(json, key);
-  const std::string parsed = unescape_json_string(value);
-  return parsed.empty() ? fallback : parsed;
+    bool fallback) {
+  const DinfOptionEntry* entry = find_entry(options, key);
+  if (entry == nullptr || entry->kind != DINF_OPTION_BOOL) {
+    return fallback;
+  }
+  return entry->bool_value != 0;
 }
 
-bool dinf_options_contains_token(const char* json, const char* token) {
-  if (json == nullptr || token == nullptr) {
+std::string dinf_option_string(
+    const DinfOptions* options,
+    const char* key,
+    const std::string& fallback) {
+  const DinfOptionEntry* entry = find_entry(options, key);
+  if (entry == nullptr || entry->kind != DINF_OPTION_STRING) {
+    return fallback;
+  }
+  const std::string value = entry_text(*entry);
+  return value.empty() ? fallback : value;
+}
+
+bool dinf_options_contains_token(
+    const DinfOptions* options,
+    const char* token) {
+  if (options == nullptr || options->entries == nullptr ||
+      options->count <= 0 || token == nullptr) {
     return false;
   }
-  const std::string needle = std::string("\"") + token + "\"";
-  return std::string(json).find(needle) != std::string::npos;
+  for (intptr_t i = 0; i < options->count; ++i) {
+    const DinfOptionEntry& entry = options->entries[i];
+    if (entry.kind == DINF_OPTION_STRING && entry.text != nullptr &&
+        std::strcmp(entry.text, token) == 0) {
+      return true;
+    }
+  }
+  return false;
 }

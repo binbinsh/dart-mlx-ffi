@@ -29,22 +29,22 @@ std::string basename(const std::string& path) {
   return std::filesystem::path(path).filename().string();
 }
 
-MLComputeUnits compute_units_from_options(const char* options_json) {
+MLComputeUnits compute_units_from_options(const DinfOptions* runtime_options) {
   std::string requested =
-      dinf_option_string(options_json, "computeUnits",
-          dinf_option_string(options_json, "coremlComputeUnits"));
+      dinf_option_string(runtime_options, "computeUnits",
+          dinf_option_string(runtime_options, "coremlComputeUnits"));
   std::transform(requested.begin(), requested.end(), requested.begin(),
                  [](unsigned char c) {
                    return static_cast<char>(std::tolower(c));
                  });
   if (requested.empty()) {
-    if (dinf_options_contains_token(options_json, "ane")) {
+    if (dinf_options_contains_token(runtime_options, "ane")) {
       return MLComputeUnitsCPUAndNeuralEngine;
     }
-    if (dinf_options_contains_token(options_json, "gpu")) {
+    if (dinf_options_contains_token(runtime_options, "gpu")) {
       return MLComputeUnitsCPUAndGPU;
     }
-    if (dinf_options_contains_token(options_json, "cpu")) {
+    if (dinf_options_contains_token(runtime_options, "cpu")) {
       return MLComputeUnitsCPUOnly;
     }
     return MLComputeUnitsCPUAndNeuralEngine;
@@ -253,7 +253,7 @@ std::vector<std::string> discover_chunk_paths(
 
 std::vector<std::string> discover_model_paths(
     const std::string& model_path,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* layout,
     std::string* mode) {
   if (is_coreml_model_path(model_path)) {
@@ -266,8 +266,8 @@ std::vector<std::string> discover_model_paths(
   }
 
   const std::string requested_mode =
-      dinf_option_string(options_json, "coremlMode",
-          dinf_option_string(options_json, "mode", "decode"));
+      dinf_option_string(runtime_options, "coremlMode",
+          dinf_option_string(runtime_options, "mode", "decode"));
   const bool wants_prefill = requested_mode == "prefill";
   std::vector<std::string> chunks = wants_prefill
       ? discover_chunk_paths(model_path, "prefill_chunk")
@@ -550,11 +550,11 @@ void audit_compute_plan(
 std::string compute_plan_audit_json(
     const std::vector<std::string>& paths,
     MLModelConfiguration* config,
-    const char* options_json) {
+    const DinfOptions* runtime_options) {
   const bool enabled = dinf_option_bool(
-      options_json,
+      runtime_options,
       "computePlanAudit",
-      dinf_option_bool(options_json, "diagnostics", false));
+      dinf_option_bool(runtime_options, "diagnostics", false));
   if (!enabled) {
     return "{\"enabled\":false}";
   }
@@ -925,11 +925,11 @@ class CoreMlSession final : public DinfRuntimeSession {
 
 DinfRuntimeSession* dinf_create_coreml_session(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* error) {
   @autoreleasepool {
     MLModelConfiguration* config = [[MLModelConfiguration alloc] init];
-    config.computeUnits = compute_units_from_options(options_json);
+    config.computeUnits = compute_units_from_options(runtime_options);
     std::string layout;
     std::string mode;
     std::vector<std::string> paths;
@@ -984,7 +984,7 @@ DinfRuntimeSession* dinf_create_coreml_session(
       }
       requested_outputs = requested_outputs_from_json(pipeline);
     } else {
-      paths = discover_model_paths(model_path, options_json, &layout, &mode);
+      paths = discover_model_paths(model_path, runtime_options, &layout, &mode);
       for (const auto& path : paths) {
         CoreMlStage stage;
         stage.name = basename(path);
@@ -1005,7 +1005,7 @@ DinfRuntimeSession* dinf_create_coreml_session(
       paths.push_back(stage.path);
     }
     const std::string compute_plan_audit =
-        compute_plan_audit_json(paths, config, options_json);
+        compute_plan_audit_json(paths, config, runtime_options);
     std::vector<std::string> input_names;
     std::vector<std::string> output_names;
     for (CoreMlStage& stage : stages) {

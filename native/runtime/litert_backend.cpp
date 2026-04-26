@@ -218,7 +218,7 @@ std::vector<std::string> library_candidates() {
   return candidates;
 }
 
-std::vector<std::string> support_library_candidates(const char* options_json) {
+std::vector<std::string> support_library_candidates(const DinfOptions* runtime_options) {
   std::vector<std::string> candidates;
   if (const char* raw = env("DART_INFERENCE_LITERT_EXTRA_LIBRARIES")) {
     for (const auto& value : parse_library_list(raw)) {
@@ -229,7 +229,7 @@ std::vector<std::string> support_library_candidates(const char* options_json) {
     append_unique(&candidates, value);
   }
   for (const auto key : {"litertExtraLibraries", "extraLibraries"}) {
-    const std::string values = dinf_option_string(options_json, key);
+    const std::string values = dinf_option_string(runtime_options, key);
     for (const auto& value : parse_library_list(values)) {
       append_unique(&candidates, value);
     }
@@ -262,9 +262,9 @@ struct SupportLibraryLoadResult {
   std::vector<std::string> attempted;
 };
 
-SupportLibraryLoadResult preload_support_libraries(const char* options_json) {
+SupportLibraryLoadResult preload_support_libraries(const DinfOptions* runtime_options) {
   SupportLibraryLoadResult result;
-  for (const auto& candidate : support_library_candidates(options_json)) {
+  for (const auto& candidate : support_library_candidates(runtime_options)) {
     append_unique(&result.attempted, candidate);
     auto library = std::make_unique<SharedLibrary>(candidate.c_str());
     if (!library->ok()) {
@@ -330,28 +330,28 @@ std::string lower(std::string value) {
   return value;
 }
 
-std::string requested_delegate(const char* options_json) {
-  return lower(dinf_option_string(options_json, "delegate"));
+std::string requested_delegate(const DinfOptions* runtime_options) {
+  return lower(dinf_option_string(runtime_options, "delegate"));
 }
 
-bool xnnpack_enabled(const char* options_json) {
-  if (!dinf_option_bool(options_json, "enableXNNPack", true) ||
-      !dinf_option_bool(options_json, "enableXnnpack", true) ||
-      !dinf_option_bool(options_json, "useXNNPACK", true) ||
-      !dinf_option_bool(options_json, "useXnnpack", true)) {
+bool xnnpack_enabled(const DinfOptions* runtime_options) {
+  if (!dinf_option_bool(runtime_options, "enableXNNPack", true) ||
+      !dinf_option_bool(runtime_options, "enableXnnpack", true) ||
+      !dinf_option_bool(runtime_options, "useXNNPACK", true) ||
+      !dinf_option_bool(runtime_options, "useXnnpack", true)) {
     return false;
   }
-  return requested_delegate(options_json) != "none";
+  return requested_delegate(runtime_options) != "none";
 }
 
-bool wants_xnnpack(const char* options_json) {
-  if (!xnnpack_enabled(options_json)) {
+bool wants_xnnpack(const DinfOptions* runtime_options) {
+  if (!xnnpack_enabled(runtime_options)) {
     return false;
   }
-  const std::string delegate = requested_delegate(options_json);
+  const std::string delegate = requested_delegate(runtime_options);
   return delegate.empty() || delegate == "xnnpack" || delegate == "gpu" ||
          delegate == "nnapi" || delegate == "npu" || delegate == "qnn" ||
-         dinf_options_contains_token(options_json, "cpu");
+         dinf_options_contains_token(runtime_options, "cpu");
 }
 
 struct DelegateHandle {
@@ -535,7 +535,7 @@ bool write_section_file(
 
 bool prepare_litert_artifact(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     LiteRtArtifact* artifact,
     std::string* error) {
   artifact->source_path = model_path;
@@ -561,7 +561,7 @@ bool prepare_litert_artifact(
   }
 
   const int requested =
-      dinf_option_int(options_json, "litertSectionIndex", -1);
+      dinf_option_int(runtime_options, "litertSectionIndex", -1);
   int selected = requested;
   if (selected < 0 && sections.size() == 1) {
     selected = 0;
@@ -937,7 +937,7 @@ class LiteRtSession final : public DinfRuntimeSession {
 
 DinfRuntimeSession* dinf_create_litert_session(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* error) {
   std::vector<std::string> attempted;
   for (const auto& candidate : library_candidates()) {
@@ -951,9 +951,9 @@ DinfRuntimeSession* dinf_create_litert_session(
       return nullptr;
     }
     SupportLibraryLoadResult support_libraries =
-        preload_support_libraries(options_json);
+        preload_support_libraries(runtime_options);
     LiteRtArtifact artifact;
-    if (!prepare_litert_artifact(model_path, options_json, &artifact, error)) {
+    if (!prepare_litert_artifact(model_path, runtime_options, &artifact, error)) {
       return nullptr;
     }
     TfLiteModel* model = api.ModelCreateFromFile(artifact.model_path.c_str());
@@ -967,13 +967,13 @@ DinfRuntimeSession* dinf_create_litert_session(
     TfLiteInterpreterOptions* options = api.OptionsCreate();
     LiteRtErrorCollector error_collector;
     configure_error_reporter(api, options, &error_collector);
-    const int num_threads = std::max(1, dinf_option_int(options_json, "numThreads", 1));
+    const int num_threads = std::max(1, dinf_option_int(runtime_options, "numThreads", 1));
     api.OptionsSetNumThreads(options, num_threads);
     std::vector<DelegateHandle> delegates;
     std::vector<std::string> delegate_names;
     const bool require_delegate =
-        dinf_option_bool(options_json, "requireDelegate", false);
-    const std::string delegate = requested_delegate(options_json);
+        dinf_option_bool(runtime_options, "requireDelegate", false);
+    const std::string delegate = requested_delegate(runtime_options);
     if (delegate == "gpu") {
       const auto before = delegates.size();
       if (!add_symbol_delegate(
@@ -1018,7 +1018,7 @@ DinfRuntimeSession* dinf_create_litert_session(
       *error = "LiteRT QNN delegate is not available through the bundled C API";
       return nullptr;
     }
-    if (delegate_names.empty() && wants_xnnpack(options_json)) {
+    if (delegate_names.empty() && wants_xnnpack(runtime_options)) {
       const auto before = delegates.size();
       if (!add_xnnpack_delegate(
               api, options, &delegates, error, require_delegate)) {

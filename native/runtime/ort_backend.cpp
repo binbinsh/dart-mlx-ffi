@@ -19,20 +19,20 @@ std::string ort_disabled_error() {
 
 DinfRuntimeSession* dinf_create_onnx_session(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* error) {
 #if DINF_ENABLE_ORT
   nlohmann::json spec;
   if (dinf_ort::IsPipelineSpec(model_path, &spec)) {
     auto pipeline =
-        dinf_ort::CreatePipeline(model_path, spec, options_json, error);
+        dinf_ort::CreatePipeline(model_path, spec, runtime_options, error);
     return pipeline.release();
   }
-  auto session = dinf_ort::CreateSession(model_path, options_json, error);
+  auto session = dinf_ort::CreateSession(model_path, runtime_options, error);
   return session.release();
 #else
   (void)model_path;
-  (void)options_json;
+  (void)runtime_options;
   *error = ort_disabled_error();
   return nullptr;
 #endif

@@ -16,23 +16,37 @@ void set_error(char** out, const std::string& message) {
 extern "C" DinfRuntimeSession* dinf_cpp_open(
     int32_t engine,
     const char* model_path,
-    const char* options_json,
+    const DinfOptionEntry* options,
+    intptr_t option_count,
     char** error) {
   if (model_path == nullptr) {
     set_error(error, "model_path is null");
     return nullptr;
   }
+  const DinfOptions runtime_options{
+      options,
+      option_count < 0 ? 0 : option_count,
+  };
   std::string message;
   DinfRuntimeSession* session = nullptr;
   switch (engine) {
     case DINF_ENGINE_COREML:
-      session = dinf_create_coreml_session(model_path, options_json, &message);
+      session = dinf_create_coreml_session(
+          model_path,
+          &runtime_options,
+          &message);
       break;
     case DINF_ENGINE_ONNX:
-      session = dinf_create_onnx_session(model_path, options_json, &message);
+      session = dinf_create_onnx_session(
+          model_path,
+          &runtime_options,
+          &message);
       break;
     case DINF_ENGINE_LITERT:
-      session = dinf_create_litert_session(model_path, options_json, &message);
+      session = dinf_create_litert_session(
+          model_path,
+          &runtime_options,
+          &message);
       break;
     default:
       message = "Unsupported native runtime engine";

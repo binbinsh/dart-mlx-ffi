@@ -18,7 +18,7 @@ bool IsPipelineSpec(
 std::unique_ptr<DinfRuntimeSession> CreatePipeline(
     const std::filesystem::path& spec_path,
     const nlohmann::json& spec,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* error);
 
 }  // namespace dinf_ort

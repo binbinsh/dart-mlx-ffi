@@ -373,7 +373,7 @@ bool IsPipelineSpec(const std::filesystem::path& path, json* spec) {
 std::unique_ptr<DinfRuntimeSession> CreatePipeline(
     const std::filesystem::path& spec_path,
     const json& spec,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* error) {
   if (!spec.at("stages").is_array()) {
     *error = "ONNX pipeline stages must be an array.";
@@ -410,7 +410,7 @@ std::unique_ptr<DinfRuntimeSession> CreatePipeline(
       }
       const auto path = ResolvePipelinePath(spec_path, item.at("model").get<std::string>());
       stage.model_path = path.string();
-      stage.session = CreateSession(stage.model_path.c_str(), options_json, error);
+      stage.session = CreateSession(stage.model_path.c_str(), runtime_options, error);
       if (!stage.session) {
         return nullptr;
       }

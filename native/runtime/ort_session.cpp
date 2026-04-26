@@ -118,16 +118,16 @@ std::vector<std::string> SplitPaths(const std::string& raw) {
   return out;
 }
 
-bool PreloadLibraries(const char* options_json, std::string* error) {
+bool PreloadLibraries(const DinfOptions* runtime_options, std::string* error) {
   const std::string raw =
-      dinf_option_string(options_json, "preloadLibraries",
-          dinf_option_string(options_json, "preloadRuntimeLibraries"));
+      dinf_option_string(runtime_options, "preloadLibraries",
+          dinf_option_string(runtime_options, "preloadRuntimeLibraries"));
   if (raw.empty()) {
     return true;
   }
   const bool required =
-      dinf_option_bool(options_json, "requirePreloadLibraries",
-          dinf_option_bool(options_json, "requireProvider", false));
+      dinf_option_bool(runtime_options, "requirePreloadLibraries",
+          dinf_option_bool(runtime_options, "requireProvider", false));
   for (const auto& path : SplitPaths(raw)) {
     if (path.empty()) {
       continue;
@@ -236,17 +236,17 @@ std::string CanonicalProvider(std::string provider) {
 }
 
 std::string ChooseProvider(
-    const char* options_json,
+    const DinfOptions* runtime_options,
     const std::vector<std::string>& providers) {
   std::string requested =
-      dinf_option_string(options_json, "provider",
-          dinf_option_string(options_json, "executionProvider",
-              dinf_option_string(options_json, "ortProvider")));
+      dinf_option_string(runtime_options, "provider",
+          dinf_option_string(runtime_options, "executionProvider",
+              dinf_option_string(runtime_options, "ortProvider")));
   if (!requested.empty()) {
     return CanonicalProvider(requested);
   }
-  if (!dinf_options_contains_token(options_json, "gpu") &&
-      !dinf_options_contains_token(options_json, "npu")) {
+  if (!dinf_options_contains_token(runtime_options, "gpu") &&
+      !dinf_options_contains_token(runtime_options, "npu")) {
     return "CPUExecutionProvider";
   }
   const std::vector<std::string> gpu_order = {
@@ -263,7 +263,7 @@ std::string ChooseProvider(
       "OpenVINOExecutionProvider",
   };
   const auto& order =
-      dinf_options_contains_token(options_json, "npu") ? npu_order : gpu_order;
+      dinf_options_contains_token(runtime_options, "npu") ? npu_order : gpu_order;
   for (const auto& provider : order) {
     if (ContainsProvider(providers, provider)) {
       return provider;
@@ -277,7 +277,7 @@ bool AppendProvider(
     OrtSessionOptions* options,
     const std::string& provider,
     const std::vector<std::string>& providers,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     bool* appended,
     std::string* error) {
   if (appended != nullptr) {
@@ -287,7 +287,7 @@ bool AppendProvider(
     return true;
   }
   if (!ContainsProvider(providers, provider)) {
-    if (dinf_option_bool(options_json, "requireProvider", false)) {
+    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
       *error = "Requested ONNX Runtime provider is unavailable: " + provider;
       return false;
     }
@@ -298,17 +298,17 @@ bool AppendProvider(
       api->SessionOptionsAppendExecutionProvider_CUDA != nullptr) {
     OrtCUDAProviderOptions cuda_options{};
     cuda_options.device_id =
-        std::max(0, dinf_option_int(options_json, "deviceId", 0));
+        std::max(0, dinf_option_int(runtime_options, "deviceId", 0));
     const int cuda_mem_limit_mb =
-        dinf_option_int(options_json, "cudaMemoryLimitMb",
-            dinf_option_int(options_json, "gpuMemoryLimitMb", 0));
+        dinf_option_int(runtime_options, "cudaMemoryLimitMb",
+            dinf_option_int(runtime_options, "gpuMemoryLimitMb", 0));
     if (cuda_mem_limit_mb > 0) {
       cuda_options.gpu_mem_limit =
           static_cast<size_t>(cuda_mem_limit_mb) * 1024ULL * 1024ULL;
     }
     const int arena_extend_strategy =
-        dinf_option_int(options_json, "cudaArenaExtendStrategy",
-            dinf_option_int(options_json, "gpuArenaExtendStrategy", -1));
+        dinf_option_int(runtime_options, "cudaArenaExtendStrategy",
+            dinf_option_int(runtime_options, "gpuArenaExtendStrategy", -1));
     if (arena_extend_strategy >= 0) {
       cuda_options.arena_extend_strategy = arena_extend_strategy;
     }
@@ -323,7 +323,7 @@ bool AppendProvider(
       }
       return true;
     }
-    if (dinf_option_bool(options_json, "requireProvider", false)) {
+    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
       *error = append_error;
       return false;
     }
@@ -333,36 +333,36 @@ bool AppendProvider(
       api->SessionOptionsAppendExecutionProvider_TensorRT != nullptr) {
     OrtTensorRTProviderOptions trt_options{};
     trt_options.device_id =
-        std::max(0, dinf_option_int(options_json, "deviceId", 0));
+        std::max(0, dinf_option_int(runtime_options, "deviceId", 0));
     trt_options.trt_max_partition_iterations =
-        std::max(0, dinf_option_int(options_json, "trtMaxPartitionIterations", 0));
+        std::max(0, dinf_option_int(runtime_options, "trtMaxPartitionIterations", 0));
     trt_options.trt_min_subgraph_size =
-        std::max(0, dinf_option_int(options_json, "trtMinSubgraphSize", 0));
+        std::max(0, dinf_option_int(runtime_options, "trtMinSubgraphSize", 0));
     const int trt_workspace_mb =
-        dinf_option_int(options_json, "trtWorkspaceMemoryLimitMb",
-            dinf_option_int(options_json, "trtMaxWorkspaceSizeMb", 0));
+        dinf_option_int(runtime_options, "trtWorkspaceMemoryLimitMb",
+            dinf_option_int(runtime_options, "trtMaxWorkspaceSizeMb", 0));
     if (trt_workspace_mb > 0) {
       trt_options.trt_max_workspace_size =
           static_cast<size_t>(trt_workspace_mb) * 1024ULL * 1024ULL;
     }
     trt_options.trt_fp16_enable =
-        dinf_option_bool(options_json, "trtFp16", false) ? 1 : 0;
+        dinf_option_bool(runtime_options, "trtFp16", false) ? 1 : 0;
     trt_options.trt_int8_enable =
-        dinf_option_bool(options_json, "trtInt8", false) ? 1 : 0;
+        dinf_option_bool(runtime_options, "trtInt8", false) ? 1 : 0;
     trt_options.trt_dump_subgraphs =
-        dinf_option_bool(options_json, "trtDumpSubgraphs", false) ? 1 : 0;
+        dinf_option_bool(runtime_options, "trtDumpSubgraphs", false) ? 1 : 0;
     const std::string trt_cache_path =
-        dinf_option_string(options_json, "trtCacheDir",
-            dinf_option_string(options_json, "trtEngineCachePath"));
+        dinf_option_string(runtime_options, "trtCacheDir",
+            dinf_option_string(runtime_options, "trtEngineCachePath"));
     if (!trt_cache_path.empty()) {
       trt_options.trt_engine_cache_enable = 1;
       trt_options.trt_engine_cache_path = trt_cache_path.c_str();
     } else {
       trt_options.trt_engine_cache_enable =
-          dinf_option_bool(options_json, "trtEngineCacheEnable", false) ? 1 : 0;
+          dinf_option_bool(runtime_options, "trtEngineCacheEnable", false) ? 1 : 0;
     }
     trt_options.trt_force_sequential_engine_build =
-        dinf_option_bool(options_json, "trtForceSequentialEngineBuild", false)
+        dinf_option_bool(runtime_options, "trtForceSequentialEngineBuild", false)
         ? 1
         : 0;
     std::string append_error;
@@ -376,7 +376,7 @@ bool AppendProvider(
       }
       return true;
     }
-    if (dinf_option_bool(options_json, "requireProvider", false)) {
+    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
       *error = append_error;
       return false;
     }
@@ -387,7 +387,7 @@ bool AppendProvider(
           api->SessionOptionsAppendExecutionProvider(
               options, provider.c_str(), nullptr, nullptr, 0),
           &append_error)) {
-    if (dinf_option_bool(options_json, "requireProvider", false)) {
+    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
       *error = append_error;
       return false;
     }
@@ -613,7 +613,7 @@ void Session::ReleaseNames(std::vector<char*>& names) {
 
 std::unique_ptr<Session> CreateSession(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* runtime_options,
     std::string* error) {
   const OrtApi* api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
   OrtEnv* env = nullptr;
@@ -628,7 +628,7 @@ std::unique_ptr<Session> CreateSession(
     api->ReleaseEnv(env);
     return nullptr;
   }
-  const int num_threads = std::max(1, dinf_option_int(options_json, "numThreads", 1));
+  const int num_threads = std::max(1, dinf_option_int(runtime_options, "numThreads", 1));
   if (!Ok(api, api->SetIntraOpNumThreads(options, num_threads), error)) {
     api->ReleaseSessionOptions(options);
     api->ReleaseEnv(env);
@@ -639,7 +639,7 @@ std::unique_ptr<Session> CreateSession(
     api->ReleaseEnv(env);
     return nullptr;
   }
-  if (!PreloadLibraries(options_json, error)) {
+  if (!PreloadLibraries(runtime_options, error)) {
     api->ReleaseSessionOptions(options);
     api->ReleaseEnv(env);
     return nullptr;
@@ -652,14 +652,14 @@ std::unique_ptr<Session> CreateSession(
     *error = provider_error;
     return nullptr;
   }
-  const std::string provider = ChooseProvider(options_json, providers);
+  const std::string provider = ChooseProvider(runtime_options, providers);
   bool provider_appended = false;
   if (!AppendProvider(
           api,
           options,
           provider,
           providers,
-          options_json,
+          runtime_options,
           &provider_appended,
           error)) {
     api->ReleaseSessionOptions(options);

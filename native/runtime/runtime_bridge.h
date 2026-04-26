@@ -60,6 +60,30 @@ struct DinfMemoryInfo {
   uint64_t android_java_heap_private_dirty;
 };
 
+enum DinfOptionKind {
+  DINF_OPTION_STRING = 1,
+  DINF_OPTION_INT = 2,
+  DINF_OPTION_BOOL = 3,
+  DINF_OPTION_MAP = 4,
+  DINF_OPTION_LIST = 5,
+  DINF_OPTION_DOUBLE = 6,
+  DINF_OPTION_NULL = 7,
+};
+
+struct DinfOptionEntry {
+  const char* path;
+  int32_t kind;
+  const char* text;
+  int64_t int_value;
+  double double_value;
+  int32_t bool_value;
+};
+
+struct DinfOptions {
+  const DinfOptionEntry* entries;
+  intptr_t count;
+};
+
 class DinfRuntimeSession {
  public:
   virtual ~DinfRuntimeSession() = default;
@@ -79,7 +103,8 @@ extern "C" {
 DINF_RUNTIME_EXPORT DinfRuntimeSession* dinf_cpp_open(
     int32_t engine,
     const char* model_path,
-    const char* options_json,
+    const DinfOptionEntry* options,
+    intptr_t option_count,
     char** error);
 
 DINF_RUNTIME_EXPORT void dinf_cpp_close(DinfRuntimeSession* session);
@@ -121,15 +146,15 @@ std::string dinf_json_string_array(const std::vector<std::string>& values);
 
 DinfRuntimeSession* dinf_create_coreml_session(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* options,
     std::string* error);
 
 DinfRuntimeSession* dinf_create_onnx_session(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* options,
     std::string* error);
 
 DinfRuntimeSession* dinf_create_litert_session(
     const char* model_path,
-    const char* options_json,
+    const DinfOptions* options,
     std::string* error);
