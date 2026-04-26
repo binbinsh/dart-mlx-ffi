@@ -12,7 +12,9 @@ Current shape:
   safetensors artifact layouts, parse local MLX metadata and quantization
   fields, load safetensors weight maps on Apple, and `run()` enters Zig-side
   managed tensor-to-`mlx_array` conversion plus the Zig-owned output
-  materialization path before returning an executor-not-implemented error.
+  materialization path. A minimal `dart_inference_linear` executor template is
+  wired through `mlx_matmul`/`mlx_add`; other architectures return an
+  executor-not-implemented error from Zig.
 - Hot input paths can allocate native memory through Zig and pass
   `NativeTensorBuffer` views directly into `dart_inference_runtime_run`.
 - Zig is pinned by the repository `.zigversion` file and

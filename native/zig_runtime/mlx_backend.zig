@@ -53,6 +53,11 @@ const native = if (linked and !builtin.is_test) struct {
         key: [*c]const u8,
         value: MlxArray,
     ) c_int;
+    extern fn mlx_map_string_to_array_get(
+        value: *MlxArray,
+        map: MlxMapStringToArray,
+        key: [*c]const u8,
+    ) c_int;
     extern fn mlx_map_string_to_array_iterator_new(
         map: MlxMapStringToArray,
     ) MlxMapStringToArrayIterator;
@@ -88,6 +93,18 @@ const native = if (linked and !builtin.is_test) struct {
         params: *MlxMapStringToArray,
         metadata: *MlxMapStringToString,
         file: [*:0]const u8,
+        stream: MlxStream,
+    ) c_int;
+    extern fn mlx_matmul(
+        result: *MlxArray,
+        lhs: MlxArray,
+        rhs: MlxArray,
+        stream: MlxStream,
+    ) c_int;
+    extern fn mlx_add(
+        result: *MlxArray,
+        lhs: MlxArray,
+        rhs: MlxArray,
         stream: MlxStream,
     ) c_int;
 } else struct {};
@@ -258,6 +275,7 @@ pub fn sessionDiagnosticsJson(
             .quantization_mode = session.metadata.quantization_mode,
             .quantization_bits = session.metadata.quantization_bits,
             .quantization_group_size = session.metadata.quantization_group_size,
+            .executor_kind = executorKind(session),
         },
         .{ .emit_null_optional_fields = false },
     );
@@ -728,6 +746,8 @@ pub const TensorError = error{
 
 pub const ExecutionError = mlx_output.OutputError || error{
     WeightsUnavailable,
+    InvalidInput,
+    MissingWeight,
     UnsupportedArchitecture,
     ExecutorNotImplemented,
 };
@@ -737,8 +757,6 @@ pub fn executeSession(
     session: *const Session,
     batch: InputBatch,
 ) ExecutionError!OutputBatch {
-    _ = allocator;
-    _ = batch;
     if (!linked or builtin.is_test) {
         return error.MlxUnavailable;
     }
@@ -748,12 +766,17 @@ pub fn executeSession(
     if (session.metadata.architecture == null and session.metadata.model_type == null) {
         return error.UnsupportedArchitecture;
     }
+    if (isLinearExecutor(session)) {
+        return executeLinear(allocator, session, batch);
+    }
     return error.ExecutorNotImplemented;
 }
 
 pub fn executionErrorMessage(err: ExecutionError) []const u8 {
     return switch (err) {
         error.WeightsUnavailable => "Zig-owned MLX backend has no loaded weight maps for execution.",
+        error.InvalidInput => "Zig-owned MLX backend received no usable executor input.",
+        error.MissingWeight => "Zig-owned MLX backend could not find a required executor weight.",
         error.UnsupportedArchitecture => "Zig-owned MLX backend could not identify a supported model architecture.",
         error.ExecutorNotImplemented => "Zig-owned MLX backend has not registered an executor for this model architecture yet.",
         error.MlxUnavailable,
@@ -764,6 +787,86 @@ pub fn executionErrorMessage(err: ExecutionError) []const u8 {
         error.OutOfMemory,
         => mlx_output.errorMessage(@errorCast(err)),
     };
+}
+
+fn isLinearExecutor(session: *const Session) bool {
+    if (session.metadata.model_type) |model_type| {
+        if (std.mem.eql(u8, model_type, "dart_inference_linear")) {
+            return true;
+        }
+    }
+    if (session.metadata.architecture) |architecture| {
+        return std.mem.eql(u8, architecture, "DartInferenceLinear");
+    }
+    return false;
+}
+
+fn executorKind(session: *const Session) []const u8 {
+    return if (isLinearExecutor(session)) "linear" else "unregistered";
+}
+
+fn executeLinear(
+    allocator: std.mem.Allocator,
+    session: *const Session,
+    batch: InputBatch,
+) ExecutionError!OutputBatch {
+    if (batch.arrays.len == 0) {
+        return error.InvalidInput;
+    }
+    const stream = native.mlx_default_gpu_stream_new();
+    if (stream.ctx == null) {
+        return error.MlxCallFailed;
+    }
+    defer _ = native.mlx_stream_free(stream);
+
+    const weight = try getRequiredWeight(session.weights.params, "weight");
+    defer _ = native.mlx_array_free(weight);
+    const bias = getOptionalWeight(session.weights.params, "bias") catch return error.MlxCallFailed;
+    defer if (bias.ctx != null) {
+        _ = native.mlx_array_free(bias);
+    };
+
+    var output = MlxArray{ .ctx = null };
+    errdefer if (output.ctx != null) {
+        _ = native.mlx_array_free(output);
+    };
+    if (native.mlx_matmul(&output, batch.arrays[0], weight, stream) != 0) {
+        return error.MlxCallFailed;
+    }
+    if (bias.ctx != null) {
+        var biased = MlxArray{ .ctx = null };
+        if (native.mlx_add(&biased, output, bias, stream) != 0) {
+            return error.MlxCallFailed;
+        }
+        _ = native.mlx_array_free(output);
+        output = biased;
+    }
+    defer _ = native.mlx_array_free(output);
+
+    const tensors = allocator.alloc(OutputTensor, 1) catch return error.OutOfMemory;
+    errdefer allocator.free(tensors);
+    tensors[0] = try mlx_output.materializeArray(allocator, "output", output);
+    return .{ .allocator = allocator, .tensors = tensors };
+}
+
+fn getRequiredWeight(map: MlxMapStringToArray, key: [*c]const u8) ExecutionError!MlxArray {
+    const value = try getOptionalWeight(map, key);
+    if (value.ctx == null) {
+        return error.MissingWeight;
+    }
+    return value;
+}
+
+fn getOptionalWeight(map: MlxMapStringToArray, key: [*c]const u8) ExecutionError!MlxArray {
+    var value = MlxArray{ .ctx = null };
+    const status = native.mlx_map_string_to_array_get(&value, map, key);
+    if (status == 2) {
+        return value;
+    }
+    if (status != 0) {
+        return error.MlxCallFailed;
+    }
+    return value;
 }
 
 pub const InputBatch = struct {
@@ -975,6 +1078,7 @@ test "MLX session discovers model.safetensors directory artifacts" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"model_type\":\"qwen3\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"quantization_mode\":\"affine\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"quantization_bits\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"executor_kind\":\"unregistered\"") != null);
 }
 
 test "MLX session discovers sharded safetensors directory artifacts" {

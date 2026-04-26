@@ -9,7 +9,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 DEVICE_ID="${DEVICE_ID:-${1:-}}"
-BUNDLE_ID="${BUNDLE_ID:-com.example.dartMlxFfiProbe}"
+BUNDLE_ID="${BUNDLE_ID:-com.example.dartInferenceProbe}"
 REPORTS_SOURCE="${REPORTS_SOURCE:-Documents/paddle_ocr_vl_reports}"
 OUT_DIR="${OUT_DIR:-/tmp/ios_resume_driver}"
 MAX_LAUNCHES="${MAX_LAUNCHES:-12}"

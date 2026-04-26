@@ -71,6 +71,7 @@ void main() {
           expect(mlxSession['quantization_mode'], 'affine');
           expect(mlxSession['quantization_bits'], 4);
           expect(mlxSession['quantization_group_size'], 64);
+          expect(mlxSession['executor_kind'], 'unregistered');
           final input = RuntimeTensor.float32([1], Float32List.fromList([1]));
           expect(
             () => session.run(ModelInputs({'x': input})),
