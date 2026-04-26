@@ -159,13 +159,57 @@ void main() {
     test('registry falls back when selected engine is not registered', () {
       final registry = RuntimeRegistry(
         resolver: const RuntimeResolver(hostPlatform: RuntimePlatform.macos),
-      )..register(_FakeRuntime(RuntimeEngine.coreml));
+      )..register(_FakeRuntime(RuntimeEngine.onnx));
 
-      final session = registry.load(spec, rootPath: '/tmp');
+      const fallbackSpec = ModelSpec(
+        id: 'fallback',
+        family: 'Fallback',
+        modalities: [ModelModality.textGeneration],
+        platformArtifacts: {
+          RuntimeEngine.coreml: RuntimeArtifact(
+            engine: RuntimeEngine.coreml,
+            path: 'coreml',
+            targetPlatforms: ['macos'],
+          ),
+          RuntimeEngine.onnx: RuntimeArtifact(
+            engine: RuntimeEngine.onnx,
+            path: 'model.onnx',
+            targetPlatforms: ['macos'],
+          ),
+        },
+      );
+
+      final session = registry.load(fallbackSpec, rootPath: '/tmp');
       final outputs = session.run(const ModelInputs({}));
 
-      expect(outputs.diagnostics['engine'], 'coreml');
+      expect(outputs.diagnostics['engine'], 'onnx');
       session.close();
+    });
+
+    test('registry fallback skips incompatible registered artifacts', () {
+      final registry = RuntimeRegistry(
+        resolver: const RuntimeResolver(hostPlatform: RuntimePlatform.macos),
+      )..register(_FakeRuntime(RuntimeEngine.onnx));
+
+      const fallbackSpec = ModelSpec(
+        id: 'fallback_skip',
+        family: 'Fallback skip',
+        modalities: [ModelModality.textGeneration],
+        platformArtifacts: {
+          RuntimeEngine.coreml: RuntimeArtifact(
+            engine: RuntimeEngine.coreml,
+            path: 'coreml',
+            targetPlatforms: ['macos'],
+          ),
+          RuntimeEngine.onnx: RuntimeArtifact(
+            engine: RuntimeEngine.onnx,
+            path: 'model.onnx',
+            targetPlatforms: ['linux'],
+          ),
+        },
+      );
+
+      expect(() => registry.load(fallbackSpec), throwsUnsupportedError);
     });
 
     test('registry resolves HF artifacts before async load', () async {

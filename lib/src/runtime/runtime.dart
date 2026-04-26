@@ -413,8 +413,12 @@ final class RuntimeRegistry {
     for (final entry in spec.platformArtifacts.entries) {
       if (!_runtimes.containsKey(entry.key)) continue;
       final artifact = entry.value;
-      if (artifact.targetPlatforms.isNotEmpty &&
-          !artifact.targetPlatforms.contains(platform.name)) {
+      if (!_matchesArtifact(
+        entry.key,
+        platform,
+        artifact,
+        allowPreviewMlx: true,
+      )) {
         continue;
       }
       return RuntimeResolution(
@@ -506,32 +510,14 @@ final class RuntimeResolver {
   }) {
     final artifact = spec.platformArtifacts[engine];
     if (artifact == null) return null;
-    final targets = artifact.targetPlatforms
-        .join('\n')
-        .toNativeUtf8(allocator: calloc)
-        .cast<ffi.Char>();
-    final format = (artifact.format ?? '')
-        .toNativeUtf8(allocator: calloc)
-        .cast<ffi.Char>();
-    final path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    try {
-      final matches =
-          native.artifactMatches(
-            _engineId(engine),
-            _platformId(platform),
-            targets,
-            format,
-            path,
-            allowPreviewMlx ? 1 : 0,
-          ) !=
-          0;
-      return matches ? artifact : null;
-    } finally {
-      calloc
-        ..free(targets)
-        ..free(format)
-        ..free(path);
-    }
+    return _matchesArtifact(
+          engine,
+          platform,
+          artifact,
+          allowPreviewMlx: allowPreviewMlx,
+        )
+        ? artifact
+        : null;
   }
 
   List<RuntimeEngine> _defaultOrder(
@@ -577,6 +563,47 @@ int _engineId(RuntimeEngine engine) => switch (engine) {
   RuntimeEngine.onnx => 2,
   RuntimeEngine.litert => 3,
 };
+
+bool _matchesArtifact(
+  RuntimeEngine engine,
+  RuntimePlatform platform,
+  RuntimeArtifact artifact, {
+  bool allowPreviewMlx = false,
+}) {
+  ffi.Pointer<ffi.Char> targets = ffi.nullptr;
+  ffi.Pointer<ffi.Char> format = ffi.nullptr;
+  ffi.Pointer<ffi.Char> path = ffi.nullptr;
+  try {
+    final joinedTargets = artifact.targetPlatforms.join('\n');
+    if (joinedTargets.isNotEmpty) {
+      targets = joinedTargets.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    }
+    if (engine == RuntimeEngine.mlx) {
+      final artifactFormat = artifact.format;
+      if (artifactFormat != null && artifactFormat.isNotEmpty) {
+        format = artifactFormat
+            .toNativeUtf8(allocator: calloc)
+            .cast<ffi.Char>();
+      }
+      if (artifact.path.isNotEmpty) {
+        path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+      }
+    }
+    return native.artifactMatches(
+          _engineId(engine),
+          _platformId(platform),
+          targets,
+          format,
+          path,
+          allowPreviewMlx ? 1 : 0,
+        ) !=
+        0;
+  } finally {
+    if (targets != ffi.nullptr) calloc.free(targets);
+    if (format != ffi.nullptr) calloc.free(format);
+    if (path != ffi.nullptr) calloc.free(path);
+  }
+}
 
 List<RuntimeEngine> _enginesJson(ffi.Pointer<ffi.Char> ptr) {
   if (ptr == ffi.nullptr) {
