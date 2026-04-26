@@ -146,10 +146,6 @@ fn setError(error_out: ?*[*c]u8, message: []const u8) void {
     }
 }
 
-fn backendJson() []const u8 {
-    return "{\"native_backend\":\"zig\",\"zig_version\":\"0.16.0\",\"async_model\":\"std.Io-ready\",\"abi\":\"dinf_v1\",\"mlx_backend\":" ++ mlx_backend.status_json ++ "}";
-}
-
 fn optionalCString(value: [*c]const u8) ?[]const u8 {
     if (value == null) {
         return null;
@@ -958,17 +954,12 @@ export fn dinf_free_diag(entries: [*c]diag.Entry, count: isize) void {
     diag.freeEntries(entries, count);
 }
 
-test "backend json is stable" {
-    try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"native_backend\":\"zig\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"mlx_backend\":{\"owner\":\"zig\",\"api\":\"mlx-c\"") != null);
-    try std.testing.expectEqualStrings(pinned_zig_version, builtin.zig_version_string);
-}
-
 test "runtime info ABI uses static fields" {
     var info: InfoAbi = undefined;
     try std.testing.expectEqual(@as(i32, 0), dinf_info(&info));
     try std.testing.expectEqualStrings("zig", info.native_backend[0..std.mem.len(info.native_backend)]);
     try std.testing.expectEqualStrings(pinned_zig_version, info.zig_version[0..std.mem.len(info.zig_version)]);
+    try std.testing.expectEqualStrings(pinned_zig_version, builtin.zig_version_string);
     try std.testing.expectEqualStrings("mlx-c", info.mlx_api[0..std.mem.len(info.mlx_api)]);
     try std.testing.expectEqual(if (mlx_backend.enabled) @as(i32, 1) else @as(i32, 0), info.mlx_enabled);
     try std.testing.expect(std.mem.indexOf(u8, info.mlx_artifacts[0..std.mem.len(info.mlx_artifacts)], "mlxfn") != null);

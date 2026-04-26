@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.79`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.80`.
+- Removed stale Zig-side JSON capability/status helpers now that runtime backend info, accelerator defaults, and engine order use typed fields and masks.
 - Removed the obsolete Zig resolver/fallback JSON compatibility paths, leaving runtime artifact selection on the typed resolver ABI only.
 - Moved `zigRuntimeMode` dispatch from Zig-owned JSON parsing to typed `dinf_open` entry lookup, avoiding an extra open-path parse before native session creation.
 - Replaced Dart-side native open-option JSON encoding with the typed `dinf_open` entry ABI, leaving Zig to merge options and build the private adapter JSON.

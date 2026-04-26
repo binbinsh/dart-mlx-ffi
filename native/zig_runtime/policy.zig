@@ -51,16 +51,6 @@ pub fn platformName(id: i32) []const u8 {
     };
 }
 
-pub fn acceleratorsJson(engine: i32) []const u8 {
-    return switch (engine) {
-        @intFromEnum(Engine.mlx) => "[\"gpu\",\"cpu\"]",
-        @intFromEnum(Engine.coreml) => "[\"ane\",\"gpu\",\"cpu\"]",
-        @intFromEnum(Engine.onnx) => "[\"gpu\",\"cpu\"]",
-        @intFromEnum(Engine.litert) => "[\"gpu\",\"npu\",\"cpu\"]",
-        else => "[]",
-    };
-}
-
 pub const accel_cpu: i32 = 1 << 0;
 pub const accel_gpu: i32 = 1 << 1;
 pub const accel_ane: i32 = 1 << 2;
@@ -103,19 +93,6 @@ pub fn engineOrder(platform: i32) []const i32 {
         => desktop_order[0..],
         @intFromEnum(Platform.android) => android_order[0..],
         else => fallback_order[0..],
-    };
-}
-
-pub fn engineOrderJson(platform: i32) []const u8 {
-    return switch (platform) {
-        @intFromEnum(Platform.ios),
-        @intFromEnum(Platform.macos),
-        => "[\"coreml\",\"mlx\",\"onnx\"]",
-        @intFromEnum(Platform.windows),
-        @intFromEnum(Platform.linux),
-        => "[\"onnx\"]",
-        @intFromEnum(Platform.android) => "[\"litert\",\"onnx\"]",
-        else => "[\"coreml\",\"onnx\",\"litert\"]",
     };
 }
 
@@ -202,9 +179,21 @@ test "runtime policy names engines and platforms" {
 }
 
 test "runtime policy orders engines by platform" {
-    try std.testing.expectEqualStrings("[\"coreml\",\"mlx\",\"onnx\"]", engineOrderJson(@intFromEnum(Platform.macos)));
-    try std.testing.expectEqualStrings("[\"onnx\"]", engineOrderJson(@intFromEnum(Platform.linux)));
-    try std.testing.expectEqualStrings("[\"litert\",\"onnx\"]", engineOrderJson(@intFromEnum(Platform.android)));
+    try std.testing.expectEqualSlices(
+        i32,
+        &.{ @intFromEnum(Engine.coreml), @intFromEnum(Engine.mlx), @intFromEnum(Engine.onnx) },
+        engineOrder(@intFromEnum(Platform.macos)),
+    );
+    try std.testing.expectEqualSlices(
+        i32,
+        &.{@intFromEnum(Engine.onnx)},
+        engineOrder(@intFromEnum(Platform.linux)),
+    );
+    try std.testing.expectEqualSlices(
+        i32,
+        &.{ @intFromEnum(Engine.litert), @intFromEnum(Engine.onnx) },
+        engineOrder(@intFromEnum(Platform.android)),
+    );
 }
 
 test "runtime policy identifies registered MLX function artifacts" {

@@ -9,7 +9,6 @@ pub const api = mlx_c.api;
 pub const owner = mlx_c.owner;
 pub const linked = mlx_c.linked;
 pub const enabled = mlx_c.enabled;
-pub const status_json = mlx_c.status_json;
 pub const MlxArray = mlx_c.MlxArray;
 pub const MlxDtype = mlx_c.MlxDtype;
 pub const InputBatch = mlx_input.InputBatch;
@@ -630,10 +629,6 @@ pub fn unavailableMessage() []const u8 {
         "Zig-owned MLX backend reached mlx-c, but model execution is not implemented yet."
     else
         "Zig-owned MLX backend is only linked for Apple targets; mlx-c must be called from native/zig_runtime, not Dart.";
-}
-
-pub fn statusJson() []const u8 {
-    return status_json;
 }
 
 test "MLX status remains Zig-owned" {
