@@ -49,6 +49,8 @@ void main() {
               session.diagnostics['mlx_session'] as Map<Object?, Object?>;
           expect(mlxSession['artifact_kind'], 'directory_model_safetensors');
           expect(mlxSession['weight_file_count'], 1);
+          expect(mlxSession['weights_loaded'], isFalse);
+          expect(mlxSession['loaded_weight_file_count'], 0);
           final input = RuntimeTensor.float32([1], Float32List.fromList([1]));
           expect(
             () => session.run(ModelInputs({'x': input})),

@@ -3,8 +3,9 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.31`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.32`.
 - Moved vendored native dependencies from `third_party/` to `vendors/` and updated native build paths plus publish filters.
+- Added an Apple-only Zig `mlx-c` safetensors weight loader that keeps loaded parameter and metadata maps inside the Zig-owned MLX session and merges multi-file safetensors layouts without involving Dart.
 - Added Zig-owned MLX artifact session discovery for local safetensors layouts, including session diagnostics for artifact kind and weight shard count.
 - Moved explicit MLX runtime session creation into Zig and added the first Zig-side managed tensor-to-`mlx_array` conversion skeleton before the executor returns its not-yet-implemented error.
 - Made the Zig runtime the only Dart-facing native build output and stopped producing the old Dart-facing MLX code asset from the build hook.

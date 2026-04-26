@@ -18,6 +18,28 @@ const MlxArray = extern struct {
     ctx: ?*anyopaque,
 };
 
+const MlxMapStringToArray = extern struct {
+    ctx: ?*anyopaque,
+};
+
+const MlxMapStringToString = extern struct {
+    ctx: ?*anyopaque,
+};
+
+const MlxMapStringToArrayIterator = extern struct {
+    ctx: ?*anyopaque,
+    map_ctx: ?*anyopaque,
+};
+
+const MlxMapStringToStringIterator = extern struct {
+    ctx: ?*anyopaque,
+    map_ctx: ?*anyopaque,
+};
+
+const MlxStream = extern struct {
+    ctx: ?*anyopaque,
+};
+
 pub const InputTensor = extern struct {
     dtype: i32,
     rank: i32,
@@ -53,6 +75,50 @@ const native = if (linked and !builtin.is_test) struct {
         dtor: MlxManagedDtor,
     ) MlxArray;
     extern fn mlx_array_free(arr: MlxArray) c_int;
+    extern fn mlx_map_string_to_array_new() MlxMapStringToArray;
+    extern fn mlx_map_string_to_array_free(map: MlxMapStringToArray) c_int;
+    extern fn mlx_map_string_to_array_insert(
+        map: MlxMapStringToArray,
+        key: [*c]const u8,
+        value: MlxArray,
+    ) c_int;
+    extern fn mlx_map_string_to_array_iterator_new(
+        map: MlxMapStringToArray,
+    ) MlxMapStringToArrayIterator;
+    extern fn mlx_map_string_to_array_iterator_next(
+        key: *[*c]const u8,
+        value: *MlxArray,
+        it: MlxMapStringToArrayIterator,
+    ) c_int;
+    extern fn mlx_map_string_to_array_iterator_free(
+        it: MlxMapStringToArrayIterator,
+    ) c_int;
+    extern fn mlx_map_string_to_string_new() MlxMapStringToString;
+    extern fn mlx_map_string_to_string_free(map: MlxMapStringToString) c_int;
+    extern fn mlx_map_string_to_string_insert(
+        map: MlxMapStringToString,
+        key: [*c]const u8,
+        value: [*c]const u8,
+    ) c_int;
+    extern fn mlx_map_string_to_string_iterator_new(
+        map: MlxMapStringToString,
+    ) MlxMapStringToStringIterator;
+    extern fn mlx_map_string_to_string_iterator_next(
+        key: *[*c]const u8,
+        value: *[*c]const u8,
+        it: MlxMapStringToStringIterator,
+    ) c_int;
+    extern fn mlx_map_string_to_string_iterator_free(
+        it: MlxMapStringToStringIterator,
+    ) c_int;
+    extern fn mlx_default_gpu_stream_new() MlxStream;
+    extern fn mlx_stream_free(stream: MlxStream) c_int;
+    extern fn mlx_load_safetensors(
+        params: *MlxMapStringToArray,
+        metadata: *MlxMapStringToString,
+        file: [*:0]const u8,
+        stream: MlxStream,
+    ) c_int;
 } else struct {};
 
 pub const VersionError = error{
@@ -72,17 +138,50 @@ pub const SessionError = error{
     InvalidPath,
     ArtifactNotFound,
     UnsupportedArtifact,
+    MlxCallFailed,
     OutOfMemory,
+};
+
+const Weights = struct {
+    params: MlxMapStringToArray,
+    metadata: MlxMapStringToString,
+    loaded: bool,
+    loaded_file_count: usize,
+
+    fn empty() Weights {
+        return .{
+            .params = .{ .ctx = null },
+            .metadata = .{ .ctx = null },
+            .loaded = false,
+            .loaded_file_count = 0,
+        };
+    }
+
+    fn deinit(self: *Weights) void {
+        if (linked and !builtin.is_test) {
+            if (self.params.ctx != null) {
+                _ = native.mlx_map_string_to_array_free(self.params);
+            }
+            if (self.metadata.ctx != null) {
+                _ = native.mlx_map_string_to_string_free(self.metadata);
+            }
+        }
+        self.* = Weights.empty();
+    }
 };
 
 pub const Session = struct {
     allocator: std.mem.Allocator,
     model_path: []u8,
     primary_weight_path: []u8,
+    weight_paths: [][]u8,
     artifact_kind: ArtifactKind,
     weight_file_count: usize,
+    weights: Weights,
 
     pub fn deinit(self: *Session) void {
+        self.weights.deinit();
+        freeStringList(self.allocator, self.weight_paths);
         self.allocator.free(self.model_path);
         self.allocator.free(self.primary_weight_path);
         self.allocator.destroy(self);
@@ -92,7 +191,13 @@ pub const Session = struct {
 const ArtifactLayout = struct {
     kind: ArtifactKind,
     primary_weight_path: []u8,
+    weight_paths: [][]u8,
     weight_file_count: usize,
+
+    fn deinit(self: ArtifactLayout, allocator: std.mem.Allocator) void {
+        allocator.free(self.primary_weight_path);
+        freeStringList(allocator, self.weight_paths);
+    }
 };
 
 pub fn createSession(
@@ -104,15 +209,21 @@ pub fn createSession(
         return error.InvalidPath;
     }
     const layout = try discoverArtifact(allocator, io, model_path);
-    errdefer allocator.free(layout.primary_weight_path);
+    errdefer layout.deinit(allocator);
+    var weights = try loadWeights(allocator, layout.weight_paths);
+    errdefer weights.deinit();
+    const model_path_copy = allocator.dupe(u8, model_path) catch return error.OutOfMemory;
+    errdefer allocator.free(model_path_copy);
     const session = allocator.create(Session) catch return error.OutOfMemory;
     errdefer allocator.destroy(session);
     session.* = .{
         .allocator = allocator,
-        .model_path = allocator.dupe(u8, model_path) catch return error.OutOfMemory,
+        .model_path = model_path_copy,
         .primary_weight_path = layout.primary_weight_path,
+        .weight_paths = layout.weight_paths,
         .artifact_kind = layout.kind,
         .weight_file_count = layout.weight_file_count,
+        .weights = weights,
     };
     return session;
 }
@@ -123,8 +234,13 @@ pub fn sessionDiagnosticsJson(
 ) std.mem.Allocator.Error![]u8 {
     return std.fmt.allocPrint(
         allocator,
-        "{{\"artifact_kind\":\"{s}\",\"weight_file_count\":{d}}}",
-        .{ artifactKindName(session.artifact_kind), session.weight_file_count },
+        "{{\"artifact_kind\":\"{s}\",\"weight_file_count\":{d},\"weights_loaded\":{},\"loaded_weight_file_count\":{d}}}",
+        .{
+            artifactKindName(session.artifact_kind),
+            session.weight_file_count,
+            session.weights.loaded,
+            session.weights.loaded_file_count,
+        },
     );
 }
 
@@ -133,6 +249,7 @@ pub fn sessionErrorMessage(err: SessionError) []const u8 {
         error.InvalidPath => "Zig-owned MLX backend requires a resolved local MLX artifact path.",
         error.ArtifactNotFound => "Zig-owned MLX backend could not find the local MLX artifact.",
         error.UnsupportedArtifact => "Zig-owned MLX backend requires local MLX safetensors weights.",
+        error.MlxCallFailed => "Zig-owned MLX backend failed while loading safetensors through mlx-c.",
         error.OutOfMemory => "Zig-owned MLX backend ran out of memory while creating the session.",
     };
 }
@@ -192,6 +309,7 @@ fn discoverFileArtifact(
     return .{
         .kind = .single_safetensors,
         .primary_weight_path = allocator.dupe(u8, model_path) catch return error.OutOfMemory,
+        .weight_paths = try singlePathList(allocator, model_path),
         .weight_file_count = 1,
     };
 }
@@ -208,31 +326,38 @@ fn discoverDirectoryArtifact(
     defer dir.close(io);
 
     if (fileExists(dir, io, "model.safetensors")) {
+        const primary = try joinPath(allocator, model_path, "model.safetensors");
+        errdefer allocator.free(primary);
         return .{
             .kind = .directory_model_safetensors,
-            .primary_weight_path = try joinPath(allocator, model_path, "model.safetensors"),
+            .primary_weight_path = primary,
+            .weight_paths = try singlePathList(allocator, primary),
             .weight_file_count = 1,
         };
     }
 
     if (fileExists(dir, io, "model.safetensors.index.json")) {
         const scan = try scanSafetensors(allocator, io, dir, model_path);
-        defer if (scan.first_weight_path) |first| allocator.free(first);
+        errdefer scan.deinit(allocator);
         if (scan.count == 0) {
             return error.UnsupportedArtifact;
         }
         return .{
             .kind = .directory_sharded_safetensors,
             .primary_weight_path = try joinPath(allocator, model_path, "model.safetensors.index.json"),
+            .weight_paths = scan.paths,
             .weight_file_count = scan.count,
         };
     }
 
     const scan = try scanSafetensors(allocator, io, dir, model_path);
-    if (scan.first_weight_path) |first| {
+    errdefer scan.deinit(allocator);
+    if (scan.count > 0) {
+        const primary = allocator.dupe(u8, scan.paths[0]) catch return error.OutOfMemory;
         return .{
             .kind = .directory_safetensors,
-            .primary_weight_path = first,
+            .primary_weight_path = primary,
+            .weight_paths = scan.paths,
             .weight_file_count = scan.count,
         };
     }
@@ -241,7 +366,11 @@ fn discoverDirectoryArtifact(
 
 const SafetensorsScan = struct {
     count: usize,
-    first_weight_path: ?[]u8,
+    paths: [][]u8,
+
+    fn deinit(self: SafetensorsScan, allocator: std.mem.Allocator) void {
+        freeStringList(allocator, self.paths);
+    }
 };
 
 fn scanSafetensors(
@@ -251,20 +380,21 @@ fn scanSafetensors(
     model_path: []const u8,
 ) SessionError!SafetensorsScan {
     var iter = dir.iterate();
-    var count: usize = 0;
-    var first: ?[]u8 = null;
-    errdefer if (first) |value| allocator.free(value);
+    var paths: std.ArrayList([]u8) = .empty;
+    defer paths.deinit(allocator);
+    errdefer freeStringsOnly(allocator, paths.items);
 
     while (iter.next(io) catch return error.InvalidPath) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".safetensors")) {
             continue;
         }
-        count += 1;
-        if (first == null) {
-            first = try joinPath(allocator, model_path, entry.name);
-        }
+        const weight_path = try joinPath(allocator, model_path, entry.name);
+        errdefer allocator.free(weight_path);
+        paths.append(allocator, weight_path) catch return error.OutOfMemory;
     }
-    return .{ .count = count, .first_weight_path = first };
+    std.sort.insertion([]u8, paths.items, {}, pathLessThan);
+    const owned = paths.toOwnedSlice(allocator) catch return error.OutOfMemory;
+    return .{ .count = owned.len, .paths = owned };
 }
 
 fn fileExists(dir: std.Io.Dir, io: std.Io, file_name: []const u8) bool {
@@ -278,6 +408,142 @@ fn joinPath(
     child: []const u8,
 ) SessionError![]u8 {
     return path.join(allocator, &.{ parent, child }) catch error.OutOfMemory;
+}
+
+fn pathLessThan(_: void, lhs: []u8, rhs: []u8) bool {
+    return std.mem.lessThan(u8, lhs, rhs);
+}
+
+fn singlePathList(
+    allocator: std.mem.Allocator,
+    item: []const u8,
+) SessionError![][]u8 {
+    const list = allocator.alloc([]u8, 1) catch return error.OutOfMemory;
+    errdefer allocator.free(list);
+    list[0] = allocator.dupe(u8, item) catch return error.OutOfMemory;
+    return list;
+}
+
+fn freeStringList(allocator: std.mem.Allocator, items: [][]u8) void {
+    freeStringsOnly(allocator, items);
+    allocator.free(items);
+}
+
+fn freeStringsOnly(allocator: std.mem.Allocator, items: [][]u8) void {
+    for (items) |item| {
+        allocator.free(item);
+    }
+}
+
+fn loadWeights(
+    allocator: std.mem.Allocator,
+    weight_paths: []const []const u8,
+) SessionError!Weights {
+    if (weight_paths.len == 0) {
+        return error.UnsupportedArtifact;
+    }
+    if (!linked or builtin.is_test) {
+        return Weights.empty();
+    }
+
+    var weights = Weights{
+        .params = native.mlx_map_string_to_array_new(),
+        .metadata = native.mlx_map_string_to_string_new(),
+        .loaded = true,
+        .loaded_file_count = 0,
+    };
+    errdefer weights.deinit();
+    if (weights.params.ctx == null or weights.metadata.ctx == null) {
+        return error.MlxCallFailed;
+    }
+
+    const stream = native.mlx_default_gpu_stream_new();
+    if (stream.ctx == null) {
+        return error.MlxCallFailed;
+    }
+    defer _ = native.mlx_stream_free(stream);
+
+    for (weight_paths, 0..) |weight_path, index| {
+        const c_path = allocator.dupeZ(u8, weight_path) catch return error.OutOfMemory;
+        defer allocator.free(c_path);
+        if (index == 0) {
+            if (native.mlx_load_safetensors(&weights.params, &weights.metadata, c_path.ptr, stream) != 0) {
+                return error.MlxCallFailed;
+            }
+        } else {
+            var shard_params = native.mlx_map_string_to_array_new();
+            var shard_metadata = native.mlx_map_string_to_string_new();
+            defer _ = native.mlx_map_string_to_array_free(shard_params);
+            defer _ = native.mlx_map_string_to_string_free(shard_metadata);
+            if (shard_params.ctx == null or shard_metadata.ctx == null) {
+                return error.MlxCallFailed;
+            }
+            if (native.mlx_load_safetensors(&shard_params, &shard_metadata, c_path.ptr, stream) != 0) {
+                return error.MlxCallFailed;
+            }
+            try mergeArrayMap(weights.params, shard_params);
+            try mergeStringMap(weights.metadata, shard_metadata);
+        }
+        weights.loaded_file_count += 1;
+    }
+    return weights;
+}
+
+fn mergeArrayMap(target: MlxMapStringToArray, source: MlxMapStringToArray) SessionError!void {
+    if (!linked or builtin.is_test) {
+        return;
+    }
+    const iterator = native.mlx_map_string_to_array_iterator_new(source);
+    if (iterator.ctx == null) {
+        return error.MlxCallFailed;
+    }
+    defer _ = native.mlx_map_string_to_array_iterator_free(iterator);
+
+    while (true) {
+        var key: [*c]const u8 = null;
+        var value = MlxArray{ .ctx = null };
+        const status = native.mlx_map_string_to_array_iterator_next(&key, &value, iterator);
+        if (status == 2) {
+            return;
+        }
+        if (status != 0 or key == null or value.ctx == null) {
+            if (value.ctx != null) {
+                _ = native.mlx_array_free(value);
+            }
+            return error.MlxCallFailed;
+        }
+        if (native.mlx_map_string_to_array_insert(target, key, value) != 0) {
+            _ = native.mlx_array_free(value);
+            return error.MlxCallFailed;
+        }
+        _ = native.mlx_array_free(value);
+    }
+}
+
+fn mergeStringMap(target: MlxMapStringToString, source: MlxMapStringToString) SessionError!void {
+    if (!linked or builtin.is_test) {
+        return;
+    }
+    const iterator = native.mlx_map_string_to_string_iterator_new(source);
+    if (iterator.ctx == null) {
+        return error.MlxCallFailed;
+    }
+    defer _ = native.mlx_map_string_to_string_iterator_free(iterator);
+
+    while (true) {
+        var key: [*c]const u8 = null;
+        var value: [*c]const u8 = null;
+        const status = native.mlx_map_string_to_string_iterator_next(&key, &value, iterator);
+        if (status == 2) {
+            return;
+        }
+        if (status != 0 or key == null or value == null) {
+            return error.MlxCallFailed;
+        }
+        if (native.mlx_map_string_to_string_insert(target, key, value) != 0) {
+            return error.MlxCallFailed;
+        }
+    }
 }
 
 pub const TensorError = error{
@@ -479,9 +745,11 @@ test "MLX session discovers model.safetensors directory artifacts" {
 
     try std.testing.expectEqual(ArtifactKind.directory_model_safetensors, session.artifact_kind);
     try std.testing.expectEqual(@as(usize, 1), session.weight_file_count);
+    try std.testing.expect(!session.weights.loaded);
     const json = try sessionDiagnosticsJson(session, std.testing.allocator);
     defer std.testing.allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_kind\":\"directory_model_safetensors\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"weights_loaded\":false") != null);
 }
 
 test "MLX session discovers sharded safetensors directory artifacts" {
@@ -501,6 +769,8 @@ test "MLX session discovers sharded safetensors directory artifacts" {
 
     try std.testing.expectEqual(ArtifactKind.directory_sharded_safetensors, session.artifact_kind);
     try std.testing.expectEqual(@as(usize, 2), session.weight_file_count);
+    try std.testing.expectEqual(@as(usize, 2), session.weight_paths.len);
+    try std.testing.expect(std.mem.endsWith(u8, session.weight_paths[0], "model-00001-of-00002.safetensors"));
 }
 
 test "runtime dtype maps to mlx-c dtype" {
