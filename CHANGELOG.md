@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.45`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.46`.
+- Moved Linux memory snapshots into Zig by reading `/proc/self/status` directly from `dart_inference_runtime_memory_info_json`, while leaving non-Linux platform-specific memory probes behind the private adapter.
 - Moved `zigRuntimeMode` dispatch to Zig-owned JSON parsing instead of substring matching the Dart-encoded options string.
 - Removed the stale unused `dart_inference_bindings_generated.dart` raw-binding placeholder from the public package surface.
 - Renamed the private Apple `mlx-c` dependency to `dinf_zig_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside Zig.

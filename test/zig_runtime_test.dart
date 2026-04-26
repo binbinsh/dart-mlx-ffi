@@ -20,6 +20,16 @@ void main() {
       expect(mlx['registered_artifacts'], contains('dart_inference_linear'));
     });
 
+    test('reports Zig-owned memory snapshots on Linux', () {
+      final memory = NativeRuntimeMemory.snapshot();
+      expect(memory['peak_memory_bytes'], isA<int>());
+      if (Platform.isLinux) {
+        expect(memory['native_backend'], 'zig');
+        expect(memory['vm_hwm'], isA<int>());
+        expect(memory['vm_rss'], isA<int>());
+      }
+    });
+
     test('creates MLX sessions in Zig and rejects unimplemented execution', () {
       final artifactDir = Directory.systemTemp.createTempSync(
         'dart_inference_mlx_',

@@ -40,6 +40,12 @@ const SessionMode = enum {
     mlx,
 };
 
+const MemoryError = error{
+    FileOpen,
+    FileTooLarge,
+    OutOfMemory,
+};
+
 const Session = struct {
     engine: i32,
     mode: SessionMode,
@@ -146,6 +152,53 @@ fn backendJson() []const u8 {
 
 fn copyBackendJson() [*c]u8 {
     return copyString(backendJson());
+}
+
+fn linuxMemoryInfoJson(allocator: std.mem.Allocator) MemoryError![*c]u8 {
+    const status = try readProcStatus(allocator);
+    defer allocator.free(status);
+    const peak = procStatusKb(status, "VmHWM:");
+    const rss = procStatusKb(status, "VmRSS:");
+    const text = std.fmt.allocPrintSentinel(
+        allocator,
+        "{{\"native_backend\":\"zig\",\"peak_memory_bytes\":{d},\"vm_hwm\":{d},\"vm_rss\":{d}}}",
+        .{ peak, peak, rss },
+        0,
+    ) catch return error.OutOfMemory;
+    return @ptrCast(text.ptr);
+}
+
+fn readProcStatus(allocator: std.mem.Allocator) MemoryError![]u8 {
+    const file = std.c.fopen("/proc/self/status", "rb") orelse return error.FileOpen;
+    defer _ = std.c.fclose(file);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var buffer: [4096]u8 = undefined;
+    while (true) {
+        const read = std.c.fread(buffer[0..].ptr, 1, buffer.len, file);
+        if (read == 0) {
+            break;
+        }
+        if (out.items.len + read > 128 * 1024) {
+            return error.FileTooLarge;
+        }
+        out.appendSlice(allocator, buffer[0..read]) catch return error.OutOfMemory;
+    }
+    return out.toOwnedSlice(allocator) catch return error.OutOfMemory;
+}
+
+fn procStatusKb(status: []const u8, key: []const u8) u64 {
+    var lines = std.mem.splitScalar(u8, status, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, key)) {
+            continue;
+        }
+        var fields = std.mem.tokenizeAny(u8, line[key.len..], " \t");
+        const value = fields.next() orelse return 0;
+        const kb = std.fmt.parseInt(u64, value, 10) catch return 0;
+        return kb * 1024;
+    }
+    return 0;
 }
 
 fn dtypeSize(dtype: i32) usize {
@@ -656,6 +709,9 @@ export fn dart_inference_runtime_free_buffer(value: ?*anyopaque) void {
 }
 
 export fn dart_inference_runtime_memory_info_json() [*c]u8 {
+    if (builtin.os.tag == .linux and builtin.abi != .android) {
+        return linuxMemoryInfoJson(std.heap.c_allocator) catch cpp.dinf_cpp_runtime_memory_info_json();
+    }
     return cpp.dinf_cpp_runtime_memory_info_json();
 }
 
@@ -706,6 +762,28 @@ test "runtime mode is parsed from Zig-owned options JSON" {
     try std.testing.expect(!runtimeModeIsEcho("{\"message\":\"\\\"zigRuntimeMode\\\":\\\"echo\\\"\"}"));
     try std.testing.expect(!runtimeModeIsEcho("{\"zigRuntimeMode\":true}"));
     try std.testing.expect(!runtimeModeIsEcho("{"));
+}
+
+test "Linux proc status memory fields parse as bytes" {
+    const status =
+        \\Name:   dart_inference
+        \\VmHWM:       1234 kB
+        \\VmRSS:         42 kB
+        \\
+    ;
+    try std.testing.expectEqual(@as(u64, 1234 * 1024), procStatusKb(status, "VmHWM:"));
+    try std.testing.expectEqual(@as(u64, 42 * 1024), procStatusKb(status, "VmRSS:"));
+    try std.testing.expectEqual(@as(u64, 0), procStatusKb(status, "VmPeak:"));
+}
+
+test "memory info is owned by Zig on Linux" {
+    const json = dart_inference_runtime_memory_info_json();
+    defer dart_inference_runtime_free_string(json);
+    if (builtin.os.tag == .linux and builtin.abi != .android) {
+        const text = json[0..std.mem.len(json)];
+        try std.testing.expect(std.mem.indexOf(u8, text, "\"native_backend\":\"zig\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "\"peak_memory_bytes\"") != null);
+    }
 }
 
 test "MLX output batch moves into runtime ABI tensors" {
