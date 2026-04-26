@@ -79,8 +79,6 @@ DINF_RUNTIME_EXPORT void dinf_cpp_free_tensors(
 
 DINF_RUNTIME_EXPORT void dinf_cpp_free_str(char* value);
 
-DINF_RUNTIME_EXPORT char* dinf_cpp_info_json();
-
 DINF_RUNTIME_EXPORT char* dinf_cpp_mem_json();
 
 DINF_RUNTIME_EXPORT char* dinf_cpp_diag_json(

@@ -54,7 +54,6 @@ if(APPLE)
       "${CMAKE_CURRENT_BINARY_DIR}/dart_inference_runtime_adapter.exports")
   file(
     WRITE "${_dart_inference_exports}"
-    "_dinf_cpp_info_json\n"
     "_dinf_cpp_open\n"
     "_dinf_cpp_diag_json\n"
     "_dinf_cpp_close\n"

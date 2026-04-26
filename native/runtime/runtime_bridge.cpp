@@ -99,11 +99,6 @@ extern "C" void dinf_cpp_free_str(char* value) {
   std::free(value);
 }
 
-extern "C" char* dinf_cpp_info_json() {
-  return dinf_copy_string(
-      "{\"native_backend\":\"cpp-adapter\",\"abi\":\"dinf_cpp_v1\"}");
-}
-
 extern "C" char* dinf_cpp_diag_json(DinfRuntimeSession* session) {
   if (session == nullptr) {
     return dinf_copy_string("{}");

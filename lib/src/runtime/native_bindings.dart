@@ -46,6 +46,28 @@ final class ResolveResultAbi extends ffi.Struct {
   external int fallbackEngine;
 }
 
+final class InfoAbi extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> nativeBackend;
+
+  external ffi.Pointer<ffi.Char> zigVersion;
+
+  external ffi.Pointer<ffi.Char> asyncModel;
+
+  external ffi.Pointer<ffi.Char> abi;
+
+  external ffi.Pointer<ffi.Char> mlxOwner;
+
+  external ffi.Pointer<ffi.Char> mlxApi;
+
+  @ffi.Int32()
+  external int mlxLinked;
+
+  @ffi.Int32()
+  external int mlxEnabled;
+
+  external ffi.Pointer<ffi.Char> mlxArtifacts;
+}
+
 @ffi.Native<
   ffi.Pointer<ffi.Void> Function(
     ffi.Int32,
@@ -99,8 +121,8 @@ external void freeTensors(ffi.Pointer<NamedTensorAbi> tensors, int count);
 @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Char>)>(symbol: 'dinf_free_str')
 external void freeStr(ffi.Pointer<ffi.Char> value);
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_info_json')
-external ffi.Pointer<ffi.Char> infoJson();
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<InfoAbi>)>(symbol: 'dinf_info')
+external int info(ffi.Pointer<InfoAbi> out);
 
 @ffi.Native<ffi.Int32 Function()>(symbol: 'dinf_platform_id')
 external int platformId();

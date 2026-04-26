@@ -19,24 +19,45 @@ final _nativeInputFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((pointer) {
     native.freeBuf(pointer);
   }
 });
+const _infoListSep = '\x1e';
 
 /// Native runtime implementation metadata.
 abstract final class NativeRuntimeBackend {
   static Map<String, Object?> info() {
-    final ptr = native.infoJson();
-    if (ptr == ffi.nullptr) {
-      return const <String, Object?>{};
-    }
+    final out = calloc<native.InfoAbi>();
     try {
-      final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
-      if (decoded is Map) {
-        return Map<String, Object?>.from(decoded);
+      if (native.info(out) != 0) {
+        return const <String, Object?>{};
       }
-      return const <String, Object?>{};
+      final value = out.ref;
+      return <String, Object?>{
+        'native_backend': _staticText(value.nativeBackend),
+        'zig_version': _staticText(value.zigVersion),
+        'async_model': _staticText(value.asyncModel),
+        'abi': _staticText(value.abi),
+        'mlx_backend': <String, Object?>{
+          'owner': _staticText(value.mlxOwner),
+          'api': _staticText(value.mlxApi),
+          'linked': value.mlxLinked != 0,
+          'enabled': value.mlxEnabled != 0,
+          'registered_artifacts': _staticList(value.mlxArtifacts),
+        },
+      };
     } finally {
-      native.freeStr(ptr);
+      calloc.free(out);
     }
   }
+}
+
+String _staticText(ffi.Pointer<ffi.Char> value) {
+  if (value == ffi.nullptr) return '';
+  return value.cast<Utf8>().toDartString();
+}
+
+List<String> _staticList(ffi.Pointer<ffi.Char> value) {
+  final text = _staticText(value);
+  if (text.isEmpty) return const <String>[];
+  return text.split(_infoListSep);
 }
 
 /// Cross-platform memory snapshot from the native runtime bridge.

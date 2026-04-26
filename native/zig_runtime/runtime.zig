@@ -21,6 +21,7 @@ const freeString = abi.freeString;
 const copyCString = abi.copyCString;
 const validTensor = abi.validTensor;
 const copyTensor = abi.copyTensor;
+const mlx_artifacts = "mlxfn\x1edart_inference_linear";
 
 const SessionMode = enum {
     echo,
@@ -32,6 +33,18 @@ const MemoryError = error{
     FileOpen,
     FileTooLarge,
     OutOfMemory,
+};
+
+const InfoAbi = extern struct {
+    native_backend: [*c]const u8,
+    zig_version: [*c]const u8,
+    async_model: [*c]const u8,
+    abi: [*c]const u8,
+    mlx_owner: [*c]const u8,
+    mlx_api: [*c]const u8,
+    mlx_linked: i32,
+    mlx_enabled: i32,
+    mlx_artifacts: [*c]const u8,
 };
 
 const Session = struct {
@@ -114,10 +127,6 @@ fn setError(error_out: ?*[*c]u8, message: []const u8) void {
 
 fn backendJson() []const u8 {
     return "{\"native_backend\":\"zig\",\"zig_version\":\"0.16.0\",\"async_model\":\"std.Io-ready\",\"abi\":\"dinf_v1\",\"mlx_backend\":" ++ mlx_backend.status_json ++ "}";
-}
-
-fn copyBackendJson() [*c]u8 {
-    return copyString(backendJson());
 }
 
 fn optionalCString(value: [*c]const u8) ?[]const u8 {
@@ -316,8 +325,20 @@ fn createMlxSession(
     return session;
 }
 
-export fn dinf_info_json() [*c]u8 {
-    return copyBackendJson();
+export fn dinf_info(out: ?*InfoAbi) i32 {
+    const info = out orelse return 1;
+    info.* = .{
+        .native_backend = "zig".ptr,
+        .zig_version = pinned_zig_version.ptr,
+        .async_model = "std.Io-ready".ptr,
+        .abi = "dinf_v1".ptr,
+        .mlx_owner = mlx_backend.owner.ptr,
+        .mlx_api = mlx_backend.api.ptr,
+        .mlx_linked = if (mlx_backend.linked) 1 else 0,
+        .mlx_enabled = if (mlx_backend.enabled) 1 else 0,
+        .mlx_artifacts = mlx_artifacts.ptr,
+    };
+    return 0;
 }
 
 export fn dinf_platform_id() i32 {
@@ -901,6 +922,17 @@ test "backend json is stable" {
     try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"native_backend\":\"zig\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"mlx_backend\":{\"owner\":\"zig\",\"api\":\"mlx-c\"") != null);
     try std.testing.expectEqualStrings(pinned_zig_version, builtin.zig_version_string);
+}
+
+test "runtime info ABI uses static fields" {
+    var info: InfoAbi = undefined;
+    try std.testing.expectEqual(@as(i32, 0), dinf_info(&info));
+    try std.testing.expectEqualStrings("zig", info.native_backend[0..std.mem.len(info.native_backend)]);
+    try std.testing.expectEqualStrings(pinned_zig_version, info.zig_version[0..std.mem.len(info.zig_version)]);
+    try std.testing.expectEqualStrings("mlx-c", info.mlx_api[0..std.mem.len(info.mlx_api)]);
+    try std.testing.expectEqual(if (mlx_backend.enabled) @as(i32, 1) else @as(i32, 0), info.mlx_enabled);
+    try std.testing.expect(std.mem.indexOf(u8, info.mlx_artifacts[0..std.mem.len(info.mlx_artifacts)], "mlxfn") != null);
+    try std.testing.expectEqual(@as(i32, 1), dinf_info(null));
 }
 
 test "runtime capabilities are reported from Zig" {
