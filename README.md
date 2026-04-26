@@ -11,7 +11,7 @@ Dart API -> dart_inference_runtime_* ABI -> Zig -> private C/C++/ObjC++ libs
 
 Dart no longer exposes raw MLX C bindings or a per-op tensor algebra layer.
 Model sessions, tensor packing, backend dispatch, native memory ownership, and
-future MLX calls belong behind the Zig runtime boundary.
+MLX calls belong behind the Zig runtime boundary.
 
 ## Status
 
@@ -21,8 +21,8 @@ future MLX calls belong behind the Zig runtime boundary.
 - Dart-facing native symbols: `dart_inference_runtime_*`
 - Private adapter symbols: `dinf_cpp_runtime_*`
 - Current native backends: Core ML, ONNX Runtime, LiteRT
-- MLX: reserved for a Zig-owned backend; it is not selected by default until
-  that backend is implemented and registered
+- MLX: Zig-owned `mlx-c` link layer exists for Apple targets; model execution
+  is still disabled until the Zig executor is implemented and registered
 
 ## Public Entry Points
 
@@ -58,10 +58,14 @@ over native memory and released by `ModelOutputs.close()`.
 
 ## Native Build
 
-The package build hook builds two dynamic libraries:
+The package build hook builds two required dynamic libraries:
 
 - `dart_inference_runtime_adapter`: private C/C++/ObjC++ backend adapter
 - `dart_inference_runtime`: Zig ABI library loaded by Dart FFI
+
+On iOS and macOS it also builds `dart_inference_mlx_c`, a private `mlx-c`
+dependency linked only by the Zig runtime. Dart never binds that library
+directly.
 
 Zig is pinned by:
 

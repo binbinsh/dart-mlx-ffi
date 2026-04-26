@@ -139,7 +139,7 @@ fn setError(error_out: ?*[*c]u8, message: []const u8) void {
 }
 
 fn backendJson() []const u8 {
-    return "{\"native_backend\":\"zig\",\"zig_version\":\"0.16.0\",\"async_model\":\"std.Io-ready\",\"abi\":\"dart_inference_runtime_v1\",\"mlx_backend\":{\"owner\":\"zig\",\"api\":\"mlx-c\",\"enabled\":false}}";
+    return "{\"native_backend\":\"zig\",\"zig_version\":\"0.16.0\",\"async_model\":\"std.Io-ready\",\"abi\":\"dart_inference_runtime_v1\",\"mlx_backend\":" ++ mlx_backend.status_json ++ "}";
 }
 
 fn copyBackendJson() [*c]u8 {
@@ -311,6 +311,20 @@ fn createMlxSession(
 ) ?*Session {
     _ = model_path;
     _ = options_json;
+    if (mlx_backend.versionString(std.heap.c_allocator)) |version| {
+        defer std.heap.c_allocator.free(version);
+        const message = std.fmt.allocPrint(
+            std.heap.c_allocator,
+            "Zig-owned MLX backend reached mlx-c {s}, but model execution is not implemented yet.",
+            .{version},
+        ) catch {
+            setError(error_out, mlx_backend.unavailableMessage());
+            return null;
+        };
+        defer std.heap.c_allocator.free(message);
+        setError(error_out, message);
+        return null;
+    } else |_| {}
     setError(error_out, mlx_backend.unavailableMessage());
     return null;
 }
@@ -479,5 +493,6 @@ export fn dart_inference_runtime_diagnostics_json(handle: ?*anyopaque) [*c]u8 {
 
 test "backend json is stable" {
     try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"native_backend\":\"zig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, backendJson(), "\"mlx_backend\":{\"owner\":\"zig\",\"api\":\"mlx-c\"") != null);
     try std.testing.expectEqualStrings(pinned_zig_version, builtin.zig_version_string);
 }

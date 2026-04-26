@@ -113,6 +113,8 @@ The ABI is synchronous today because every target can support it. Zig remains
 - MLX calls move behind Zig. Until the `mlx-c` executor is implemented and
   registered, runtime resolution must not select MLX by default and explicit
   MLX loads must fail from the Zig runtime, not the C/C++ adapter.
+- The Apple build hook produces `dart_inference_mlx_c` as a private `mlx-c`
+  dependency for Zig. It is not a Dart-facing code asset API.
 - The former Dart-facing MLX raw/shim/stable APIs and C++ bridge are removed
   from the package source.
 - New native entry points use `dart_inference_runtime_*`.

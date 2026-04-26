@@ -44,7 +44,11 @@ void main() {
           isA<StateError>().having(
             (error) => error.message,
             'message',
-            contains('Zig-owned MLX backend is not implemented yet'),
+            allOf(
+              contains('Zig-owned MLX backend'),
+              contains('mlx-c'),
+              isNot(contains('C++ adapter')),
+            ),
           ),
         ),
       );

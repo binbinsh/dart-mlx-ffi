@@ -176,6 +176,23 @@ Future<void> _buildRuntimeAsset(
       '$adapterLibraryFile',
     );
   }
+  final mlxCEnabled = _isAppleTarget(code.targetOS);
+  if (mlxCEnabled) {
+    await _buildMlxCDependency(
+      logger,
+      input: input,
+      output: output,
+      packageRoot: packageRoot,
+      packageRootPath: packageRootPath,
+      outputDirectory: outputDirectory,
+      outputDirectoryPath: outputDirectoryPath,
+      code: code,
+      compiler: compiler,
+      cxxCompiler: cxxCompiler,
+      archiver: archiver,
+      generator: generator,
+    );
+  }
 
   await _bundleRuntimeDependency(
     logger,
@@ -237,6 +254,97 @@ Future<void> _buildRuntimeAsset(
     code: code,
     libraryFile: runtimeLibraryFile,
     adapterLibraryDirectory: outputDirectoryPath,
+    mlxCEnabled: mlxCEnabled,
+  );
+}
+
+Future<void> _buildMlxCDependency(
+  Logger logger, {
+  required BuildInput input,
+  required BuildOutputBuilder output,
+  required Uri packageRoot,
+  required String packageRootPath,
+  required Uri outputDirectory,
+  required String outputDirectoryPath,
+  required CodeConfig code,
+  required String? compiler,
+  required String? cxxCompiler,
+  required String? archiver,
+  required String generator,
+}) async {
+  final libraryName = code.targetOS.libraryFileName(
+    'dart_inference_mlx_c',
+    DynamicLoadingBundled(),
+  );
+  final libraryFile = outputDirectory.resolve(libraryName);
+  final buildDirectory = outputDirectory.resolve('cmake_mlx_c/');
+  final buildDirectoryPath = buildDirectory.toFilePath();
+  final sdkName = code.targetOS == OS.iOS
+      ? _iosSdkName(code.iOS.targetSdk)
+      : 'macosx';
+  final metalEnabled = await _resolveMetalSupport(logger, code, sdkName);
+
+  await Directory.fromUri(buildDirectory).create(recursive: true);
+
+  final configureArgs = <String>[
+    '-S',
+    packageRoot.resolve('native/mlx_c').toFilePath(),
+    '-B',
+    buildDirectoryPath,
+    '-G',
+    generator,
+    '-DCMAKE_BUILD_TYPE=Release',
+    '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$outputDirectoryPath',
+    '-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$outputDirectoryPath',
+    '-DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=$outputDirectoryPath',
+    '-DCMAKE_OSX_ARCHITECTURES=${_appleArchitectureName(code.targetArchitecture)}',
+    '-DCMAKE_OSX_DEPLOYMENT_TARGET=${_deploymentTarget(code)}',
+    '-DMLX_BUILD_METAL=${metalEnabled ? 'ON' : 'OFF'}',
+    if (code.targetOS == OS.iOS) ...[
+      '-DCMAKE_SYSTEM_NAME=iOS',
+      '-DCMAKE_OSX_SYSROOT=$sdkName',
+      '-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY',
+    ] else ...[
+      '-DCMAKE_OSX_SYSROOT=$sdkName',
+    ],
+    if (compiler != null) '-DCMAKE_C_COMPILER=$compiler',
+    if (cxxCompiler != null) '-DCMAKE_CXX_COMPILER=$cxxCompiler',
+    if (archiver != null) '-DCMAKE_AR=$archiver',
+  ];
+
+  await _runProcess(
+    logger,
+    code: code,
+    executable: 'cmake',
+    arguments: configureArgs,
+    workingDirectory: packageRootPath,
+  );
+  await _runProcess(
+    logger,
+    code: code,
+    executable: 'cmake',
+    arguments: [
+      '--build',
+      buildDirectoryPath,
+      '--config',
+      'Release',
+      '--parallel',
+    ],
+    workingDirectory: packageRootPath,
+  );
+
+  if (!File.fromUri(libraryFile).existsSync()) {
+    throw StateError(
+      'Expected private mlx-c runtime library was not produced: $libraryFile',
+    );
+  }
+  output.assets.code.add(
+    CodeAsset(
+      package: input.packageName,
+      name: '${input.packageName}_mlx_c_dependency',
+      linkMode: DynamicLoadingBundled(),
+      file: libraryFile,
+    ),
   );
 }
 
@@ -249,6 +357,7 @@ Future<void> _buildZigRuntimeAsset(
   required CodeConfig code,
   required Uri libraryFile,
   required String adapterLibraryDirectory,
+  required bool mlxCEnabled,
 }) async {
   final zig = await _resolveZigExecutable(packageRootPath);
   final pinnedVersion = _pinnedZigVersion(packageRootPath);
@@ -274,6 +383,7 @@ Future<void> _buildZigRuntimeAsset(
     '-fstrip',
     '-L$adapterLibraryDirectory',
     '-ldart_inference_runtime_adapter',
+    if (mlxCEnabled) '-ldart_inference_mlx_c',
     '-rpath',
     _runtimeOriginRpath(code.targetOS),
     '--cache-dir',
@@ -540,6 +650,35 @@ Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
     }
   }
   return dependencies;
+}
+
+Future<bool> _hasMetalToolchain(Logger logger, String sdkName) async {
+  final result = await Process.run('xcrun', ['-sdk', sdkName, 'metal', '-v']);
+  if (result.exitCode == 0) {
+    return true;
+  }
+  logger.warning(
+    'Metal toolchain is unavailable for $sdkName. '
+    'Building MLX with MLX_BUILD_METAL=OFF. '
+    'Install it with: xcodebuild -downloadComponent MetalToolchain',
+  );
+  return false;
+}
+
+Future<bool> _resolveMetalSupport(
+  Logger logger,
+  CodeConfig code,
+  String sdkName,
+) async {
+  if (code.targetOS == OS.iOS && code.iOS.targetSdk == IOSSdk.iPhoneSimulator) {
+    logger.warning(
+      'Metal is disabled for iphonesimulator builds. '
+      'The simulator toolchain currently produces incompatible deployment '
+      'flags when compiling MLX Metal kernels.',
+    );
+    return false;
+  }
+  return _hasMetalToolchain(logger, sdkName);
 }
 
 bool _isAppleTarget(OS os) => os == OS.iOS || os == OS.macOS;
