@@ -47,6 +47,25 @@ const InfoAbi = extern struct {
     mlx_artifacts: [*c]const u8,
 };
 
+const MemoryAbi = extern struct {
+    native_backend: [*c]const u8,
+    peak_memory_bytes: u64,
+    vm_hwm: u64,
+    vm_rss: u64,
+    phys_footprint: u64,
+    resident_size: u64,
+    virtual_size: u64,
+    peak_working_set: u64,
+    working_set: u64,
+    android_peak_pss: u64,
+    android_pss: u64,
+    android_rss: u64,
+    android_native_heap_pss: u64,
+    android_java_heap_pss: u64,
+    android_native_heap_private_dirty: u64,
+    android_java_heap_private_dirty: u64,
+};
+
 const Session = struct {
     engine: i32,
     mode: SessionMode,
@@ -91,8 +110,9 @@ const cpp = if (builtin.is_test) struct {
         return 1;
     }
 
-    pub fn dinf_cpp_mem_json() [*c]u8 {
-        return copyString("{\"peak_memory_bytes\":0,\"native_backend\":\"zig-test\"}");
+    pub fn dinf_cpp_mem(out: *MemoryAbi) void {
+        out.* = emptyMemoryInfo();
+        out.native_backend = "zig-test".ptr;
     }
 
     pub fn dinf_cpp_diag_json(session: ?*anyopaque) [*c]u8 {
@@ -115,7 +135,7 @@ const cpp = if (builtin.is_test) struct {
         output_count: ?*isize,
         error_out: ?*[*c]u8,
     ) i32;
-    extern fn dinf_cpp_mem_json() [*c]u8;
+    extern fn dinf_cpp_mem(out: *MemoryAbi) void;
     extern fn dinf_cpp_diag_json(session: ?*anyopaque) [*c]u8;
 };
 
@@ -144,18 +164,38 @@ fn cStringOrEmpty(value: [*c]const u8) []const u8 {
     return optionalCString(value) orelse "";
 }
 
-fn linuxMemoryInfoJson(allocator: std.mem.Allocator) MemoryError![*c]u8 {
+fn emptyMemoryInfo() MemoryAbi {
+    return .{
+        .native_backend = null,
+        .peak_memory_bytes = 0,
+        .vm_hwm = 0,
+        .vm_rss = 0,
+        .phys_footprint = 0,
+        .resident_size = 0,
+        .virtual_size = 0,
+        .peak_working_set = 0,
+        .working_set = 0,
+        .android_peak_pss = 0,
+        .android_pss = 0,
+        .android_rss = 0,
+        .android_native_heap_pss = 0,
+        .android_java_heap_pss = 0,
+        .android_native_heap_private_dirty = 0,
+        .android_java_heap_private_dirty = 0,
+    };
+}
+
+fn linuxMemoryInfo(allocator: std.mem.Allocator) MemoryError!MemoryAbi {
     const status = try readProcStatus(allocator);
     defer allocator.free(status);
     const peak = procStatusKb(status, "VmHWM:");
     const rss = procStatusKb(status, "VmRSS:");
-    const text = std.fmt.allocPrintSentinel(
-        allocator,
-        "{{\"native_backend\":\"zig\",\"peak_memory_bytes\":{d},\"vm_hwm\":{d},\"vm_rss\":{d}}}",
-        .{ peak, peak, rss },
-        0,
-    ) catch return error.OutOfMemory;
-    return @ptrCast(text.ptr);
+    var info = emptyMemoryInfo();
+    info.native_backend = "zig".ptr;
+    info.peak_memory_bytes = peak;
+    info.vm_hwm = peak;
+    info.vm_rss = rss;
+    return info;
 }
 
 fn readProcStatus(allocator: std.mem.Allocator) MemoryError![]u8 {
@@ -788,11 +828,22 @@ export fn dinf_free_buf(value: ?*anyopaque) void {
     abi.freeBuf(value);
 }
 
-export fn dinf_mem_json() [*c]u8 {
-    if (builtin.os.tag == .linux and builtin.abi != .android) {
-        return linuxMemoryInfoJson(std.heap.c_allocator) catch cpp.dinf_cpp_mem_json();
-    }
-    return cpp.dinf_cpp_mem_json();
+export fn dinf_mem(out: ?*MemoryAbi) i32 {
+    const info = out orelse return 1;
+    info.* = if (builtin.os.tag == .linux and builtin.abi != .android)
+        linuxMemoryInfo(std.heap.c_allocator) catch blk: {
+            var fallback = emptyMemoryInfo();
+            cpp.dinf_cpp_mem(&fallback);
+            fallback.native_backend = "zig".ptr;
+            break :blk fallback;
+        }
+    else blk: {
+        var fallback = emptyMemoryInfo();
+        cpp.dinf_cpp_mem(&fallback);
+        fallback.native_backend = "zig".ptr;
+        break :blk fallback;
+    };
+    return 0;
 }
 
 export fn dinf_ort_libs(
@@ -1034,13 +1085,14 @@ test "Linux proc status memory fields parse as bytes" {
 }
 
 test "memory info is owned by Zig on Linux" {
-    const json = dinf_mem_json();
-    defer dinf_free_str(json);
+    var info: MemoryAbi = undefined;
+    try std.testing.expectEqual(@as(i32, 0), dinf_mem(&info));
     if (builtin.os.tag == .linux and builtin.abi != .android) {
-        const text = json[0..std.mem.len(json)];
-        try std.testing.expect(std.mem.indexOf(u8, text, "\"native_backend\":\"zig\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, text, "\"peak_memory_bytes\"") != null);
+        try std.testing.expectEqualStrings("zig", info.native_backend[0..std.mem.len(info.native_backend)]);
+        try std.testing.expect(info.peak_memory_bytes >= info.vm_rss);
+        try std.testing.expect(info.vm_hwm >= info.vm_rss);
     }
+    try std.testing.expectEqual(@as(i32, 1), dinf_mem(null));
 }
 
 test "MLX output batch moves into runtime ABI tensors" {

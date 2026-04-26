@@ -63,20 +63,60 @@ List<String> _staticList(ffi.Pointer<ffi.Char> value) {
 /// Cross-platform memory snapshot from the native runtime bridge.
 abstract final class NativeRuntimeMemory {
   static Map<String, Object?> snapshot() {
-    final ptr = native.memJson();
-    if (ptr == ffi.nullptr) {
-      return const <String, Object?>{};
-    }
+    final out = calloc<native.MemAbi>();
     try {
-      final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
-      if (decoded is Map) {
-        return Map<String, Object?>.from(decoded);
+      if (native.mem(out) != 0) {
+        return const <String, Object?>{};
       }
-      return const <String, Object?>{};
+      final value = out.ref;
+      final snapshot = <String, Object?>{
+        'peak_memory_bytes': value.peakMemoryBytes,
+      };
+      _putText(snapshot, 'native_backend', value.nativeBackend);
+      _putNonZero(snapshot, 'vm_hwm', value.vmHwm);
+      _putNonZero(snapshot, 'vm_rss', value.vmRss);
+      _putNonZero(snapshot, 'phys_footprint', value.physFootprint);
+      _putNonZero(snapshot, 'resident_size', value.residentSize);
+      _putNonZero(snapshot, 'virtual_size', value.virtualSize);
+      _putNonZero(snapshot, 'peak_working_set', value.peakWorkingSet);
+      _putNonZero(snapshot, 'working_set', value.workingSet);
+      _putNonZero(snapshot, 'android_peak_pss', value.androidPeakPss);
+      _putNonZero(snapshot, 'android_pss', value.androidPss);
+      _putNonZero(snapshot, 'android_rss', value.androidRss);
+      _putNonZero(
+        snapshot,
+        'android_native_heap_pss',
+        value.androidNativeHeapPss,
+      );
+      _putNonZero(snapshot, 'android_java_heap_pss', value.androidJavaHeapPss);
+      _putNonZero(
+        snapshot,
+        'android_native_heap_private_dirty',
+        value.androidNativeHeapPrivateDirty,
+      );
+      _putNonZero(
+        snapshot,
+        'android_java_heap_private_dirty',
+        value.androidJavaHeapPrivateDirty,
+      );
+      return snapshot;
     } finally {
-      native.freeStr(ptr);
+      calloc.free(out);
     }
   }
+}
+
+void _putText(
+  Map<String, Object?> map,
+  String key,
+  ffi.Pointer<ffi.Char> value,
+) {
+  final text = _staticText(value);
+  if (text.isNotEmpty) map[key] = text;
+}
+
+void _putNonZero(Map<String, Object?> map, String key, int value) {
+  if (value != 0) map[key] = value;
 }
 
 /// Zig-owned native tensor input buffer.

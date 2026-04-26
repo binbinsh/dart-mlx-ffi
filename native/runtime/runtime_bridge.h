@@ -41,6 +41,25 @@ struct DinfNamedTensor {
   DinfTensor tensor;
 };
 
+struct DinfMemoryInfo {
+  const char* native_backend;
+  uint64_t peak_memory_bytes;
+  uint64_t vm_hwm;
+  uint64_t vm_rss;
+  uint64_t phys_footprint;
+  uint64_t resident_size;
+  uint64_t virtual_size;
+  uint64_t peak_working_set;
+  uint64_t working_set;
+  uint64_t android_peak_pss;
+  uint64_t android_pss;
+  uint64_t android_rss;
+  uint64_t android_native_heap_pss;
+  uint64_t android_java_heap_pss;
+  uint64_t android_native_heap_private_dirty;
+  uint64_t android_java_heap_private_dirty;
+};
+
 class DinfRuntimeSession {
  public:
   virtual ~DinfRuntimeSession() = default;
@@ -80,6 +99,8 @@ DINF_RUNTIME_EXPORT void dinf_cpp_free_tensors(
 DINF_RUNTIME_EXPORT void dinf_cpp_free_str(char* value);
 
 DINF_RUNTIME_EXPORT char* dinf_cpp_mem_json();
+
+DINF_RUNTIME_EXPORT void dinf_cpp_mem(DinfMemoryInfo* out);
 
 DINF_RUNTIME_EXPORT char* dinf_cpp_diag_json(
     DinfRuntimeSession* session);

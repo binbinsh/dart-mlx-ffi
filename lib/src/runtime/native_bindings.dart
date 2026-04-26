@@ -68,6 +68,55 @@ final class InfoAbi extends ffi.Struct {
   external ffi.Pointer<ffi.Char> mlxArtifacts;
 }
 
+final class MemAbi extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> nativeBackend;
+
+  @ffi.Uint64()
+  external int peakMemoryBytes;
+
+  @ffi.Uint64()
+  external int vmHwm;
+
+  @ffi.Uint64()
+  external int vmRss;
+
+  @ffi.Uint64()
+  external int physFootprint;
+
+  @ffi.Uint64()
+  external int residentSize;
+
+  @ffi.Uint64()
+  external int virtualSize;
+
+  @ffi.Uint64()
+  external int peakWorkingSet;
+
+  @ffi.Uint64()
+  external int workingSet;
+
+  @ffi.Uint64()
+  external int androidPeakPss;
+
+  @ffi.Uint64()
+  external int androidPss;
+
+  @ffi.Uint64()
+  external int androidRss;
+
+  @ffi.Uint64()
+  external int androidNativeHeapPss;
+
+  @ffi.Uint64()
+  external int androidJavaHeapPss;
+
+  @ffi.Uint64()
+  external int androidNativeHeapPrivateDirty;
+
+  @ffi.Uint64()
+  external int androidJavaHeapPrivateDirty;
+}
+
 @ffi.Native<
   ffi.Pointer<ffi.Void> Function(
     ffi.Int32,
@@ -180,8 +229,8 @@ external ffi.Pointer<ffi.Char> artifactPath(
   ffi.Pointer<ffi.Char> artifactPath,
 );
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
-external ffi.Pointer<ffi.Char> memJson();
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<MemAbi>)>(symbol: 'dinf_mem')
+external int mem(ffi.Pointer<MemAbi> out);
 
 @ffi.Native<
   ffi.Pointer<ffi.Char> Function(

@@ -155,9 +155,11 @@ uint64_t update_peak(uint64_t value) {
 
 }  // namespace
 
-extern "C" char* dinf_cpp_mem_json() {
-  std::ostringstream out;
-  out << "{";
+extern "C" void dinf_cpp_mem(DinfMemoryInfo* out) {
+  if (out == nullptr) {
+    return;
+  }
+  *out = DinfMemoryInfo{};
 #if defined(__APPLE__)
   task_vm_info_data_t vm_info{};
   mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
@@ -167,12 +169,10 @@ extern "C" char* dinf_cpp_mem_json() {
       reinterpret_cast<task_info_t>(&vm_info),
       &count);
   if (status == KERN_SUCCESS) {
-    out << json_pair("peak_memory_bytes", vm_info.phys_footprint);
-    out << json_pair("phys_footprint", vm_info.phys_footprint);
-    out << json_pair("resident_size", vm_info.resident_size);
-    out << json_pair("virtual_size", vm_info.virtual_size, false);
-  } else {
-    out << json_pair("peak_memory_bytes", 0, false);
+    out->peak_memory_bytes = vm_info.phys_footprint;
+    out->phys_footprint = vm_info.phys_footprint;
+    out->resident_size = vm_info.resident_size;
+    out->virtual_size = vm_info.virtual_size;
   }
 #elif defined(_WIN32)
   PROCESS_MEMORY_COUNTERS_EX counters{};
@@ -180,34 +180,62 @@ extern "C" char* dinf_cpp_mem_json() {
           GetCurrentProcess(),
           reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
           sizeof(counters))) {
-    out << json_pair("peak_memory_bytes", counters.PeakWorkingSetSize);
-    out << json_pair("peak_working_set", counters.PeakWorkingSetSize);
-    out << json_pair("working_set", counters.WorkingSetSize, false);
-  } else {
-    out << json_pair("peak_memory_bytes", 0, false);
+    out->peak_memory_bytes = counters.PeakWorkingSetSize;
+    out->peak_working_set = counters.PeakWorkingSetSize;
+    out->working_set = counters.WorkingSetSize;
   }
 #elif defined(__ANDROID__)
   const AndroidSmapsTotals totals = read_android_smaps();
   const uint64_t peak_pss = update_peak(totals.pss);
-  out << json_pair("peak_memory_bytes", peak_pss);
-  out << json_pair("android_peak_pss", peak_pss);
-  out << json_pair("android_pss", totals.pss);
-  out << json_pair("android_rss", totals.rss);
-  out << json_pair("android_native_heap_pss", totals.native_heap_pss);
-  out << json_pair("android_java_heap_pss", totals.java_heap_pss);
-  out << json_pair(
-      "android_native_heap_private_dirty",
-      totals.native_heap_private_dirty);
-  out << json_pair(
-      "android_java_heap_private_dirty",
-      totals.java_heap_private_dirty,
-      false);
+  out->peak_memory_bytes = peak_pss;
+  out->android_peak_pss = peak_pss;
+  out->android_pss = totals.pss;
+  out->android_rss = totals.rss;
+  out->android_native_heap_pss = totals.native_heap_pss;
+  out->android_java_heap_pss = totals.java_heap_pss;
+  out->android_native_heap_private_dirty = totals.native_heap_private_dirty;
+  out->android_java_heap_private_dirty = totals.java_heap_private_dirty;
 #elif defined(__linux__)
   const uint64_t peak = proc_status_kb("VmHWM:");
   const uint64_t rss = proc_status_kb("VmRSS:");
-  out << json_pair("peak_memory_bytes", peak);
-  out << json_pair("vm_hwm", peak);
-  out << json_pair("vm_rss", rss, false);
+  out->peak_memory_bytes = peak;
+  out->vm_hwm = peak;
+  out->vm_rss = rss;
+#endif
+}
+
+extern "C" char* dinf_cpp_mem_json() {
+  DinfMemoryInfo info{};
+  dinf_cpp_mem(&info);
+  std::ostringstream out;
+  out << "{";
+#if defined(__APPLE__)
+  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
+  out << json_pair("phys_footprint", info.phys_footprint);
+  out << json_pair("resident_size", info.resident_size);
+  out << json_pair("virtual_size", info.virtual_size, false);
+#elif defined(_WIN32)
+  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
+  out << json_pair("peak_working_set", info.peak_working_set);
+  out << json_pair("working_set", info.working_set, false);
+#elif defined(__ANDROID__)
+  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
+  out << json_pair("android_peak_pss", info.android_peak_pss);
+  out << json_pair("android_pss", info.android_pss);
+  out << json_pair("android_rss", info.android_rss);
+  out << json_pair("android_native_heap_pss", info.android_native_heap_pss);
+  out << json_pair("android_java_heap_pss", info.android_java_heap_pss);
+  out << json_pair(
+      "android_native_heap_private_dirty",
+      info.android_native_heap_private_dirty);
+  out << json_pair(
+      "android_java_heap_private_dirty",
+      info.android_java_heap_private_dirty,
+      false);
+#elif defined(__linux__)
+  out << json_pair("peak_memory_bytes", info.peak_memory_bytes);
+  out << json_pair("vm_hwm", info.vm_hwm);
+  out << json_pair("vm_rss", info.vm_rss, false);
 #else
   out << json_pair("peak_memory_bytes", 0, false);
 #endif
