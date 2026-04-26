@@ -5,6 +5,7 @@ const coreml = @import("coreml.zig");
 const hf = @import("hf.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
+const open_opts = @import("open_opts.zig");
 const policy = @import("policy.zig");
 const resolve = @import("resolve.zig");
 
@@ -355,7 +356,7 @@ export fn dinf_artifact_path(
     return copyString(resolved);
 }
 
-export fn dinf_open(
+fn openSession(
     engine: i32,
     model_path: [*c]const u8,
     options_json: [*c]const u8,
@@ -384,6 +385,33 @@ export fn dinf_open(
         return null;
     };
     return @ptrCast(resolved);
+}
+
+export fn dinf_open_opts(
+    engine: i32,
+    model_path: [*c]const u8,
+    prefer_mask: i32,
+    diagnostics: i32,
+    num_threads: i32,
+    metadata_json: [*c]const u8,
+    backend_json: [*c]const u8,
+    error_out: ?*[*c]u8,
+) ?*anyopaque {
+    const allocator = std.heap.c_allocator;
+    const options = open_opts.build(
+        allocator,
+        engine,
+        prefer_mask,
+        diagnostics != 0,
+        num_threads,
+        optionalCString(metadata_json),
+        optionalCString(backend_json),
+    ) catch {
+        setError(error_out, "invalid runtime options JSON");
+        return null;
+    };
+    defer allocator.free(options);
+    return openSession(engine, model_path, options.ptr, error_out);
 }
 
 export fn dinf_close(handle: ?*anyopaque) void {
@@ -829,7 +857,7 @@ test "runtime mode is parsed from Zig-owned options JSON" {
 
 test "runtime open rejects unresolved remote artifacts in Zig" {
     var error_value: [*c]u8 = null;
-    const handle = dinf_open(
+    const handle = openSession(
         @intFromEnum(Engine.onnx),
         "hf://acme/demo/model.onnx",
         "{}",

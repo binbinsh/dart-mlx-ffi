@@ -279,15 +279,23 @@ final class NativeModelRuntime implements ModelRuntime {
     }
     final error = calloc<ffi.Pointer<ffi.Char>>();
     final path = bundle.artifactPath.toNativeUtf8().cast<ffi.Char>();
-    final optionsJson = jsonEncode({
-      'accelerators': options.prefer.map((value) => value.name).toList(),
-      'diagnostics': options.diagnostics,
-      if (options.numThreads != null) 'numThreads': options.numThreads,
-      ...bundle.artifact.metadata,
-      ...options.backendOptions,
-    }).toNativeUtf8().cast<ffi.Char>();
+    final metadataJson = jsonEncode(
+      bundle.artifact.metadata,
+    ).toNativeUtf8().cast<ffi.Char>();
+    final backendJson = jsonEncode(
+      options.backendOptions,
+    ).toNativeUtf8().cast<ffi.Char>();
     try {
-      final handle = native.open(_engineId(engine), path, optionsJson, error);
+      final handle = native.openOpts(
+        _engineId(engine),
+        path,
+        _preferMask(options.prefer),
+        options.diagnostics ? 1 : 0,
+        options.numThreads ?? 0,
+        metadataJson,
+        backendJson,
+        error,
+      );
       if (handle == ffi.nullptr) {
         throw StateError(_takeError(error));
       }
@@ -297,7 +305,8 @@ final class NativeModelRuntime implements ModelRuntime {
       );
     } finally {
       calloc.free(path);
-      calloc.free(optionsJson);
+      calloc.free(metadataJson);
+      calloc.free(backendJson);
       calloc.free(error);
     }
   }
@@ -626,6 +635,19 @@ int _engineId(RuntimeEngine engine) => switch (engine) {
   RuntimeEngine.onnx => 2,
   RuntimeEngine.litert => 3,
 };
+
+int _preferMask(List<Accelerator> values) {
+  var mask = 0;
+  for (final value in values) {
+    mask |= switch (value) {
+      Accelerator.cpu => 1,
+      Accelerator.gpu => 2,
+      Accelerator.ane => 4,
+      Accelerator.npu => 8,
+    };
+  }
+  return mask;
+}
 
 RuntimeCapabilities _caps(RuntimeEngine engine) {
   final mask = native.accelMask(_engineId(engine));

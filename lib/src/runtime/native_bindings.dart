@@ -28,14 +28,22 @@ final class NamedTensorAbi extends ffi.Struct {
   ffi.Pointer<ffi.Void> Function(
     ffi.Int32,
     ffi.Pointer<ffi.Char>,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Pointer<ffi.Char>,
     ffi.Pointer<ffi.Char>,
     ffi.Pointer<ffi.Pointer<ffi.Char>>,
   )
->(symbol: 'dinf_open')
-external ffi.Pointer<ffi.Void> open(
+>(symbol: 'dinf_open_opts')
+external ffi.Pointer<ffi.Void> openOpts(
   int engine,
   ffi.Pointer<ffi.Char> modelPath,
-  ffi.Pointer<ffi.Char> optionsJson,
+  int preferMask,
+  int diagnostics,
+  int numThreads,
+  ffi.Pointer<ffi.Char> metadataJson,
+  ffi.Pointer<ffi.Char> backendJson,
   ffi.Pointer<ffi.Pointer<ffi.Char>> error,
 );
 
