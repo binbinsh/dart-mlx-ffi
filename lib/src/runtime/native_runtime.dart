@@ -20,6 +20,14 @@ final _nativeInputFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((pointer) {
   }
 });
 const _infoListSep = '\x1e';
+const _diagPathSep = '\x1f';
+const _diagString = 1;
+const _diagInt = 2;
+const _diagBool = 3;
+const _diagMap = 4;
+const _diagList = 5;
+const _diagDouble = 6;
+const _diagNull = 7;
 
 /// Native runtime implementation metadata.
 abstract final class NativeRuntimeBackend {
@@ -464,18 +472,25 @@ final class _NativeModelSession implements ModelSession {
   }
 
   Map<String, Object?> _diagnostics() {
-    final ptr = native.diagJson(_handle);
-    if (ptr == ffi.nullptr) {
-      return const <String, Object?>{};
-    }
+    final count = calloc<ffi.IntPtr>();
+    ffi.Pointer<native.DiagEntryAbi> entries = ffi.nullptr;
     try {
-      final decoded = jsonDecode(ptr.cast<Utf8>().toDartString());
-      if (decoded is Map) {
-        return Map<String, Object?>.from(decoded);
+      entries = native.diag(_handle, count);
+      final length = count.value;
+      if (entries == ffi.nullptr || length <= 0) {
+        return const <String, Object?>{};
       }
-      return const <String, Object?>{};
+      final diagnostics = <String, Object?>{};
+      for (var i = 0; i < length; i += 1) {
+        final entry = (entries + i).ref;
+        _putDiag(diagnostics, _diagPath(entry), _diagValue(entry));
+      }
+      return diagnostics;
     } finally {
-      native.freeStr(ptr);
+      if (entries != ffi.nullptr) {
+        native.freeDiag(entries, count.value);
+      }
+      calloc.free(count);
     }
   }
 
@@ -520,6 +535,76 @@ final class _NativeModelSession implements ModelSession {
         ..tensor.data = _inputDataPointer(entry.key, tensor);
     }
     return _EncodedInputs(pointer, entries.length);
+  }
+}
+
+List<String> _diagPath(native.DiagEntryAbi entry) {
+  if (entry.path == ffi.nullptr) return const <String>[];
+  final text = entry.path.cast<Utf8>().toDartString();
+  return text.isEmpty ? const <String>[] : text.split(_diagPathSep);
+}
+
+Object? _diagValue(native.DiagEntryAbi entry) {
+  switch (entry.kind) {
+    case _diagString:
+      return _staticText(entry.text);
+    case _diagInt:
+      return entry.intValue;
+    case _diagBool:
+      return entry.boolValue != 0;
+    case _diagMap:
+      return <String, Object?>{};
+    case _diagList:
+      return <Object?>[];
+    case _diagDouble:
+      return entry.doubleValue;
+    case _diagNull:
+      return null;
+    default:
+      return null;
+  }
+}
+
+void _putDiag(Map<String, Object?> root, List<String> path, Object? value) {
+  if (path.isEmpty) return;
+  Object? current = root;
+  for (var i = 0; i < path.length - 1; i += 1) {
+    final segment = path[i];
+    final nextIsList = int.tryParse(path[i + 1]) != null;
+    current = _diagChild(current, segment, nextIsList);
+  }
+  _diagSet(current, path.last, value);
+}
+
+Object? _diagChild(Object? current, String segment, bool list) {
+  final next = list ? <Object?>[] : <String, Object?>{};
+  if (current is Map<String, Object?>) {
+    return current.putIfAbsent(segment, () => next);
+  }
+  if (current is List<Object?>) {
+    final index = int.tryParse(segment);
+    if (index == null) return null;
+    while (current.length <= index) {
+      current.add(null);
+    }
+    current[index] ??= next;
+    return current[index];
+  }
+  return null;
+}
+
+void _diagSet(Object? current, String segment, Object? value) {
+  if (current is Map<String, Object?>) {
+    current[segment] = value;
+    return;
+  }
+  if (current is List<Object?>) {
+    final index = int.tryParse(segment);
+    if (index == null) return;
+    while (current.length <= index) {
+      current.add(null);
+    }
+    current[index] = value;
   }
 }
 

@@ -117,6 +117,24 @@ final class MemAbi extends ffi.Struct {
   external int androidJavaHeapPrivateDirty;
 }
 
+final class DiagEntryAbi extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> path;
+
+  @ffi.Int32()
+  external int kind;
+
+  external ffi.Pointer<ffi.Char> text;
+
+  @ffi.Int64()
+  external int intValue;
+
+  @ffi.Double()
+  external double doubleValue;
+
+  @ffi.Int32()
+  external int boolValue;
+}
+
 @ffi.Native<
   ffi.Pointer<ffi.Void> Function(
     ffi.Int32,
@@ -297,10 +315,21 @@ external ffi.Pointer<ffi.Char> hfCachePath(
 )
 external int hfDirArtifact(ffi.Pointer<ffi.Char> artifactPath);
 
-@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Void>)>(
-  symbol: 'dinf_diag_json',
+@ffi.Native<
+  ffi.Pointer<DiagEntryAbi> Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<ffi.IntPtr>,
+  )
+>(symbol: 'dinf_diag')
+external ffi.Pointer<DiagEntryAbi> diag(
+  ffi.Pointer<ffi.Void> session,
+  ffi.Pointer<ffi.IntPtr> count,
+);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<DiagEntryAbi>, ffi.IntPtr)>(
+  symbol: 'dinf_free_diag',
 )
-external ffi.Pointer<ffi.Char> diagJson(ffi.Pointer<ffi.Void> session);
+external void freeDiag(ffi.Pointer<DiagEntryAbi> entries, int count);
 
 @ffi.Native<ffi.Pointer<ffi.Void> Function(ffi.IntPtr)>(symbol: 'dinf_alloc')
 external ffi.Pointer<ffi.Void> alloc(int byteLength);

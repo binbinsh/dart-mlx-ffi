@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("abi.zig");
 const coreml = @import("coreml.zig");
+const diag = @import("diag.zig");
 const hf = @import("hf.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
@@ -935,38 +936,39 @@ export fn dinf_hf_dir_artifact(artifact_path: [*c]const u8) i32 {
     return if (hf.isDirectoryArtifact(cStringOrEmpty(artifact_path))) 1 else 0;
 }
 
-export fn dinf_diag_json(handle: ?*anyopaque) [*c]u8 {
-    const raw = handle orelse return copyString("{}");
+export fn dinf_diag(handle: ?*anyopaque, count_out: ?*isize) [*c]diag.Entry {
+    const count = count_out orelse return null;
+    count.* = 0;
+    const raw = handle orelse return null;
     const session: *Session = @ptrCast(@alignCast(raw));
-    if (session.mode == .adapter) {
-        return cpp.dinf_cpp_diag_json(session.adapter_handle);
-    }
-    if (session.mode == .mlx) {
-        const mlx_session_json = mlx_backend.sessionDiagnosticsJson(
-            session.mlx_handle.?,
-            std.heap.c_allocator,
-        ) catch return copyString("{}");
-        defer std.heap.c_allocator.free(mlx_session_json);
-        const text = std.fmt.allocPrintSentinel(
-            std.heap.c_allocator,
-            "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"mode\":\"mlx\",\"zig_version\":\"{s}\",\"mlx_backend\":{s},\"mlx_session\":{s}}}",
-            .{ policy.engineName(session.engine), pinned_zig_version, mlx_backend.status_json, mlx_session_json },
-            0,
-        ) catch return copyString("{}");
-        return @ptrCast(text.ptr);
-    }
-    const mode = switch (session.mode) {
-        .echo => "echo",
-        .mlx => unreachable,
-        .adapter => unreachable,
+    const allocator = std.heap.c_allocator;
+    const entries = if (session.mode == .adapter) blk: {
+        const json = cpp.dinf_cpp_diag_json(session.adapter_handle);
+        if (json == null) return null;
+        defer freeString(json);
+        const text = json[0..std.mem.len(json)];
+        break :blk diag.fromJson(allocator, text) catch return null;
+    } else blk: {
+        const mode = switch (session.mode) {
+            .echo => "echo",
+            .mlx => "mlx",
+            .adapter => unreachable,
+        };
+        const mlx_session = if (session.mode == .mlx) session.mlx_handle.? else null;
+        break :blk diag.zigSession(
+            allocator,
+            policy.engineName(session.engine),
+            mode,
+            pinned_zig_version,
+            mlx_session,
+        ) catch return null;
     };
-    const text = std.fmt.allocPrintSentinel(
-        std.heap.c_allocator,
-        "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"mode\":\"{s}\",\"zig_version\":\"{s}\",\"mlx_backend\":{s}}}",
-        .{ policy.engineName(session.engine), mode, pinned_zig_version, mlx_backend.status_json },
-        0,
-    ) catch return copyString("{}");
-    return @ptrCast(text.ptr);
+    count.* = @intCast(entries.len);
+    return entries.ptr;
+}
+
+export fn dinf_free_diag(entries: [*c]diag.Entry, count: isize) void {
+    diag.freeEntries(entries, count);
 }
 
 test "backend json is stable" {

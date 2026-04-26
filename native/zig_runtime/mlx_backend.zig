@@ -218,34 +218,6 @@ pub fn createSession(
     return session;
 }
 
-pub fn sessionDiagnosticsJson(
-    session: *const Session,
-    allocator: std.mem.Allocator,
-) std.mem.Allocator.Error![]u8 {
-    return std.json.Stringify.valueAlloc(
-        allocator,
-        .{
-            .artifact_kind = artifactKindName(session.artifact_kind),
-            .function_loaded = session.imported_function.ctx != null,
-            .weight_file_count = session.weight_file_count,
-            .weights_loaded = session.weights.loaded,
-            .loaded_weight_file_count = session.weights.loaded_file_count,
-            .has_config = session.metadata.config_path != null,
-            .has_tokenizer = session.metadata.tokenizer_path != null,
-            .has_generation_config = session.metadata.generation_config_path != null,
-            .has_inputs_json = session.metadata.inputs_json_path != null,
-            .input_order = session.metadata.input_names,
-            .model_type = session.metadata.model_type,
-            .architecture = session.metadata.architecture,
-            .quantization_mode = session.metadata.quantization_mode,
-            .quantization_bits = session.metadata.quantization_bits,
-            .quantization_group_size = session.metadata.quantization_group_size,
-            .executor_kind = executorKind(session),
-        },
-        .{ .emit_null_optional_fields = false },
-    );
-}
-
 pub fn sessionErrorMessage(err: SessionError) []const u8 {
     return switch (err) {
         error.InvalidPath => "Zig-owned MLX backend requires a resolved local MLX artifact path.",
@@ -477,7 +449,7 @@ fn isFunctionArtifact(kind: ArtifactKind) bool {
     return kind == .single_mlx_function or kind == .directory_mlx_function;
 }
 
-fn executorKind(session: *const Session) []const u8 {
+pub fn executorKind(session: *const Session) []const u8 {
     if (isFunctionArtifact(session.artifact_kind)) {
         return "imported_function";
     }
