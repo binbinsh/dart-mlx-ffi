@@ -239,32 +239,6 @@ fn procStatusKb(status: []const u8, key: []const u8) u64 {
     return 0;
 }
 
-fn runtimeModeIsEcho(options_json: [*c]const u8) bool {
-    if (options_json == null) {
-        return false;
-    }
-    const value = options_json[0..std.mem.len(options_json)];
-    if (value.len == 0) {
-        return false;
-    }
-    const parsed = std.json.parseFromSlice(
-        std.json.Value,
-        std.heap.c_allocator,
-        value,
-        .{ .duplicate_field_behavior = .use_last },
-    ) catch return false;
-    defer parsed.deinit();
-    const object = switch (parsed.value) {
-        .object => |object| object,
-        else => return false,
-    };
-    const mode = object.get("zigRuntimeMode") orelse return false;
-    return switch (mode) {
-        .string => |text| std.mem.eql(u8, text, "echo"),
-        else => false,
-    };
-}
-
 fn isEchoPath(model_path: [*c]const u8) bool {
     if (model_path == null) {
         return false;
@@ -520,6 +494,7 @@ fn openSession(
     engine: i32,
     model_path: [*c]const u8,
     options_json: [*c]const u8,
+    force_echo: bool,
     error_out: ?*[*c]u8,
 ) ?*anyopaque {
     if (model_path == null) {
@@ -530,7 +505,7 @@ fn openSession(
         setError(error_out, "Runtime artifact must be resolved to a local path before native execution.");
         return null;
     }
-    const session = if (isEchoPath(model_path) or runtimeModeIsEcho(options_json))
+    const session = if (isEchoPath(model_path) or force_echo)
         createEchoSession(engine, model_path, options_json)
     else if (engine == @intFromEnum(Engine.mlx))
         createMlxSession(engine, model_path, options_json, error_out)
@@ -560,20 +535,23 @@ export fn dinf_open(
     error_out: ?*[*c]u8,
 ) ?*anyopaque {
     const allocator = std.heap.c_allocator;
+    const metadata = entrySlice(metadata_entries, metadata_count);
+    const backend = entrySlice(backend_entries, backend_count);
+    const force_echo = open_opts.textEquals(metadata, backend, "zigRuntimeMode", "echo");
     const options = open_opts.build(
         allocator,
         engine,
         prefer_mask,
         diagnostics != 0,
         num_threads,
-        entrySlice(metadata_entries, metadata_count),
-        entrySlice(backend_entries, backend_count),
+        metadata,
+        backend,
     ) catch {
         setError(error_out, "invalid runtime options");
         return null;
     };
     defer allocator.free(options);
-    return openSession(engine, model_path, options.ptr, error_out);
+    return openSession(engine, model_path, options.ptr, force_echo, error_out);
 }
 
 export fn dinf_close(handle: ?*anyopaque) void {
@@ -1060,13 +1038,28 @@ test "runtime resolver policy is reported from Zig" {
     try std.testing.expectEqualStrings("/models/model.onnx", std.mem.span(path));
 }
 
-test "runtime mode is parsed from Zig-owned options JSON" {
-    try std.testing.expect(runtimeModeIsEcho("{\"zigRuntimeMode\":\"echo\"}"));
-    try std.testing.expect(runtimeModeIsEcho("{\"diagnostics\":true,\"zigRuntimeMode\" : \"echo\"}"));
-    try std.testing.expect(!runtimeModeIsEcho("{\"zigRuntimeMode\":\"adapter\"}"));
-    try std.testing.expect(!runtimeModeIsEcho("{\"message\":\"\\\"zigRuntimeMode\\\":\\\"echo\\\"\"}"));
-    try std.testing.expect(!runtimeModeIsEcho("{\"zigRuntimeMode\":true}"));
-    try std.testing.expect(!runtimeModeIsEcho("{"));
+test "runtime mode is selected from typed open entries" {
+    const backend = [_]open_opts.Entry{
+        .{ .path = "zigRuntimeMode", .kind = 1, .text = "echo", .int_value = 0, .double_value = 0, .bool_value = 0 },
+    };
+    var error_value: [*c]u8 = null;
+    const handle = dinf_open(
+        @intFromEnum(Engine.onnx),
+        "model.onnx",
+        0,
+        0,
+        0,
+        null,
+        0,
+        backend[0..].ptr,
+        @intCast(backend.len),
+        &error_value,
+    );
+    defer dinf_free_str(error_value);
+    try std.testing.expect(handle != null);
+    defer dinf_close(handle);
+    const session: *Session = @ptrCast(@alignCast(handle.?));
+    try std.testing.expectEqual(SessionMode.echo, session.mode);
 }
 
 test "runtime open rejects unresolved remote artifacts in Zig" {
@@ -1075,6 +1068,7 @@ test "runtime open rejects unresolved remote artifacts in Zig" {
         @intFromEnum(Engine.onnx),
         "hf://acme/demo/model.onnx",
         "{}",
+        false,
         &error_value,
     );
     defer dinf_free_str(error_value);

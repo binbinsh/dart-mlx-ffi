@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.77`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.78`.
+- Moved `zigRuntimeMode` dispatch from Zig-owned JSON parsing to typed `dinf_open` entry lookup, avoiding an extra open-path parse before native session creation.
 - Replaced Dart-side native open-option JSON encoding with the typed `dinf_open` entry ABI, leaving Zig to merge options and build the private adapter JSON.
 - Replaced Dart session-diagnostics JSON parsing with the typed `dinf_diag` entry ABI, moving adapter diagnostics JSON flattening behind Zig.
 - Replaced native memory-snapshot JSON with the typed `dinf_mem` ABI so Dart receives cross-platform memory fields without decoding native JSON.
@@ -33,7 +34,7 @@
 - Routed runtime tensor dtype/shape/byte-length validation through Zig's shared tensor layout rules before echo, MLX, or private adapter execution.
 - Moved `NativeTensorBuffer` dtype/shape byte-length computation into Zig through `dinf_alloc_tensor`, so Dart no longer duplicates tensor layout rules for zero-copy input buffers.
 - Moved Linux memory snapshots into Zig by reading `/proc/self/status` directly from `dinf_mem_json`, while leaving non-Linux platform-specific memory probes behind the private adapter.
-- Moved `zigRuntimeMode` dispatch to Zig-owned JSON parsing instead of substring matching the Dart-encoded options string.
+- Moved `zigRuntimeMode` dispatch to Zig-owned open handling instead of substring matching Dart-encoded options.
 - Removed the stale unused `dart_inference_bindings_generated.dart` raw-binding placeholder from the public package surface.
 - Renamed the private Apple `mlx-c` dependency to `dinf_zig_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside Zig.
 - Moved `.mlxfn` positional input ordering into Zig by parsing artifact-side `inputs.json` / `input_order`, reporting it in diagnostics, and reordering named runtime tensors before `mlx_imported_function_apply`.

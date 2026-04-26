@@ -57,6 +57,24 @@ pub fn build(
     return out.toOwnedSliceSentinel(allocator, 0) catch error.OutOfMemory;
 }
 
+pub fn textEquals(
+    metadata: []const Entry,
+    backend: []const Entry,
+    key: []const u8,
+    expected: []const u8,
+) bool {
+    if (rootValue(backend, key)) |entry| {
+        return entry.kind == string_kind and std.mem.eql(u8, entryText(entry), expected);
+    }
+    if (hasRoot(backend, key)) {
+        return false;
+    }
+    if (rootValue(metadata, key)) |entry| {
+        return entry.kind == string_kind and std.mem.eql(u8, entryText(entry), expected);
+    }
+    return false;
+}
+
 fn appendFields(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
@@ -153,6 +171,16 @@ fn hasRoot(entries: []const Entry, key: []const u8) bool {
         }
     }
     return false;
+}
+
+fn rootValue(entries: []const Entry, key: []const u8) ?Entry {
+    for (entries) |entry| {
+        const path = entryPath(entry) orelse continue;
+        if (std.mem.eql(u8, path, key)) {
+            return entry;
+        }
+    }
+    return null;
 }
 
 fn root(path: []const u8) []const u8 {
@@ -294,4 +322,13 @@ test "runtime open options preserve nested entries" {
     const options = try build(std.testing.allocator, @intFromEnum(policy.Engine.onnx), 0, false, 0, &.{}, &entries);
     defer std.testing.allocator.free(options);
     try std.testing.expect(std.mem.indexOf(u8, options, "\"items\":[\"a\",7]") != null);
+}
+
+test "runtime open text lookup honors backend overrides" {
+    const metadata = [_]Entry{textEntry("zigRuntimeMode", "echo")};
+    const backend = [_]Entry{
+        .{ .path = "zigRuntimeMode", .kind = null_kind, .text = null, .int_value = 0, .double_value = 0, .bool_value = 0 },
+    };
+    try std.testing.expect(textEquals(&metadata, &.{}, "zigRuntimeMode", "echo"));
+    try std.testing.expect(!textEquals(&metadata, &backend, "zigRuntimeMode", "echo"));
 }
