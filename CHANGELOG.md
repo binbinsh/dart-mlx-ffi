@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.60`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.61`.
+- Split Zig runtime tensor ABI, validation, and native buffer ownership helpers into `abi.zig` to keep `runtime.zig` below the source-size limit before further migration.
 - Moved Hugging Face artifact reference parsing, directory artifact policy, and cache path construction into Zig through `dinf_hf_*`.
 - Moved unresolved remote artifact detection into Zig through `dinf_artifact_remote`.
 - Moved the default ONNX Runtime CUDA/TensorRT preload library list out of Dart so `dinf_ort_libs_json` owns the default names.
