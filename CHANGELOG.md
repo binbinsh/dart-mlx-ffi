@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.42`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.43`.
+- Renamed the private Apple `mlx-c` dependency to `dinf_zig_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside Zig.
 - Moved `.mlxfn` positional input ordering into Zig by parsing artifact-side `inputs.json` / `input_order`, reporting it in diagnostics, and reordering named runtime tensors before `mlx_imported_function_apply`.
 - Restored the vendored MLX, `mlx-c`, `fmt`, and `metal-cpp` source trees to the publish package so Apple builds have the private `mlx-c` dependency sources locally.
 - Split Zig-owned MLX artifact discovery and config/quantization parsing into `mlx_artifact.zig`, leaving `mlx_backend.zig` focused on session state, weight loading, and executor dispatch.
@@ -22,7 +23,7 @@
 - Moved explicit MLX runtime session creation into Zig and added the first Zig-side managed tensor-to-`mlx_array` conversion skeleton before the executor returns its not-yet-implemented error.
 - Made the Zig runtime the only Dart-facing native build output and stopped producing the old Dart-facing MLX code asset from the build hook.
 - Routed explicit MLX runtime loads through the Zig runtime boundary so future `mlx-c` execution cannot silently fall back to the private C++ adapter path.
-- Added an Apple-only private `dart_inference_mlx_c` build target and linked it from the Zig runtime so MLX migration work can call `mlx-c` from Zig instead of Dart.
+- Added an Apple-only private `mlx-c` build target and linked it from the Zig runtime so MLX migration work can call `mlx-c` from Zig instead of Dart.
 - Removed the former raw/shim/stable APIs, legacy model runners, legacy tests, old Dart-facing MLX C++ bridge, and stale local MLX benchmark/probe/example entry points from the package source.
 - Renamed native runtime adapter internals to the `DINF/dinf_` prefix, keeping only `dart_inference_runtime_*` as the Dart-facing ABI.
 - Added a Dart ONNX Runtime convenience layer (`DartOnnxSession`) on top of the shared model runtime API.

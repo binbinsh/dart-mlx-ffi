@@ -7,7 +7,7 @@ Current shape:
 - Dart binds only to `dart_inference_runtime_*` symbols exported by `runtime.zig`.
 - C/C++/Objective-C++ backends are private adapters behind Zig and export
   `dinf_cpp_runtime_*` symbols.
-- Apple builds also link Zig to a private `dart_inference_mlx_c` library that
+- Apple builds also link Zig to a private `dinf_zig_mlx_c` library that
   exposes `mlx-c`; explicit MLX sessions are created by Zig, discover local
   safetensors and `.mlxfn` artifact layouts, parse local MLX metadata and
   quantization fields, parse `.mlxfn` input order from `inputs.json`, load

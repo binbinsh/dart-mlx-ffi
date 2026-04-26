@@ -273,11 +273,11 @@ Future<void> _buildMlxCDependency(
   required String generator,
 }) async {
   final libraryName = code.targetOS.libraryFileName(
-    'dart_inference_mlx_c',
+    'dinf_zig_mlx_c',
     DynamicLoadingBundled(),
   );
   final libraryFile = outputDirectory.resolve(libraryName);
-  final buildDirectory = outputDirectory.resolve('cmake_mlx_c/');
+  final buildDirectory = outputDirectory.resolve('cmake_zig_mlx_c/');
   final buildDirectoryPath = buildDirectory.toFilePath();
   final sdkName = code.targetOS == OS.iOS
       ? _iosSdkName(code.iOS.targetSdk)
@@ -341,7 +341,7 @@ Future<void> _buildMlxCDependency(
   output.assets.code.add(
     CodeAsset(
       package: input.packageName,
-      name: '${input.packageName}_mlx_c_dependency',
+      name: '${input.packageName}_zig_mlx_c_dependency',
       linkMode: DynamicLoadingBundled(),
       file: libraryFile,
     ),
@@ -383,7 +383,7 @@ Future<void> _buildZigRuntimeAsset(
     '-fstrip',
     '-L$adapterLibraryDirectory',
     '-ldart_inference_runtime_adapter',
-    if (mlxCEnabled) '-ldart_inference_mlx_c',
+    if (mlxCEnabled) '-ldinf_zig_mlx_c',
     '-rpath',
     _runtimeOriginRpath(code.targetOS),
     '--cache-dir',

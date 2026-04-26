@@ -322,6 +322,7 @@ final class _NativeModelSession implements ModelSession {
   final Map<String, ffi.Pointer<ffi.Char>> _namePointers = {};
   final Map<String, _ShapeBuffer> _shapePointers = {};
   final Map<String, _NativeByteBuffer> _inputBuffers = {};
+  final _InputTensorArena _inputTensorArena = _InputTensorArena();
 
   @override
   Map<String, Object?> get diagnostics {
@@ -368,7 +369,6 @@ final class _NativeModelSession implements ModelSession {
           outputCount.value,
         );
       }
-      tensors.free();
       calloc.free(outputPtr);
       calloc.free(outputCount);
       calloc.free(error);
@@ -389,6 +389,7 @@ final class _NativeModelSession implements ModelSession {
       buffer.close();
     }
     _inputBuffers.clear();
+    _inputTensorArena.close();
     for (final shape in _shapePointers.values) {
       shape.close();
     }
@@ -449,7 +450,7 @@ final class _NativeModelSession implements ModelSession {
 
   _EncodedInputs _encodeInputs(Map<String, Object?> values) {
     final entries = values.entries.toList(growable: false);
-    final pointer = calloc<native.DartInferenceNamedTensor>(entries.length);
+    final pointer = _inputTensorArena.pointerFor(entries.length);
     for (var index = 0; index < entries.length; index++) {
       final entry = entries[index];
       final tensor = _asRuntimeTensor(entry.key, entry.value);
@@ -470,9 +471,32 @@ final class _EncodedInputs {
 
   final ffi.Pointer<native.DartInferenceNamedTensor> pointer;
   final int count;
+}
 
-  void free() {
+final class _InputTensorArena {
+  ffi.Pointer<native.DartInferenceNamedTensor> pointer = ffi.nullptr;
+  int capacity = 0;
+
+  ffi.Pointer<native.DartInferenceNamedTensor> pointerFor(int count) {
+    if (count == 0) {
+      return ffi.nullptr;
+    }
+    if (capacity >= count) {
+      return pointer;
+    }
+    close();
+    pointer = calloc<native.DartInferenceNamedTensor>(count);
+    capacity = count;
+    return pointer;
+  }
+
+  void close() {
+    if (pointer == ffi.nullptr) {
+      return;
+    }
     calloc.free(pointer);
+    pointer = ffi.nullptr;
+    capacity = 0;
   }
 }
 

@@ -123,7 +123,7 @@ The ABI is synchronous today because every target can support it. Zig remains
   generic imported-function path; `dart_inference_linear` is the first
   safetensors executor template; unregistered architectures must fail from the
   Zig-owned `mlx-c` path rather than the C/C++ adapter.
-- The Apple build hook produces `dart_inference_mlx_c` as a private `mlx-c`
+- The Apple build hook produces `dinf_zig_mlx_c` as a private `mlx-c`
   dependency for Zig. It is not a Dart-facing code asset API.
 - The former Dart-facing MLX raw/shim/stable APIs and C++ bridge are removed
   from the package source.

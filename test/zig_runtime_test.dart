@@ -198,6 +198,58 @@ void main() {
       }
     });
 
+    test('reuses native input descriptors across repeated runs', () {
+      const spec = ModelSpec(
+        id: 'zig_echo_repeated_input',
+        family: 'Zig echo repeated input',
+        modalities: [ModelModality.embedding],
+        platformArtifacts: {
+          RuntimeEngine.onnx: RuntimeArtifact(
+            engine: RuntimeEngine.onnx,
+            path: 'zig://echo',
+          ),
+        },
+      );
+      const bundle = ModelBundle(
+        spec: spec,
+        rootPath: '',
+        artifact: RuntimeArtifact(
+          engine: RuntimeEngine.onnx,
+          path: 'zig://echo',
+        ),
+      );
+      final runtime = NativeModelRuntime(RuntimeEngine.onnx);
+      final session = runtime.load(
+        bundle,
+        const RuntimeOptions(backendOptions: {'zigRuntimeMode': 'echo'}),
+      );
+      try {
+        for (var index = 0; index < 3; index++) {
+          final outputs = session.run(
+            ModelInputs({
+              'x': RuntimeTensor.int32([
+                2,
+              ], Int32List.fromList([index, index + 1])),
+            }),
+          );
+          try {
+            final output = outputs.values['x'] as RuntimeTensor;
+            expect(output.asInt32List(), [index, index + 1]);
+          } finally {
+            outputs.close();
+          }
+        }
+        final emptyOutputs = session.run(const ModelInputs({}));
+        try {
+          expect(emptyOutputs.values, isEmpty);
+        } finally {
+          emptyOutputs.close();
+        }
+      } finally {
+        session.close();
+      }
+    });
+
     test(
       'accepts Zig-owned native tensor buffers without input scratch copy',
       () {

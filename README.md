@@ -63,7 +63,7 @@ The package build hook builds two required dynamic libraries:
 - `dart_inference_runtime_adapter`: private C/C++/ObjC++ backend adapter
 - `dart_inference_runtime`: Zig ABI library loaded by Dart FFI
 
-On iOS and macOS it also builds `dart_inference_mlx_c`, a private `mlx-c`
+On iOS and macOS it also builds `dinf_zig_mlx_c`, a private `mlx-c`
 dependency linked only by the Zig runtime. Dart never binds that library
 directly.
 

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(dart_inference_mlx_c LANGUAGES C CXX)
+project(dinf_zig_mlx_c LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,6 +62,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE mlx)
 
 set_target_properties(
   ${PROJECT_NAME}
-  PROPERTIES OUTPUT_NAME "dart_inference_mlx_c"
+  PROPERTIES OUTPUT_NAME "dinf_zig_mlx_c"
              BUILD_WITH_INSTALL_RPATH ON
              INSTALL_RPATH "@loader_path")
