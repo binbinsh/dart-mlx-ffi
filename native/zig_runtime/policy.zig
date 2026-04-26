@@ -85,6 +85,43 @@ pub fn mlxArtifactRegistered(format: ?[]const u8, artifact_path: ?[]const u8) bo
         std.mem.endsWith(u8, value, "/function.mlxfn");
 }
 
+pub fn artifactMatches(
+    engine: i32,
+    platform: i32,
+    target_platforms: ?[]const u8,
+    format: ?[]const u8,
+    artifact_path: ?[]const u8,
+    allow_preview_mlx: bool,
+) bool {
+    if (!platformAllowed(platform, target_platforms)) {
+        return false;
+    }
+    if (engine != @intFromEnum(Engine.mlx)) {
+        return true;
+    }
+    return allow_preview_mlx or mlxArtifactRegistered(format, artifact_path);
+}
+
+fn platformAllowed(platform: i32, target_platforms: ?[]const u8) bool {
+    const raw = target_platforms orelse return true;
+    const trimmed = std.mem.trim(u8, raw, separators());
+    if (trimmed.len == 0) {
+        return true;
+    }
+    const name = platformName(platform);
+    var parts = std.mem.tokenizeAny(u8, trimmed, separators());
+    while (parts.next()) |part| {
+        if (std.mem.eql(u8, part, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn separators() []const u8 {
+    return ":;,\n\r \t";
+}
+
 test "runtime policy names engines and platforms" {
     try std.testing.expectEqualStrings("mlx", engineName(@intFromEnum(Engine.mlx)));
     try std.testing.expectEqualStrings("unknown", engineName(99));
@@ -104,4 +141,39 @@ test "runtime policy identifies registered MLX function artifacts" {
     try std.testing.expect(mlxArtifactRegistered(null, "function.mlxfn"));
     try std.testing.expect(mlxArtifactRegistered(null, "bundle/function.mlxfn"));
     try std.testing.expect(!mlxArtifactRegistered("mlx-safetensors", "model.safetensors"));
+}
+
+test "runtime policy matches artifacts by platform and MLX status" {
+    try std.testing.expect(artifactMatches(
+        @intFromEnum(Engine.onnx),
+        @intFromEnum(Platform.linux),
+        "linux\nwindows",
+        null,
+        "model.onnx",
+        false,
+    ));
+    try std.testing.expect(!artifactMatches(
+        @intFromEnum(Engine.onnx),
+        @intFromEnum(Platform.android),
+        "linux\nwindows",
+        null,
+        "model.onnx",
+        false,
+    ));
+    try std.testing.expect(!artifactMatches(
+        @intFromEnum(Engine.mlx),
+        @intFromEnum(Platform.macos),
+        "macos",
+        "mlx-safetensors",
+        "model.safetensors",
+        false,
+    ));
+    try std.testing.expect(artifactMatches(
+        @intFromEnum(Engine.mlx),
+        @intFromEnum(Platform.macos),
+        "macos",
+        "mlx-safetensors",
+        "model.safetensors",
+        true,
+    ));
 }

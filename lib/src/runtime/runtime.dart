@@ -494,15 +494,32 @@ final class RuntimeResolver {
   }) {
     final artifact = spec.platformArtifacts[engine];
     if (artifact == null) return null;
-    if (artifact.targetPlatforms.isNotEmpty &&
-        !artifact.targetPlatforms.contains(platform.name)) {
-      return null;
+    final targets = artifact.targetPlatforms
+        .join('\n')
+        .toNativeUtf8(allocator: calloc)
+        .cast<ffi.Char>();
+    final format = (artifact.format ?? '')
+        .toNativeUtf8(allocator: calloc)
+        .cast<ffi.Char>();
+    final path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    try {
+      final matches =
+          native.artifactMatches(
+            _engineId(engine),
+            _platformId(platform),
+            targets,
+            format,
+            path,
+            allowPreviewMlx ? 1 : 0,
+          ) !=
+          0;
+      return matches ? artifact : null;
+    } finally {
+      calloc
+        ..free(targets)
+        ..free(format)
+        ..free(path);
     }
-    if (engine != RuntimeEngine.mlx) return artifact;
-    if (allowPreviewMlx || _isRegisteredMlxArtifact(artifact)) {
-      return artifact;
-    }
-    return null;
   }
 
   List<RuntimeEngine> _defaultOrder(
@@ -516,20 +533,6 @@ final class RuntimeResolver {
       return resolved;
     }
     return const [RuntimeEngine.onnx];
-  }
-
-  bool _isRegisteredMlxArtifact(RuntimeArtifact artifact) {
-    final format = (artifact.format ?? '')
-        .toNativeUtf8(allocator: calloc)
-        .cast<ffi.Char>();
-    final path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    try {
-      return native.mlxArtifactRegistered(format, path) != 0;
-    } finally {
-      calloc
-        ..free(format)
-        ..free(path);
-    }
   }
 
   List<Accelerator> _acceleratorsFor(

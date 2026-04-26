@@ -511,6 +511,24 @@ export fn dinf_mlx_artifact_registered(
     )) 1 else 0;
 }
 
+export fn dinf_artifact_matches(
+    engine: i32,
+    platform: i32,
+    target_platforms: [*c]const u8,
+    format: [*c]const u8,
+    artifact_path: [*c]const u8,
+    allow_preview_mlx: i32,
+) i32 {
+    return if (policy.artifactMatches(
+        engine,
+        platform,
+        optionalCString(target_platforms),
+        optionalCString(format),
+        optionalCString(artifact_path),
+        allow_preview_mlx != 0,
+    )) 1 else 0;
+}
+
 export fn dinf_open(
     engine: i32,
     model_path: [*c]const u8,
@@ -938,6 +956,14 @@ test "runtime resolver policy is reported from Zig" {
     defer dinf_free_str(litert_accels);
     try std.testing.expectEqualStrings("[\"gpu\",\"npu\",\"cpu\"]", std.mem.span(litert_accels));
     try std.testing.expectEqual(@as(i32, 1), dinf_mlx_artifact_registered(null, "bundle/function.mlxfn"));
+    try std.testing.expectEqual(@as(i32, 0), dinf_artifact_matches(
+        @intFromEnum(Engine.mlx),
+        @intFromEnum(policy.Platform.macos),
+        "macos",
+        "mlx-safetensors",
+        "model.safetensors",
+        0,
+    ));
 }
 
 test "runtime mode is parsed from Zig-owned options JSON" {

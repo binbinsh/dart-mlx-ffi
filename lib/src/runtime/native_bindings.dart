@@ -96,6 +96,25 @@ external int mlxArtifactRegistered(
   ffi.Pointer<ffi.Char> artifactPath,
 );
 
+@ffi.Native<
+  ffi.Int32 Function(
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Pointer<ffi.Char>,
+    ffi.Int32,
+  )
+>(symbol: 'dinf_artifact_matches')
+external int artifactMatches(
+  int engine,
+  int platform,
+  ffi.Pointer<ffi.Char> targetPlatforms,
+  ffi.Pointer<ffi.Char> format,
+  ffi.Pointer<ffi.Char> artifactPath,
+  int allowPreviewMlx,
+);
+
 @ffi.Native<ffi.Pointer<ffi.Char> Function()>(symbol: 'dinf_mem_json')
 external ffi.Pointer<ffi.Char> memJson();
 
