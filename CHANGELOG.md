@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.43`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.44`.
+- Removed the stale unused `dart_inference_bindings_generated.dart` raw-binding placeholder from the public package surface.
 - Renamed the private Apple `mlx-c` dependency to `dinf_zig_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside Zig.
 - Moved `.mlxfn` positional input ordering into Zig by parsing artifact-side `inputs.json` / `input_order`, reporting it in diagnostics, and reordering named runtime tensors before `mlx_imported_function_apply`.
 - Restored the vendored MLX, `mlx-c`, `fmt`, and `metal-cpp` source trees to the publish package so Apple builds have the private `mlx-c` dependency sources locally.
