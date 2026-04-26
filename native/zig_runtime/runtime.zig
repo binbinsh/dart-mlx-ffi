@@ -795,15 +795,15 @@ export fn dinf_ort_libs(
     return copyString(text);
 }
 
-export fn dinf_coreml_layout_json(root_path: [*c]const u8) [*c]u8 {
+export fn dinf_coreml_layout(root_path: [*c]const u8) [*c]u8 {
     const allocator = std.heap.c_allocator;
-    const json = coreml.layoutJson(
+    const text = coreml.layoutText(
         allocator,
         std.Io.Threaded.global_single_threaded.io(),
         cStringOrEmpty(root_path),
-    ) catch return copyString("{}");
-    defer allocator.free(json);
-    return copyString(json);
+    ) catch return copyString("");
+    defer allocator.free(text);
+    return copyString(text);
 }
 
 export fn dinf_hf_ref_json(

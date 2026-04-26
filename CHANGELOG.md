@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.71`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.72`.
+- Replaced Core ML layout discovery JSON with the compact `dinf_coreml_layout` packed-text ABI, removing another Dart-side native JSON decode.
 - Split the ONNX C++ adapter into small session and pipeline modules so future `Dart -> Zig -> C/C++` migration work stays under the source-size limit.
 - Replaced ONNX preload-library discovery JSON with the compact `dinf_ort_libs` packed-text ABI, removing another Dart-side native JSON decode.
 - Replaced Dart resolver/fallback JSON calls with typed `dinf_resolve` and `dinf_fallback` ABIs so runtime artifact selection no longer builds or parses JSON in Dart.
@@ -21,7 +22,7 @@
 - Moved model bundle artifact path resolution into Zig through `dinf_artifact_path`.
 - Moved runtime artifact platform compatibility, MLX preview gating, registered MLX artifact detection, engine order, and default accelerator policy into Zig resolver policy.
 - Moved runtime platform/capability discovery into Zig through `dinf_platform_id` and `dinf_accel_mask`, so Dart no longer owns native backend accelerator defaults.
-- Moved Core ML bundle layout discovery into Zig through `dinf_coreml_layout_json`, so Dart no longer owns CoreML-LLM chunk sorting, monolithic bundle detection, pipeline JSON detection, or sidecar scanning.
+- Moved Core ML bundle layout discovery into Zig through `dinf_coreml_layout`, so Dart no longer owns CoreML-LLM chunk sorting, monolithic bundle detection, pipeline JSON detection, or sidecar scanning.
 - Moved ONNX Runtime preload library discovery into Zig through `dinf_ort_libs`, so Dart no longer owns runtime env-file parsing, CUDA/TensorRT directory inference, or preload library filesystem scanning for session setup.
 - Shortened the Dart-facing native ABI from `dart_inference_runtime_*` to `dinf_*`, shortened the private adapter symbols to `dinf_cpp_*`, and renamed the code-asset marker file to `rt_bindings.dart`.
 - Routed runtime tensor dtype/shape/byte-length validation through Zig's shared tensor layout rules before echo, MLX, or private adapter execution.

@@ -179,9 +179,9 @@ external ffi.Pointer<ffi.Char> ortLibs(
 );
 
 @ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'dinf_coreml_layout_json',
+  symbol: 'dinf_coreml_layout',
 )
-external ffi.Pointer<ffi.Char> coremlLayoutJson(ffi.Pointer<ffi.Char> rootPath);
+external ffi.Pointer<ffi.Char> coremlLayout(ffi.Pointer<ffi.Char> rootPath);
 
 @ffi.Native<
   ffi.Pointer<ffi.Char> Function(

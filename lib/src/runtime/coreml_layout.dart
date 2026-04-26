@@ -1,12 +1,14 @@
 /// Core ML artifact layout helpers.
 library;
 
-import 'dart:convert';
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
 
 import 'native_bindings.dart' as native;
+
+const _fieldSep = '\x1f';
+const _listSep = '\x1e';
 
 /// Discovered CoreML-LLM-style model bundle layout.
 final class CoreMlBundleLayout {
@@ -45,22 +47,22 @@ final class CoreMlBundleLayout {
     final path = rootPath.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
     ffi.Pointer<ffi.Char> result = ffi.nullptr;
     try {
-      result = native.coremlLayoutJson(path);
+      result = native.coremlLayout(path);
       if (result == ffi.nullptr) {
         return CoreMlBundleLayout(rootPath: rootPath);
       }
-      final decoded = jsonDecode(result.cast<Utf8>().toDartString());
-      if (decoded is! Map<String, Object?>) {
+      final fields = result.cast<Utf8>().toDartString().split(_fieldSep);
+      if (fields.length < 7) {
         return CoreMlBundleLayout(rootPath: rootPath);
       }
       return CoreMlBundleLayout(
-        rootPath: _string(decoded['root_path']) ?? rootPath,
-        pipelineSpecPath: _string(decoded['pipeline_spec_path']),
-        modelConfigPath: _string(decoded['model_config_path']),
-        monolithicModelPath: _string(decoded['monolithic_model_path']),
-        decodeChunks: _strings(decoded['decode_chunks']),
-        prefillChunks: _strings(decoded['prefill_chunks']),
-        sidecars: _strings(decoded['sidecars']),
+        rootPath: _string(fields[0]) ?? rootPath,
+        pipelineSpecPath: _string(fields[1]),
+        modelConfigPath: _string(fields[2]),
+        monolithicModelPath: _string(fields[3]),
+        decodeChunks: _strings(fields[4]),
+        prefillChunks: _strings(fields[5]),
+        sidecars: _strings(fields[6]),
       );
     } finally {
       if (result != ffi.nullptr) {
@@ -74,12 +76,12 @@ final class CoreMlBundleLayout {
 String? _string(Object? value) =>
     value is String && value.isNotEmpty ? value : null;
 
-List<String> _strings(Object? value) {
-  if (value is! List) {
+List<String> _strings(String value) {
+  if (value.isEmpty) {
     return const [];
   }
   return [
-    for (final item in value)
-      if (item is String && item.isNotEmpty) item,
+    for (final item in value.split(_listSep))
+      if (item.isNotEmpty) item,
   ];
 }

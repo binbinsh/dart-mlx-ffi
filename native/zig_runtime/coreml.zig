@@ -2,6 +2,8 @@ const std = @import("std");
 
 const path = std.Io.Dir.path;
 const head_index = 1_000_000;
+const field_sep: u8 = 0x1f;
+const list_sep: u8 = 0x1e;
 
 const Layout = struct {
     allocator: std.mem.Allocator,
@@ -45,14 +47,14 @@ const Scan = struct {
     }
 };
 
-pub fn layoutJson(
+pub fn layoutText(
     allocator: std.mem.Allocator,
     io: std.Io,
     root_path: []const u8,
 ) ![]u8 {
     var layout = try discover(allocator, io, root_path);
     defer layout.deinit();
-    return writeJson(allocator, &layout);
+    return writeText(allocator, &layout);
 }
 
 fn discover(
@@ -224,71 +226,46 @@ fn pathLessThan(_: void, lhs: []u8, rhs: []u8) bool {
     return std.mem.lessThan(u8, lhs, rhs);
 }
 
-fn writeJson(allocator: std.mem.Allocator, layout: *const Layout) ![]u8 {
+fn writeText(allocator: std.mem.Allocator, layout: *const Layout) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
-    try out.appendSlice(allocator, "{\"root_path\":");
-    try jsonString(allocator, &out, layout.root_path);
-    try out.appendSlice(allocator, ",\"pipeline_spec_path\":");
-    try jsonOptString(allocator, &out, layout.pipeline_spec_path);
-    try out.appendSlice(allocator, ",\"model_config_path\":");
-    try jsonOptString(allocator, &out, layout.model_config_path);
-    try out.appendSlice(allocator, ",\"monolithic_model_path\":");
-    try jsonOptString(allocator, &out, layout.monolithic_model_path);
-    try out.appendSlice(allocator, ",\"decode_chunks\":");
-    try jsonList(allocator, &out, layout.decode_chunks);
-    try out.appendSlice(allocator, ",\"prefill_chunks\":");
-    try jsonList(allocator, &out, layout.prefill_chunks);
-    try out.appendSlice(allocator, ",\"sidecars\":");
-    try jsonList(allocator, &out, layout.sidecars);
-    try out.append(allocator, '}');
+    try out.appendSlice(allocator, layout.root_path);
+    try out.append(allocator, field_sep);
+    try appendOptional(allocator, &out, layout.pipeline_spec_path);
+    try out.append(allocator, field_sep);
+    try appendOptional(allocator, &out, layout.model_config_path);
+    try out.append(allocator, field_sep);
+    try appendOptional(allocator, &out, layout.monolithic_model_path);
+    try out.append(allocator, field_sep);
+    try appendList(allocator, &out, layout.decode_chunks);
+    try out.append(allocator, field_sep);
+    try appendList(allocator, &out, layout.prefill_chunks);
+    try out.append(allocator, field_sep);
+    try appendList(allocator, &out, layout.sidecars);
     return out.toOwnedSlice(allocator) catch error.OutOfMemory;
 }
 
-fn jsonOptString(
+fn appendOptional(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
     value: ?[]const u8,
 ) !void {
     if (value) |text| {
-        try jsonString(allocator, out, text);
-    } else {
-        try out.appendSlice(allocator, "null");
+        try out.appendSlice(allocator, text);
     }
 }
 
-fn jsonList(
+fn appendList(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
     values: []const []u8,
 ) !void {
-    try out.append(allocator, '[');
     for (values, 0..) |value, index| {
         if (index > 0) {
-            try out.append(allocator, ',');
+            try out.append(allocator, list_sep);
         }
-        try jsonString(allocator, out, value);
+        try out.appendSlice(allocator, value);
     }
-    try out.append(allocator, ']');
-}
-
-fn jsonString(
-    allocator: std.mem.Allocator,
-    out: *std.ArrayList(u8),
-    value: []const u8,
-) !void {
-    try out.append(allocator, '"');
-    for (value) |char| {
-        switch (char) {
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            else => try out.append(allocator, char),
-        }
-    }
-    try out.append(allocator, '"');
 }
 
 fn tmpRoot(allocator: std.mem.Allocator, tmp: std.testing.TmpDir) ![]u8 {
@@ -360,9 +337,9 @@ test "Core ML pipeline JSON file is discovered in Zig" {
     try std.testing.expectEqual(@as(usize, 0), layout.decode_chunks.len);
 }
 
-test "Core ML layout JSON keeps missing paths empty" {
-    const json = try layoutJson(std.testing.allocator, std.testing.io, "missing_coreml_bundle");
-    defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"root_path\":\"missing_coreml_bundle\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"decode_chunks\":[]") != null);
+test "Core ML layout text keeps missing paths empty" {
+    const text = try layoutText(std.testing.allocator, std.testing.io, "missing_coreml_bundle");
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.startsWith(u8, text, "missing_coreml_bundle"));
+    try std.testing.expectEqual(@as(usize, 6), std.mem.count(u8, text, &.{field_sep}));
 }
