@@ -41,6 +41,39 @@ pub fn selectJson(allocator: std.mem.Allocator, request_json: []const u8) ![]u8 
     return failNoArtifact(allocator, model_id, platform);
 }
 
+pub fn fallbackJson(allocator: std.mem.Allocator, request_json: []const u8) ![]u8 {
+    const parsed = std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        request_json,
+        .{ .duplicate_field_behavior = .use_last },
+    ) catch return fail(allocator, "Invalid runtime fallback request JSON.");
+    defer parsed.deinit();
+
+    const object = switch (parsed.value) {
+        .object => |value| value,
+        else => return fail(allocator, "Runtime fallback request must be a JSON object."),
+    };
+    const platform = intField(object, "platform") orelse policy.platformId();
+    const artifacts = arrayField(object, "artifacts") orelse
+        return fail(allocator, "Runtime fallback request has no artifacts array.");
+    const registered = arrayField(object, "registeredEngines") orelse
+        return fail(allocator, "Runtime fallback request has no registered engines array.");
+
+    for (artifacts) |item| {
+        const artifact = switch (item) {
+            .object => |value| value,
+            else => continue,
+        };
+        const engine = intField(artifact, "engine") orelse continue;
+        if (!engineRegistered(registered, engine) or !targetsPlatform(artifact, platform)) {
+            continue;
+        }
+        return fallbackOk(allocator, engine);
+    }
+    return allocator.dupe(u8, "{\"ok\":false}") catch error.OutOfMemory;
+}
+
 fn findArtifact(
     artifacts: []std.json.Value,
     engine: i32,
@@ -65,6 +98,19 @@ fn findArtifact(
             stringField(object, "format"),
             stringField(object, "path"),
         )) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn engineRegistered(engines: []std.json.Value, engine: i32) bool {
+    for (engines) |item| {
+        const value = switch (item) {
+            .integer => |integer| integer,
+            else => continue,
+        };
+        if (value == engine) {
             return true;
         }
     }
@@ -100,6 +146,15 @@ fn targetsPlatform(object: std.json.ObjectMap, platform: i32) bool {
         ),
         else => true,
     };
+}
+
+fn fallbackOk(allocator: std.mem.Allocator, engine: i32) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    try out.appendSlice(allocator, "{\"ok\":true,\"engine\":");
+    try appendInt(allocator, &out, engine);
+    try out.append(allocator, '}');
+    return out.toOwnedSlice(allocator) catch error.OutOfMemory;
 }
 
 fn ok(
@@ -318,4 +373,29 @@ test "runtime resolver reports requested engine failures" {
     defer std.testing.allocator.free(result);
     try std.testing.expect(std.mem.indexOf(u8, result, "\"ok\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "Model demo has no coreml artifact for android.") != null);
+}
+
+test "runtime fallback preserves artifact order for registered engines" {
+    const request =
+        \\{"platform":1,"registeredEngines":[0,2],"artifacts":[
+        \\{"engine":1,"path":"coreml","targetPlatforms":["macos"]},
+        \\{"engine":0,"path":"model.safetensors","format":"mlx-safetensors","targetPlatforms":["macos"]},
+        \\{"engine":2,"path":"model.onnx","targetPlatforms":["macos"]}
+        \\]}
+    ;
+    const result = try fallbackJson(std.testing.allocator, request);
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"engine\":0") != null);
+}
+
+test "runtime fallback skips incompatible registered artifacts" {
+    const request =
+        \\{"platform":1,"registeredEngines":[2],"artifacts":[
+        \\{"engine":2,"path":"model.onnx","targetPlatforms":["linux"]}
+        \\]}
+    ;
+    const result = try fallbackJson(std.testing.allocator, request);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("{\"ok\":false}", result);
 }

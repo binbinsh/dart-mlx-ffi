@@ -83,24 +83,10 @@ external ffi.Pointer<ffi.Char> capsJson(int engine);
 )
 external ffi.Pointer<ffi.Char> resolveJson(ffi.Pointer<ffi.Char> requestJson);
 
-@ffi.Native<
-  ffi.Int32 Function(
-    ffi.Int32,
-    ffi.Int32,
-    ffi.Pointer<ffi.Char>,
-    ffi.Pointer<ffi.Char>,
-    ffi.Pointer<ffi.Char>,
-    ffi.Int32,
-  )
->(symbol: 'dinf_artifact_matches')
-external int artifactMatches(
-  int engine,
-  int platform,
-  ffi.Pointer<ffi.Char> targetPlatforms,
-  ffi.Pointer<ffi.Char> format,
-  ffi.Pointer<ffi.Char> artifactPath,
-  int allowPreviewMlx,
-);
+@ffi.Native<ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'dinf_fallback_json',
+)
+external ffi.Pointer<ffi.Char> fallbackJson(ffi.Pointer<ffi.Char> requestJson);
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
   symbol: 'dinf_artifact_remote',

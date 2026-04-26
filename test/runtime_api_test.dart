@@ -223,6 +223,37 @@ void main() {
       expect(() => registry.load(fallbackSpec), throwsUnsupportedError);
     });
 
+    test('registry fallback accepts preview MLX artifacts through Zig', () {
+      final registry = RuntimeRegistry(
+        resolver: const RuntimeResolver(hostPlatform: RuntimePlatform.macos),
+      )..register(_FakeRuntime(RuntimeEngine.mlx));
+
+      const fallbackSpec = ModelSpec(
+        id: 'fallback_mlx',
+        family: 'Fallback MLX',
+        modalities: [ModelModality.textGeneration],
+        platformArtifacts: {
+          RuntimeEngine.coreml: RuntimeArtifact(
+            engine: RuntimeEngine.coreml,
+            path: 'coreml',
+            targetPlatforms: ['macos'],
+          ),
+          RuntimeEngine.mlx: RuntimeArtifact(
+            engine: RuntimeEngine.mlx,
+            path: 'model.safetensors',
+            format: 'mlx-safetensors',
+            targetPlatforms: ['macos'],
+          ),
+        },
+      );
+
+      final session = registry.load(fallbackSpec, rootPath: '/tmp');
+      final outputs = session.run(const ModelInputs({}));
+
+      expect(outputs.diagnostics['engine'], 'mlx');
+      session.close();
+    });
+
     test('registry resolves HF artifacts before async load', () async {
       const spec = ModelSpec(
         id: 'hf_demo',

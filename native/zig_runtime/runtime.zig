@@ -335,14 +335,6 @@ export fn dinf_caps_json(engine: i32) [*c]u8 {
     return @ptrCast(text.ptr);
 }
 
-export fn dinf_engine_accels_json(engine: i32) [*c]u8 {
-    return copyString(policy.acceleratorsJson(engine));
-}
-
-export fn dinf_engine_order_json(platform: i32) [*c]u8 {
-    return copyString(policy.engineOrderJson(platform));
-}
-
 export fn dinf_resolve_json(request_json: [*c]const u8) [*c]u8 {
     const allocator = std.heap.c_allocator;
     const text = resolve.selectJson(allocator, cStringOrEmpty(request_json)) catch
@@ -351,32 +343,12 @@ export fn dinf_resolve_json(request_json: [*c]const u8) [*c]u8 {
     return copyString(text);
 }
 
-export fn dinf_mlx_artifact_registered(
-    format: [*c]const u8,
-    artifact_path: [*c]const u8,
-) i32 {
-    return if (policy.mlxArtifactRegistered(
-        optionalCString(format),
-        optionalCString(artifact_path),
-    )) 1 else 0;
-}
-
-export fn dinf_artifact_matches(
-    engine: i32,
-    platform: i32,
-    target_platforms: [*c]const u8,
-    format: [*c]const u8,
-    artifact_path: [*c]const u8,
-    allow_preview_mlx: i32,
-) i32 {
-    return if (policy.artifactMatches(
-        engine,
-        platform,
-        optionalCString(target_platforms),
-        optionalCString(format),
-        optionalCString(artifact_path),
-        allow_preview_mlx != 0,
-    )) 1 else 0;
+export fn dinf_fallback_json(request_json: [*c]const u8) [*c]u8 {
+    const allocator = std.heap.c_allocator;
+    const text = resolve.fallbackJson(allocator, cStringOrEmpty(request_json)) catch
+        return copyString("{\"ok\":false,\"message\":\"Zig runtime fallback failed.\"}");
+    defer allocator.free(text);
+    return copyString(text);
 }
 
 export fn dinf_artifact_remote(artifact_path: [*c]const u8) i32 {
@@ -819,18 +791,6 @@ test "runtime capabilities are reported from Zig" {
 }
 
 test "runtime resolver policy is reported from Zig" {
-    const macos_order = dinf_engine_order_json(@intFromEnum(policy.Platform.macos));
-    defer dinf_free_str(macos_order);
-    try std.testing.expectEqualStrings("[\"coreml\",\"mlx\",\"onnx\"]", std.mem.span(macos_order));
-
-    const linux_order = dinf_engine_order_json(@intFromEnum(policy.Platform.linux));
-    defer dinf_free_str(linux_order);
-    try std.testing.expectEqualStrings("[\"onnx\"]", std.mem.span(linux_order));
-
-    const litert_accels = dinf_engine_accels_json(@intFromEnum(Engine.litert));
-    defer dinf_free_str(litert_accels);
-    try std.testing.expectEqualStrings("[\"gpu\",\"npu\",\"cpu\"]", std.mem.span(litert_accels));
-
     const resolved = dinf_resolve_json(
         \\{"modelId":"demo","platform":1,"requestedEngine":-1,"allowFallback":true,"prefer":[],"artifacts":[
         \\{"engine":1,"path":"coreml","targetPlatforms":["macos"]}
@@ -839,15 +799,14 @@ test "runtime resolver policy is reported from Zig" {
     defer dinf_free_str(resolved);
     try std.testing.expect(std.mem.indexOf(u8, std.mem.span(resolved), "\"engine\":1") != null);
 
-    try std.testing.expectEqual(@as(i32, 1), dinf_mlx_artifact_registered(null, "bundle/function.mlxfn"));
-    try std.testing.expectEqual(@as(i32, 0), dinf_artifact_matches(
-        @intFromEnum(Engine.mlx),
-        @intFromEnum(policy.Platform.macos),
-        "macos",
-        "mlx-safetensors",
-        "model.safetensors",
-        0,
-    ));
+    const fallback = dinf_fallback_json(
+        \\{"platform":1,"registeredEngines":[2],"artifacts":[
+        \\{"engine":2,"path":"model.onnx","targetPlatforms":["macos"]}
+        \\]}
+    );
+    defer dinf_free_str(fallback);
+    try std.testing.expect(std.mem.indexOf(u8, std.mem.span(fallback), "\"engine\":2") != null);
+
     const path = dinf_artifact_path("/models", "model.onnx");
     defer dinf_free_str(path);
     try std.testing.expectEqualStrings("/models/model.onnx", std.mem.span(path));

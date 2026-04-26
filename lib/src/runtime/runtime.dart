@@ -410,26 +410,26 @@ final class RuntimeRegistry {
     RuntimePlatform platform,
     RuntimeOptions options,
   ) {
-    for (final entry in spec.platformArtifacts.entries) {
-      if (!_runtimes.containsKey(entry.key)) continue;
-      final artifact = entry.value;
-      if (!_matchesArtifact(
-        entry.key,
-        platform,
-        artifact,
-        allowPreviewMlx: true,
-      )) {
-        continue;
-      }
-      return RuntimeResolution(
-        platform: platform,
-        engine: entry.key,
-        artifact: artifact,
-        accelerators: options.prefer,
-        fallbackReason: 'Selected engine has no registered runtime backend.',
-      );
+    final resolved = _fallbackNative({
+      'platform': _platformId(platform),
+      'registeredEngines': _runtimes.keys.map(_engineId).toList(),
+      'artifacts': _resolverArtifacts(spec),
+    });
+    if (resolved['ok'] != true) {
+      return null;
     }
-    return null;
+    final engine = _engineById((resolved['engine'] as num?)?.toInt() ?? -1);
+    final artifact = spec.platformArtifacts[engine];
+    if (artifact == null) {
+      return null;
+    }
+    return RuntimeResolution(
+      platform: platform,
+      engine: engine,
+      artifact: artifact,
+      accelerators: options.prefer,
+      fallbackReason: 'Selected engine has no registered runtime backend.',
+    );
   }
 }
 
@@ -527,72 +527,51 @@ List<Map<String, Object?>> _resolverArtifacts(ModelSpec spec) => [
 ];
 
 Map<String, Object?> _resolveNative(Map<String, Object?> request) {
+  return _nativeJson(
+    request,
+    native.resolveJson,
+    'Native runtime resolver returned null.',
+    'Native runtime resolver returned invalid JSON.',
+  );
+}
+
+Map<String, Object?> _fallbackNative(Map<String, Object?> request) {
+  return _nativeJson(
+    request,
+    native.fallbackJson,
+    'Native runtime fallback returned null.',
+    'Native runtime fallback returned invalid JSON.',
+  );
+}
+
+typedef _NativeJsonCall =
+    ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char> requestJson);
+
+Map<String, Object?> _nativeJson(
+  Map<String, Object?> request,
+  _NativeJsonCall call,
+  String nullMessage,
+  String invalidMessage,
+) {
   final input = jsonEncode(
     request,
   ).toNativeUtf8(allocator: calloc).cast<ffi.Char>();
   ffi.Pointer<ffi.Char> result = ffi.nullptr;
   try {
-    result = native.resolveJson(input);
+    result = call(input);
     if (result == ffi.nullptr) {
-      return const {
-        'ok': false,
-        'message': 'Native runtime resolver returned null.',
-      };
+      return {'ok': false, 'message': nullMessage};
     }
     final decoded = jsonDecode(result.cast<Utf8>().toDartString());
     if (decoded is Map) {
       return Map<String, Object?>.from(decoded);
     }
-    return const {
-      'ok': false,
-      'message': 'Native runtime resolver returned invalid JSON.',
-    };
+    return {'ok': false, 'message': invalidMessage};
   } finally {
     if (result != ffi.nullptr) {
       native.freeStr(result);
     }
     calloc.free(input);
-  }
-}
-
-bool _matchesArtifact(
-  RuntimeEngine engine,
-  RuntimePlatform platform,
-  RuntimeArtifact artifact, {
-  bool allowPreviewMlx = false,
-}) {
-  ffi.Pointer<ffi.Char> targets = ffi.nullptr;
-  ffi.Pointer<ffi.Char> format = ffi.nullptr;
-  ffi.Pointer<ffi.Char> path = ffi.nullptr;
-  try {
-    final joinedTargets = artifact.targetPlatforms.join('\n');
-    if (joinedTargets.isNotEmpty) {
-      targets = joinedTargets.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    }
-    if (engine == RuntimeEngine.mlx) {
-      final artifactFormat = artifact.format;
-      if (artifactFormat != null && artifactFormat.isNotEmpty) {
-        format = artifactFormat
-            .toNativeUtf8(allocator: calloc)
-            .cast<ffi.Char>();
-      }
-      if (artifact.path.isNotEmpty) {
-        path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-      }
-    }
-    return native.artifactMatches(
-          _engineId(engine),
-          _platformId(platform),
-          targets,
-          format,
-          path,
-          allowPreviewMlx ? 1 : 0,
-        ) !=
-        0;
-  } finally {
-    if (targets != ffi.nullptr) calloc.free(targets);
-    if (format != ffi.nullptr) calloc.free(format);
-    if (path != ffi.nullptr) calloc.free(path);
   }
 }
 
