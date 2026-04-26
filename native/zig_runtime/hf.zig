@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const path = std.Io.Dir.path;
+const field_sep: u8 = 0x1f;
 
 pub fn defaultCacheRoot(allocator: std.mem.Allocator) ![]u8 {
     if (try getenvOwned(allocator, "DART_INFERENCE_HF_CACHE")) |value| {
@@ -37,7 +38,7 @@ pub fn authToken(allocator: std.mem.Allocator) !?[]u8 {
     return getenvOwned(allocator, "HUGGINGFACE_HUB_TOKEN");
 }
 
-pub fn refJson(
+pub fn refText(
     allocator: std.mem.Allocator,
     source_uri: ?[]const u8,
     artifact_path: ?[]const u8,
@@ -49,16 +50,16 @@ pub fn refJson(
     if (repo_meta) |repo| {
         if (repo.len > 0) {
             const artifact = normalizeArtifactPath(path_meta);
-            return refObjectJson(allocator, repo, artifact, revision);
+            return refObjectText(allocator, repo, artifact, revision);
         }
     }
 
-    const raw = source_uri orelse artifact_path orelse return allocator.dupe(u8, "{}") catch
+    const raw = source_uri orelse artifact_path orelse return allocator.dupe(u8, "") catch
         return error.OutOfMemory;
-    const parsed = parseUri(allocator, raw) orelse return allocator.dupe(u8, "{}") catch
+    const parsed = parseUri(allocator, raw) orelse return allocator.dupe(u8, "") catch
         return error.OutOfMemory;
     defer parsed.deinit(allocator);
-    return refObjectJson(allocator, parsed.repo, parsed.artifact_path, revision);
+    return refObjectText(allocator, parsed.repo, parsed.artifact_path, revision);
 }
 
 pub fn cachePath(
@@ -167,7 +168,7 @@ fn normalizeArtifactPath(value: ?[]const u8) []const u8 {
     return if (artifact.len == 0) "." else artifact;
 }
 
-fn refObjectJson(
+fn refObjectText(
     allocator: std.mem.Allocator,
     repo: []const u8,
     artifact_path: []const u8,
@@ -175,18 +176,11 @@ fn refObjectJson(
 ) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
-    try out.appendSlice(allocator, "{\"repo\":");
-    try jsonString(allocator, &out, repo);
-    try out.appendSlice(allocator, ",\"path\":");
-    try jsonString(allocator, &out, artifact_path);
-    try out.appendSlice(allocator, ",\"revision\":");
-    try jsonString(allocator, &out, revision);
-    try out.appendSlice(allocator, ",\"sourceUri\":");
-    try out.appendSlice(allocator, "\"hf://");
-    try jsonStringBody(allocator, &out, repo);
-    try out.append(allocator, '/');
-    try jsonStringBody(allocator, &out, artifact_path);
-    try out.appendSlice(allocator, "\"}");
+    try out.appendSlice(allocator, repo);
+    try out.append(allocator, field_sep);
+    try out.appendSlice(allocator, artifact_path);
+    try out.append(allocator, field_sep);
+    try out.appendSlice(allocator, revision);
     return out.toOwnedSlice(allocator) catch error.OutOfMemory;
 }
 
@@ -267,25 +261,6 @@ fn tempRoot(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(u8, "/tmp") catch return error.OutOfMemory;
 }
 
-fn jsonString(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: []const u8) !void {
-    try out.append(allocator, '"');
-    try jsonStringBody(allocator, out, value);
-    try out.append(allocator, '"');
-}
-
-fn jsonStringBody(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value: []const u8) !void {
-    for (value) |byte| {
-        switch (byte) {
-            '"' => try out.appendSlice(allocator, "\\\""),
-            '\\' => try out.appendSlice(allocator, "\\\\"),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
-            else => try out.append(allocator, byte),
-        }
-    }
-}
-
 test "HF default cache root is Zig-owned" {
     const value = try defaultCacheRoot(std.testing.allocator);
     defer std.testing.allocator.free(value);
@@ -300,8 +275,8 @@ test "HF auth token lookup is Zig-owned" {
     }
 }
 
-test "HF ref JSON prefers metadata" {
-    const json = try refJson(
+test "HF ref text prefers metadata" {
+    const text = try refText(
         std.testing.allocator,
         "hf://ignored/repo/file.onnx",
         "ignored",
@@ -309,14 +284,12 @@ test "HF ref JSON prefers metadata" {
         "onnx/model.onnx",
         "refs/pr/1",
     );
-    defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"repo\":\"acme/demo\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"path\":\"onnx/model.onnx\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"revision\":\"refs/pr/1\"") != null);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("acme/demo\x1fonnx/model.onnx\x1frefs/pr/1", text);
 }
 
-test "HF ref JSON parses hf URI" {
-    const json = try refJson(
+test "HF ref text parses hf URI" {
+    const text = try refText(
         std.testing.allocator,
         null,
         "hf://acme/demo/onnx/model.onnx",
@@ -324,10 +297,8 @@ test "HF ref JSON parses hf URI" {
         null,
         null,
     );
-    defer std.testing.allocator.free(json);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"repo\":\"acme/demo\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"path\":\"onnx/model.onnx\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"revision\":\"main\"") != null);
+    defer std.testing.allocator.free(text);
+    try std.testing.expectEqualStrings("acme/demo\x1fonnx/model.onnx\x1fmain", text);
 }
 
 test "HF cache path uses safe revision and repo directory" {

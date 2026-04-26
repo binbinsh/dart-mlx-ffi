@@ -806,7 +806,7 @@ export fn dinf_coreml_layout(root_path: [*c]const u8) [*c]u8 {
     return copyString(text);
 }
 
-export fn dinf_hf_ref_json(
+export fn dinf_hf_ref(
     source_uri: [*c]const u8,
     artifact_path: [*c]const u8,
     repo: [*c]const u8,
@@ -814,16 +814,16 @@ export fn dinf_hf_ref_json(
     revision: [*c]const u8,
 ) [*c]u8 {
     const allocator = std.heap.c_allocator;
-    const json = hf.refJson(
+    const text = hf.refText(
         allocator,
         optionalCString(source_uri),
         optionalCString(artifact_path),
         optionalCString(repo),
         optionalCString(artifact),
         optionalCString(revision),
-    ) catch return copyString("{}");
-    defer allocator.free(json);
-    return copyString(json);
+    ) catch return copyString("");
+    defer allocator.free(text);
+    return copyString(text);
 }
 
 export fn dinf_hf_cache_root() [*c]u8 {

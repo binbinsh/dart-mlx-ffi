@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.72`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.73`.
+- Replaced Hugging Face artifact reference JSON with the compact `dinf_hf_ref` packed-text ABI, removing native JSON decode from Dart artifact parsing.
 - Replaced Core ML layout discovery JSON with the compact `dinf_coreml_layout` packed-text ABI, removing another Dart-side native JSON decode.
 - Split the ONNX C++ adapter into small session and pipeline modules so future `Dart -> Zig -> C/C++` migration work stays under the source-size limit.
 - Replaced ONNX preload-library discovery JSON with the compact `dinf_ort_libs` packed-text ABI, removing another Dart-side native JSON decode.

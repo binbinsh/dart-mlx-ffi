@@ -191,8 +191,8 @@ external ffi.Pointer<ffi.Char> coremlLayout(ffi.Pointer<ffi.Char> rootPath);
     ffi.Pointer<ffi.Char>,
     ffi.Pointer<ffi.Char>,
   )
->(symbol: 'dinf_hf_ref_json')
-external ffi.Pointer<ffi.Char> hfRefJson(
+>(symbol: 'dinf_hf_ref')
+external ffi.Pointer<ffi.Char> hfRef(
   ffi.Pointer<ffi.Char> sourceUri,
   ffi.Pointer<ffi.Char> artifactPath,
   ffi.Pointer<ffi.Char> repo,

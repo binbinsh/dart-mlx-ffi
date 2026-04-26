@@ -11,6 +11,8 @@ import 'package:ffi/ffi.dart';
 import '../models/shared/runtime_metadata.dart';
 import 'native_bindings.dart' as native;
 
+const _hfFieldSep = '\x1f';
+
 /// Resolves remote runtime artifacts into local paths before native loading.
 abstract interface class RuntimeArtifactResolver {
   /// Return a locally cached artifact without network access.
@@ -35,7 +37,7 @@ final class HuggingFaceArtifactRef {
   String get sourceUri => 'hf://$repo/$path';
 
   static HuggingFaceArtifactRef? maybeParse(RuntimeArtifact artifact) {
-    final parsed = _hfRefJson(artifact);
+    final parsed = _hfRef(artifact);
     if (parsed == null) return null;
     return HuggingFaceArtifactRef(
       repo: parsed.repo,
@@ -45,8 +47,8 @@ final class HuggingFaceArtifactRef {
   }
 }
 
-final class _HfRefJson {
-  const _HfRefJson({
+final class _HfRef {
+  const _HfRef({
     required this.repo,
     required this.path,
     required this.revision,
@@ -57,7 +59,7 @@ final class _HfRefJson {
   final String revision;
 }
 
-_HfRefJson? _hfRefJson(RuntimeArtifact artifact) {
+_HfRef? _hfRef(RuntimeArtifact artifact) {
   final metadata = artifact.metadata;
   final repoMetadata = metadata['repo'];
   final artifactMetadata = metadata['artifact'];
@@ -71,26 +73,19 @@ _HfRefJson? _hfRefJson(RuntimeArtifact artifact) {
   );
   ffi.Pointer<ffi.Char> result = ffi.nullptr;
   try {
-    result = native.hfRefJson(sourceUri, artifactPath, repo, path, revision);
+    result = native.hfRef(sourceUri, artifactPath, repo, path, revision);
     if (result == ffi.nullptr) return null;
-    final decoded = jsonDecode(result.cast<Utf8>().toDartString());
-    if (decoded is! Map) return null;
-    final repoValue = decoded['repo'];
-    final pathValue = decoded['path'];
-    final revisionValue = decoded['revision'];
-    if (repoValue is! String ||
-        repoValue.isEmpty ||
-        pathValue is! String ||
-        pathValue.isEmpty ||
-        revisionValue is! String ||
-        revisionValue.isEmpty) {
+    final fields = result.cast<Utf8>().toDartString().split(_hfFieldSep);
+    if (fields.length != 3) {
       return null;
     }
-    return _HfRefJson(
-      repo: repoValue,
-      path: pathValue,
-      revision: revisionValue,
-    );
+    final repoValue = fields[0];
+    final pathValue = fields[1];
+    final revisionValue = fields[2];
+    if (repoValue.isEmpty || pathValue.isEmpty || revisionValue.isEmpty) {
+      return null;
+    }
+    return _HfRef(repo: repoValue, path: pathValue, revision: revisionValue);
   } finally {
     if (result != ffi.nullptr) native.freeStr(result);
     calloc
