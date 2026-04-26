@@ -37,6 +37,7 @@ const NamedTensor = extern struct {
 const SessionMode = enum {
     echo,
     adapter,
+    mlx,
 };
 
 const Session = struct {
@@ -305,28 +306,26 @@ fn createAdapterSession(
 }
 
 fn createMlxSession(
+    engine: i32,
     model_path: [*c]const u8,
     options_json: [*c]const u8,
-    error_out: ?*[*c]u8,
 ) ?*Session {
-    _ = model_path;
-    _ = options_json;
-    if (mlx_backend.versionString(std.heap.c_allocator)) |version| {
-        defer std.heap.c_allocator.free(version);
-        const message = std.fmt.allocPrint(
-            std.heap.c_allocator,
-            "Zig-owned MLX backend reached mlx-c {s}, but model execution is not implemented yet.",
-            .{version},
-        ) catch {
-            setError(error_out, mlx_backend.unavailableMessage());
-            return null;
-        };
-        defer std.heap.c_allocator.free(message);
-        setError(error_out, message);
+    const raw = std.c.malloc(@sizeOf(Session)) orelse return null;
+    const session: *Session = @ptrCast(@alignCast(raw));
+    session.* = .{
+        .engine = engine,
+        .mode = .mlx,
+        .model_path = copyCString(model_path),
+        .options_json = copyCString(options_json),
+        .adapter_handle = null,
+    };
+    if (session.model_path == null or session.options_json == null) {
+        freeString(session.model_path);
+        freeString(session.options_json);
+        std.c.free(session);
         return null;
-    } else |_| {}
-    setError(error_out, mlx_backend.unavailableMessage());
-    return null;
+    }
+    return session;
 }
 
 export fn dart_inference_runtime_backend_json() [*c]u8 {
@@ -346,7 +345,7 @@ export fn dart_inference_runtime_create(
     const session = if (isEchoPath(model_path) or containsEchoMode(options_json))
         createEchoSession(engine, model_path, options_json)
     else if (engine == @intFromEnum(Engine.mlx))
-        createMlxSession(model_path, options_json, error_out)
+        createMlxSession(engine, model_path, options_json)
     else
         createAdapterSession(engine, model_path, options_json, error_out);
     const resolved = session orelse {
@@ -366,6 +365,7 @@ export fn dart_inference_runtime_free(handle: ?*anyopaque) void {
     switch (session.mode) {
         .echo => {},
         .adapter => cpp.dinf_cpp_runtime_free(session.adapter_handle),
+        .mlx => {},
     }
     freeString(session.model_path);
     freeString(session.options_json);
@@ -402,6 +402,7 @@ export fn dart_inference_runtime_run(
     const session: *Session = @ptrCast(@alignCast(handle.?));
     switch (session.mode) {
         .echo => {},
+        .mlx => return runMlxSession(inputs, input_count, error_out),
         .adapter => return cpp.dinf_cpp_runtime_run(
             session.adapter_handle,
             inputs,
@@ -434,6 +435,62 @@ export fn dart_inference_runtime_run(
     outputs.?.* = @ptrCast(out_items);
     output_count.?.* = @intCast(count);
     return 0;
+}
+
+fn runMlxSession(
+    inputs: [*c]const NamedTensor,
+    input_count: isize,
+    error_out: ?*[*c]u8,
+) i32 {
+    const count: usize = @intCast(input_count);
+    const allocator = std.heap.c_allocator;
+    const views = allocator.alloc(mlx_backend.InputTensor, count) catch {
+        setError(error_out, "failed to allocate Zig MLX input view array");
+        return 1;
+    };
+    defer allocator.free(views);
+    var index: usize = 0;
+    while (index < count) : (index += 1) {
+        const tensor = inputs[index].tensor;
+        if (!validTensor(tensor)) {
+            setError(error_out, "Zig-owned MLX backend received an invalid tensor.");
+            return 1;
+        }
+        views[index] = .{
+            .dtype = tensor.dtype,
+            .rank = tensor.rank,
+            .shape = @ptrCast(tensor.shape),
+            .byte_length = tensor.byte_length,
+            .data = tensor.data,
+        };
+    }
+
+    const batch = mlx_backend.prepareInputBatch(
+        allocator,
+        if (count == 0) null else views.ptr,
+        count,
+    ) catch |err| {
+        setError(error_out, mlx_backend.tensorErrorMessage(err));
+        return 1;
+    };
+    defer batch.deinit();
+
+    if (mlx_backend.versionString(allocator)) |version| {
+        defer allocator.free(version);
+        const message = std.fmt.allocPrint(
+            allocator,
+            "Zig-owned MLX backend converted inputs to mlx-c arrays with mlx-c {s}, but model execution is not implemented yet.",
+            .{version},
+        ) catch {
+            setError(error_out, mlx_backend.unavailableMessage());
+            return 1;
+        };
+        defer allocator.free(message);
+        setError(error_out, message);
+        return 1;
+    } else |_| {}
+    setError(error_out, mlx_backend.unavailableMessage());
+    return 1;
 }
 
 export fn dart_inference_runtime_free_tensors(tensors: [*c]NamedTensor, count: isize) void {
@@ -482,10 +539,15 @@ export fn dart_inference_runtime_diagnostics_json(handle: ?*anyopaque) [*c]u8 {
     if (session.mode == .adapter) {
         return cpp.dinf_cpp_runtime_diagnostics_json(session.adapter_handle);
     }
+    const mode = switch (session.mode) {
+        .echo => "echo",
+        .mlx => "mlx",
+        .adapter => unreachable,
+    };
     const text = std.fmt.allocPrintSentinel(
         std.heap.c_allocator,
-        "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"mode\":\"echo\",\"zig_version\":\"{s}\"}}",
-        .{ engineName(session.engine), pinned_zig_version },
+        "{{\"native_backend\":\"zig\",\"engine\":\"{s}\",\"mode\":\"{s}\",\"zig_version\":\"{s}\",\"mlx_backend\":{s}}}",
+        .{ engineName(session.engine), mode, pinned_zig_version, mlx_backend.status_json },
         0,
     ) catch return copyString("{}");
     return @ptrCast(text.ptr);

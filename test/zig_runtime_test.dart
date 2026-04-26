@@ -17,7 +17,7 @@ void main() {
       expect(mlx['enabled'], isFalse);
     });
 
-    test('keeps MLX ownership in Zig instead of the C++ adapter', () {
+    test('creates MLX sessions in Zig and rejects unimplemented execution', () {
       const spec = ModelSpec(
         id: 'zig_mlx',
         family: 'Zig MLX',
@@ -38,20 +38,32 @@ void main() {
         ),
       );
       final runtime = NativeModelRuntime(RuntimeEngine.mlx);
-      expect(
-        () => runtime.load(bundle, const RuntimeOptions()),
-        throwsA(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            allOf(
-              contains('Zig-owned MLX backend'),
-              contains('mlx-c'),
-              isNot(contains('C++ adapter')),
+      final session = runtime.load(
+        bundle,
+        const RuntimeOptions(diagnostics: true),
+      );
+      try {
+        expect(session.diagnostics['native_backend'], 'zig');
+        expect(session.diagnostics['engine'], 'mlx');
+        expect(session.diagnostics['mode'], 'mlx');
+        final input = RuntimeTensor.float32([1], Float32List.fromList([1]));
+        expect(
+          () => session.run(ModelInputs({'x': input})),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              allOf(
+                contains('Zig-owned MLX backend'),
+                contains('mlx-c'),
+                isNot(contains('C++ adapter')),
+              ),
             ),
           ),
-        ),
-      );
+        );
+      } finally {
+        session.close();
+      }
     });
 
     test('runs explicit echo mode through the model runtime ABI', () {

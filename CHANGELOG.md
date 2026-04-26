@@ -3,8 +3,9 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.29`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.30`.
 - Moved vendored native dependencies from `third_party/` to `vendors/` and updated native build paths plus publish filters.
+- Moved explicit MLX runtime session creation into Zig and added the first Zig-side managed tensor-to-`mlx_array` conversion skeleton before the executor returns its not-yet-implemented error.
 - Made the Zig runtime the only Dart-facing native build output and stopped producing the old Dart-facing MLX code asset from the build hook.
 - Routed explicit MLX runtime loads through the Zig runtime boundary so future `mlx-c` execution cannot silently fall back to the private C++ adapter path.
 - Added an Apple-only private `dart_inference_mlx_c` build target and linked it from the Zig runtime so MLX migration work can call `mlx-c` from Zig instead of Dart.
