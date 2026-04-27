@@ -3,7 +3,8 @@
 ### Unreleased
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.84`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.85`.
+- Split Zig-owned memory snapshot collection into `mem.zig`, keeping `dinf_mem` stable while leaving `runtime.zig` room for further migration work under the source-size limit.
 - Trimmed Dart-side run-path allocation by writing typed-list inputs directly into the reusable native descriptor arena before `dinf_run`, avoiding transient `RuntimeTensor` and shape-list wrappers.
 - Replaced the private adapter diagnostics JSON callback with typed diagnostic entries and added a `vendors/` rule forbidding vendored source edits unless explicitly requested.
 - Replaced the private Zig-to-C++ open-options JSON with typed `DinfOptionEntry` arrays, so Dart options stay typed through Zig before reaching the native adapter backends.
@@ -39,7 +40,7 @@
 - Shortened the Dart-facing native ABI from `dart_inference_runtime_*` to `dinf_*`, shortened the private adapter symbols to `dinf_cpp_*`, and renamed the code-asset marker file to `rt_bindings.dart`.
 - Routed runtime tensor dtype/shape/byte-length validation through Zig's shared tensor layout rules before echo, MLX, or private adapter execution.
 - Moved `NativeTensorBuffer` dtype/shape byte-length computation into Zig through `dinf_alloc_tensor`, so Dart no longer duplicates tensor layout rules for zero-copy input buffers.
-- Moved Linux memory snapshots into Zig by reading `/proc/self/status` directly from `dinf_mem_json`, while leaving non-Linux platform-specific memory probes behind the private adapter.
+- Moved Linux memory snapshots into Zig by reading `/proc/self/status` directly from `dinf_mem`, while leaving non-Linux platform-specific memory probes behind the private adapter.
 - Moved `zigRuntimeMode` dispatch to Zig-owned open handling instead of substring matching Dart-encoded options.
 - Removed the stale unused `dart_inference_bindings_generated.dart` raw-binding placeholder from the public package surface.
 - Renamed the private Apple `mlx-c` dependency to `dinf_zig_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside Zig.

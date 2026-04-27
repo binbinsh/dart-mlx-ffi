@@ -4,6 +4,7 @@ const abi = @import("abi.zig");
 const coreml = @import("coreml.zig");
 const diag = @import("diag.zig");
 const hf = @import("hf.zig");
+const mem = @import("mem.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
 const open_opts = @import("open_opts.zig");
@@ -13,6 +14,7 @@ const resolve = @import("resolve.zig");
 const pinned_zig_version = "0.16.0";
 const Engine = policy.Engine;
 const Dtype = abi.Dtype;
+const MemoryAbi = mem.Abi;
 const NativeTensor = abi.NativeTensor;
 const NamedTensor = abi.NamedTensor;
 const ResolveArtifact = resolve.Artifact;
@@ -30,12 +32,6 @@ const SessionMode = enum {
     mlx,
 };
 
-const MemoryError = error{
-    FileOpen,
-    FileTooLarge,
-    OutOfMemory,
-};
-
 const InfoAbi = extern struct {
     native_backend: [*c]const u8,
     zig_version: [*c]const u8,
@@ -46,25 +42,6 @@ const InfoAbi = extern struct {
     mlx_linked: i32,
     mlx_enabled: i32,
     mlx_artifacts: [*c]const u8,
-};
-
-const MemoryAbi = extern struct {
-    native_backend: [*c]const u8,
-    peak_memory_bytes: u64,
-    vm_hwm: u64,
-    vm_rss: u64,
-    phys_footprint: u64,
-    resident_size: u64,
-    virtual_size: u64,
-    peak_working_set: u64,
-    working_set: u64,
-    android_peak_pss: u64,
-    android_pss: u64,
-    android_rss: u64,
-    android_native_heap_pss: u64,
-    android_java_heap_pss: u64,
-    android_native_heap_private_dirty: u64,
-    android_java_heap_private_dirty: u64,
 };
 
 const Session = struct {
@@ -113,7 +90,7 @@ const cpp = if (builtin.is_test) struct {
     }
 
     pub fn dinf_cpp_mem(out: *MemoryAbi) void {
-        out.* = emptyMemoryInfo();
+        out.* = mem.empty();
         out.native_backend = "zig-test".ptr;
     }
 
@@ -177,73 +154,6 @@ fn entrySlice(entries: [*c]const open_opts.Entry, count: isize) []const open_opt
         return &.{};
     }
     return entries[0..@intCast(count)];
-}
-
-fn emptyMemoryInfo() MemoryAbi {
-    return .{
-        .native_backend = null,
-        .peak_memory_bytes = 0,
-        .vm_hwm = 0,
-        .vm_rss = 0,
-        .phys_footprint = 0,
-        .resident_size = 0,
-        .virtual_size = 0,
-        .peak_working_set = 0,
-        .working_set = 0,
-        .android_peak_pss = 0,
-        .android_pss = 0,
-        .android_rss = 0,
-        .android_native_heap_pss = 0,
-        .android_java_heap_pss = 0,
-        .android_native_heap_private_dirty = 0,
-        .android_java_heap_private_dirty = 0,
-    };
-}
-
-fn linuxMemoryInfo(allocator: std.mem.Allocator) MemoryError!MemoryAbi {
-    const status = try readProcStatus(allocator);
-    defer allocator.free(status);
-    const peak = procStatusKb(status, "VmHWM:");
-    const rss = procStatusKb(status, "VmRSS:");
-    var info = emptyMemoryInfo();
-    info.native_backend = "zig".ptr;
-    info.peak_memory_bytes = peak;
-    info.vm_hwm = peak;
-    info.vm_rss = rss;
-    return info;
-}
-
-fn readProcStatus(allocator: std.mem.Allocator) MemoryError![]u8 {
-    const file = std.c.fopen("/proc/self/status", "rb") orelse return error.FileOpen;
-    defer _ = std.c.fclose(file);
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(allocator);
-    var buffer: [4096]u8 = undefined;
-    while (true) {
-        const read = std.c.fread(buffer[0..].ptr, 1, buffer.len, file);
-        if (read == 0) {
-            break;
-        }
-        if (out.items.len + read > 128 * 1024) {
-            return error.FileTooLarge;
-        }
-        out.appendSlice(allocator, buffer[0..read]) catch return error.OutOfMemory;
-    }
-    return out.toOwnedSlice(allocator) catch return error.OutOfMemory;
-}
-
-fn procStatusKb(status: []const u8, key: []const u8) u64 {
-    var lines = std.mem.splitScalar(u8, status, '\n');
-    while (lines.next()) |line| {
-        if (!std.mem.startsWith(u8, line, key)) {
-            continue;
-        }
-        var fields = std.mem.tokenizeAny(u8, line[key.len..], " \t");
-        const value = fields.next() orelse return 0;
-        const kb = std.fmt.parseInt(u64, value, 10) catch return 0;
-        return kb * 1024;
-    }
-    return 0;
 }
 
 fn isEchoPath(model_path: [*c]const u8) bool {
@@ -818,14 +728,14 @@ export fn dinf_free_buf(value: ?*anyopaque) void {
 export fn dinf_mem(out: ?*MemoryAbi) i32 {
     const info = out orelse return 1;
     info.* = if (builtin.os.tag == .linux and builtin.abi != .android)
-        linuxMemoryInfo(std.heap.c_allocator) catch blk: {
-            var fallback = emptyMemoryInfo();
+        mem.linux(std.heap.c_allocator) catch blk: {
+            var fallback = mem.empty();
             cpp.dinf_cpp_mem(&fallback);
             fallback.native_backend = "zig".ptr;
             break :blk fallback;
         }
     else blk: {
-        var fallback = emptyMemoryInfo();
+        var fallback = mem.empty();
         cpp.dinf_cpp_mem(&fallback);
         fallback.native_backend = "zig".ptr;
         break :blk fallback;
@@ -1069,18 +979,6 @@ test "runtime open rejects unresolved remote artifacts in Zig" {
     try std.testing.expect(handle == null);
     try std.testing.expect(error_value != null);
     try std.testing.expect(std.mem.indexOf(u8, std.mem.span(error_value), "local path") != null);
-}
-
-test "Linux proc status memory fields parse as bytes" {
-    const status =
-        \\Name:   dart_inference
-        \\VmHWM:       1234 kB
-        \\VmRSS:         42 kB
-        \\
-    ;
-    try std.testing.expectEqual(@as(u64, 1234 * 1024), procStatusKb(status, "VmHWM:"));
-    try std.testing.expectEqual(@as(u64, 42 * 1024), procStatusKb(status, "VmRSS:"));
-    try std.testing.expectEqual(@as(u64, 0), procStatusKb(status, "VmPeak:"));
 }
 
 test "memory info is owned by Zig on Linux" {
