@@ -208,6 +208,42 @@ void main() {
       }
     });
 
+    test('accepts typed-list inputs without Dart tensor wrapping', () {
+      const bundle = ModelBundle(
+        spec: ModelSpec(
+          id: 'zig_echo_typed_list_input',
+          family: 'Zig echo typed list input',
+          modalities: [ModelModality.embedding],
+        ),
+        rootPath: '',
+        artifact: RuntimeArtifact(
+          engine: RuntimeEngine.onnx,
+          path: 'zig://echo',
+        ),
+      );
+      final runtime = NativeModelRuntime(RuntimeEngine.onnx);
+      final session = runtime.load(
+        bundle,
+        const RuntimeOptions(backendOptions: {'zigRuntimeMode': 'echo'}),
+      );
+      try {
+        final outputs = session.run(
+          ModelInputs({
+            'x': Float32List.fromList([1, 2, 3]),
+          }),
+        );
+        try {
+          final tensor = outputs.values['x'] as RuntimeTensor;
+          expect(tensor.shape, [3]);
+          expect(tensor.asFloat32List(), [1, 2, 3]);
+        } finally {
+          outputs.close();
+        }
+      } finally {
+        session.close();
+      }
+    });
+
     test('rejects tensor byte length mismatches at the Zig boundary', () {
       const bundle = ModelBundle(
         spec: ModelSpec(

@@ -489,6 +489,7 @@ final class _NativeModelSession implements ModelSession {
   final bool _diagnosticsEnabled;
   final Map<String, ffi.Pointer<ffi.Char>> _namePointers = {};
   final Map<String, _ShapeBuffer> _shapePointers = {};
+  final Map<int, _ShapeBuffer> _vectorShapePointers = {};
   final Map<String, _NativeByteBuffer> _inputBuffers = {};
   final _InputTensorArena _inputTensorArena = _InputTensorArena();
 
@@ -559,6 +560,10 @@ final class _NativeModelSession implements ModelSession {
       shape.close();
     }
     _shapePointers.clear();
+    for (final shape in _vectorShapePointers.values) {
+      shape.close();
+    }
+    _vectorShapePointers.clear();
     for (final name in _namePointers.values) {
       calloc.free(name);
     }
@@ -606,12 +611,22 @@ final class _NativeModelSession implements ModelSession {
     return _shapePointers.putIfAbsent(key, () => _ShapeBuffer(shape)).pointer;
   }
 
+  ffi.Pointer<ffi.Int64> _vectorShapePointer(int length) {
+    return _vectorShapePointers
+        .putIfAbsent(length, () => _ShapeBuffer([length]))
+        .pointer;
+  }
+
   ffi.Pointer<ffi.Void> _inputDataPointer(String name, RuntimeTensor tensor) {
     final nativeBuffer = _nativeRuntimeTensorBuffers[tensor];
     if (nativeBuffer != null) {
       return nativeBuffer._pointerForRun(tensor.bytes.lengthInBytes);
     }
     final bytes = tensor.bytes;
+    return _inputBytesPointer(name, bytes);
+  }
+
+  ffi.Pointer<ffi.Void> _inputBytesPointer(String name, Uint8List bytes) {
     if (bytes.isEmpty) {
       return ffi.nullptr;
     }
@@ -621,20 +636,118 @@ final class _NativeModelSession implements ModelSession {
   }
 
   _EncodedInputs _encodeInputs(Map<String, Object?> values) {
-    final entries = values.entries.toList(growable: false);
-    final pointer = _inputTensorArena.pointerFor(entries.length);
-    for (var index = 0; index < entries.length; index++) {
-      final entry = entries[index];
-      final tensor = _asRuntimeTensor(entry.key, entry.value);
-      pointer[index]
-        ..name = _namePointer(entry.key)
-        ..tensor.dtype = _dtypeId(tensor.dtype)
-        ..tensor.rank = tensor.shape.length
-        ..tensor.shape = _shapePointer(tensor.shape)
-        ..tensor.byteLength = tensor.bytes.lengthInBytes
-        ..tensor.data = _inputDataPointer(entry.key, tensor);
+    final pointer = _inputTensorArena.pointerFor(values.length);
+    var index = 0;
+    for (final entry in values.entries) {
+      _writeInput(pointer, index, entry.key, entry.value);
+      index += 1;
     }
-    return _EncodedInputs(pointer, entries.length);
+    return _EncodedInputs(pointer, values.length);
+  }
+
+  void _writeInput(
+    ffi.Pointer<native.NamedTensorAbi> pointer,
+    int index,
+    String name,
+    Object? value,
+  ) {
+    if (value is RuntimeTensor) {
+      _writeRuntimeTensor(pointer, index, name, value);
+      return;
+    }
+    if (value is Float32List) {
+      _writeTypedList(
+        pointer,
+        index,
+        name,
+        RuntimeTensorDataType.float32,
+        value.length,
+        value,
+      );
+      return;
+    }
+    if (value is Int32List) {
+      _writeTypedList(
+        pointer,
+        index,
+        name,
+        RuntimeTensorDataType.int32,
+        value.length,
+        value,
+      );
+      return;
+    }
+    if (value is Int64List) {
+      _writeTypedList(
+        pointer,
+        index,
+        name,
+        RuntimeTensorDataType.int64,
+        value.length,
+        value,
+      );
+      return;
+    }
+    if (value is Float64List) {
+      _writeTypedList(
+        pointer,
+        index,
+        name,
+        RuntimeTensorDataType.float64,
+        value.length,
+        value,
+      );
+      return;
+    }
+    if (value is Uint8List) {
+      _writeTypedList(
+        pointer,
+        index,
+        name,
+        RuntimeTensorDataType.uint8,
+        value.length,
+        value,
+      );
+      return;
+    }
+    throw ArgumentError.value(
+      value,
+      name,
+      'Expected RuntimeTensor or TypedData',
+    );
+  }
+
+  void _writeRuntimeTensor(
+    ffi.Pointer<native.NamedTensorAbi> pointer,
+    int index,
+    String name,
+    RuntimeTensor value,
+  ) {
+    pointer[index]
+      ..name = _namePointer(name)
+      ..tensor.dtype = _dtypeId(value.dtype)
+      ..tensor.rank = value.shape.length
+      ..tensor.shape = _shapePointer(value.shape)
+      ..tensor.byteLength = value.bytes.lengthInBytes
+      ..tensor.data = _inputDataPointer(name, value);
+  }
+
+  void _writeTypedList(
+    ffi.Pointer<native.NamedTensorAbi> pointer,
+    int index,
+    String name,
+    RuntimeTensorDataType dtype,
+    int length,
+    TypedData value,
+  ) {
+    final bytes = _typedBytes(value);
+    pointer[index]
+      ..name = _namePointer(name)
+      ..tensor.dtype = _dtypeId(dtype)
+      ..tensor.rank = 1
+      ..tensor.shape = _vectorShapePointer(length)
+      ..tensor.byteLength = bytes.lengthInBytes
+      ..tensor.data = _inputBytesPointer(name, bytes);
   }
 }
 
@@ -740,16 +853,6 @@ final class _InputTensorArena {
     pointer = ffi.nullptr;
     capacity = 0;
   }
-}
-
-RuntimeTensor _asRuntimeTensor(String name, Object? value) {
-  if (value is RuntimeTensor) return value;
-  if (value is Float32List) return RuntimeTensor.float32([value.length], value);
-  if (value is Int32List) return RuntimeTensor.int32([value.length], value);
-  if (value is Int64List) return RuntimeTensor.int64([value.length], value);
-  if (value is Float64List) return RuntimeTensor.float64([value.length], value);
-  if (value is Uint8List) return RuntimeTensor.uint8([value.length], value);
-  throw ArgumentError.value(value, name, 'Expected RuntimeTensor or TypedData');
 }
 
 Map<String, Object?> _decodeOutputs(
@@ -938,4 +1041,8 @@ Uint8List _nativeBytes(ffi.Pointer<ffi.Void> pointer, int byteLength) {
     return Uint8List(0);
   }
   return pointer.cast<ffi.Uint8>().asTypedList(byteLength);
+}
+
+Uint8List _typedBytes(TypedData data) {
+  return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 }
