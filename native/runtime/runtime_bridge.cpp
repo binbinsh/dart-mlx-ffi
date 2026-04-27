@@ -13,6 +13,123 @@ void set_error(char** out, const std::string& message) {
 
 }  // namespace
 
+DinfDiagBuilder::~DinfDiagBuilder() {
+  Free();
+}
+
+void DinfDiagBuilder::AddString(
+    const std::string& path,
+    const std::string& value) {
+  char* owned_path = Copy(path);
+  char* owned_text = Copy(value);
+  if (owned_path == nullptr || owned_text == nullptr) {
+    std::free(owned_path);
+    std::free(owned_text);
+    return;
+  }
+  Add({owned_path, DINF_OPTION_STRING, owned_text, 0, 0, 0});
+}
+
+void DinfDiagBuilder::AddInt(const std::string& path, int64_t value) {
+  char* owned_path = Copy(path);
+  if (owned_path == nullptr) {
+    return;
+  }
+  Add({owned_path, DINF_OPTION_INT, nullptr, value, 0, 0});
+}
+
+void DinfDiagBuilder::AddBool(const std::string& path, bool value) {
+  char* owned_path = Copy(path);
+  if (owned_path == nullptr) {
+    return;
+  }
+  Add({owned_path, DINF_OPTION_BOOL, nullptr, 0, 0, value ? 1 : 0});
+}
+
+void DinfDiagBuilder::AddDouble(const std::string& path, double value) {
+  char* owned_path = Copy(path);
+  if (owned_path == nullptr) {
+    return;
+  }
+  Add({owned_path, DINF_OPTION_DOUBLE, nullptr, 0, value, 0});
+}
+
+void DinfDiagBuilder::AddMap(const std::string& path) {
+  char* owned_path = Copy(path);
+  if (owned_path == nullptr) {
+    return;
+  }
+  Add({owned_path, DINF_OPTION_MAP, nullptr, 0, 0, 0});
+}
+
+void DinfDiagBuilder::AddList(const std::string& path) {
+  char* owned_path = Copy(path);
+  if (owned_path == nullptr) {
+    return;
+  }
+  Add({owned_path, DINF_OPTION_LIST, nullptr, 0, 0, 0});
+}
+
+void DinfDiagBuilder::AddNull(const std::string& path) {
+  char* owned_path = Copy(path);
+  if (owned_path == nullptr) {
+    return;
+  }
+  Add({owned_path, DINF_OPTION_NULL, nullptr, 0, 0, 0});
+}
+
+void DinfDiagBuilder::AddStringList(
+    const std::string& path,
+    const std::vector<std::string>& values) {
+  AddList(path);
+  for (size_t i = 0; i < values.size(); ++i) {
+    AddString(dinf_diag_path(path, std::to_string(i)), values[i]);
+  }
+}
+
+DinfOptionEntry* DinfDiagBuilder::Release(intptr_t* count) {
+  if (count != nullptr) {
+    *count = 0;
+  }
+  if (entries_.empty()) {
+    return nullptr;
+  }
+  auto* out = static_cast<DinfOptionEntry*>(
+      std::malloc(sizeof(DinfOptionEntry) * entries_.size()));
+  if (out == nullptr) {
+    return nullptr;
+  }
+  std::memcpy(out, entries_.data(), sizeof(DinfOptionEntry) * entries_.size());
+  if (count != nullptr) {
+    *count = static_cast<intptr_t>(entries_.size());
+  }
+  entries_.clear();
+  return out;
+}
+
+char* DinfDiagBuilder::Copy(const std::string& value) {
+  return dinf_copy_string(value);
+}
+
+void DinfDiagBuilder::Add(DinfOptionEntry entry) {
+  entries_.push_back(entry);
+}
+
+void DinfDiagBuilder::Free() {
+  for (const auto& entry : entries_) {
+    std::free(const_cast<char*>(entry.path));
+    std::free(const_cast<char*>(entry.text));
+  }
+  entries_.clear();
+}
+
+void DinfRuntimeSession::Diagnostics(
+    DinfDiagBuilder* out,
+    const std::string& prefix) const {
+  (void)out;
+  (void)prefix;
+}
+
 extern "C" DinfRuntimeSession* dinf_cpp_open(
     int32_t engine,
     const char* model_path,
@@ -113,11 +230,31 @@ extern "C" void dinf_cpp_free_str(char* value) {
   std::free(value);
 }
 
-extern "C" char* dinf_cpp_diag_json(DinfRuntimeSession* session) {
-  if (session == nullptr) {
-    return dinf_copy_string("{}");
+extern "C" DinfOptionEntry* dinf_cpp_diag(
+    DinfRuntimeSession* session,
+    intptr_t* count) {
+  if (count != nullptr) {
+    *count = 0;
   }
-  return dinf_copy_string(session->DiagnosticsJson());
+  if (session == nullptr) {
+    return nullptr;
+  }
+  DinfDiagBuilder builder;
+  session->Diagnostics(&builder, "");
+  return builder.Release(count);
+}
+
+extern "C" void dinf_cpp_free_options(
+    DinfOptionEntry* entries,
+    intptr_t count) {
+  if (entries == nullptr) {
+    return;
+  }
+  for (intptr_t i = 0; i < count; ++i) {
+    std::free(const_cast<char*>(entries[i].path));
+    std::free(const_cast<char*>(entries[i].text));
+  }
+  std::free(entries);
 }
 
 DinfNamedTensor dinf_make_tensor(
@@ -213,4 +350,13 @@ std::string dinf_json_string_array(const std::vector<std::string>& values) {
   }
   out += "]";
   return out;
+}
+
+std::string dinf_diag_path(
+    const std::string& parent,
+    const std::string& key) {
+  if (parent.empty()) {
+    return key;
+  }
+  return parent + '\x1f' + key;
 }

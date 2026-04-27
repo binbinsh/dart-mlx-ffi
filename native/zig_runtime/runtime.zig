@@ -117,9 +117,17 @@ const cpp = if (builtin.is_test) struct {
         out.native_backend = "zig-test".ptr;
     }
 
-    pub fn dinf_cpp_diag_json(session: ?*anyopaque) [*c]u8 {
+    pub fn dinf_cpp_diag(session: ?*anyopaque, count_out: ?*isize) [*c]diag.Entry {
         _ = session;
-        return copyString("{}");
+        if (count_out) |count| {
+            count.* = 0;
+        }
+        return null;
+    }
+
+    pub fn dinf_cpp_free_options(entries: [*c]diag.Entry, count: isize) void {
+        _ = entries;
+        _ = count;
     }
 } else struct {
     extern fn dinf_cpp_open(
@@ -139,7 +147,8 @@ const cpp = if (builtin.is_test) struct {
         error_out: ?*[*c]u8,
     ) i32;
     extern fn dinf_cpp_mem(out: *MemoryAbi) void;
-    extern fn dinf_cpp_diag_json(session: ?*anyopaque) [*c]u8;
+    extern fn dinf_cpp_diag(session: ?*anyopaque, count_out: ?*isize) [*c]diag.Entry;
+    extern fn dinf_cpp_free_options(entries: [*c]diag.Entry, count: isize) void;
 };
 
 fn setError(error_out: ?*[*c]u8, message: []const u8) void {
@@ -920,11 +929,11 @@ export fn dinf_diag(handle: ?*anyopaque, count_out: ?*isize) [*c]diag.Entry {
     const session: *Session = @ptrCast(@alignCast(raw));
     const allocator = std.heap.c_allocator;
     const entries = if (session.mode == .adapter) blk: {
-        const json = cpp.dinf_cpp_diag_json(session.adapter_handle);
-        if (json == null) return null;
-        defer freeString(json);
-        const text = json[0..std.mem.len(json)];
-        break :blk diag.fromJson(allocator, text) catch return null;
+        var adapter_count: isize = 0;
+        const adapter_entries = cpp.dinf_cpp_diag(session.adapter_handle, &adapter_count);
+        if (adapter_entries == null or adapter_count <= 0) return null;
+        defer cpp.dinf_cpp_free_options(adapter_entries, adapter_count);
+        break :blk diag.copyEntries(allocator, adapter_entries, adapter_count) catch return null;
     } else blk: {
         const mode = switch (session.mode) {
             .echo => "echo",

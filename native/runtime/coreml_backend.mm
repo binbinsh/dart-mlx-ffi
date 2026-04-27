@@ -442,23 +442,6 @@ void audit_block(
   }
 }
 
-std::string json_counts(const std::map<std::string, int>& counts) {
-  std::string out = "{";
-  bool first = true;
-  for (const auto& entry : counts) {
-    if (!first) {
-      out += ",";
-    }
-    first = false;
-    out += "\"";
-    out += dinf_json_escape(entry.first);
-    out += "\":";
-    out += std::to_string(entry.second);
-  }
-  out += "}";
-  return out;
-}
-
 void append_unique(std::vector<std::string>* values, const std::string& value) {
   if (std::find(values->begin(), values->end(), value) == values->end()) {
     values->push_back(value);
@@ -479,6 +462,9 @@ void append_feature_names(
 }
 
 struct ComputePlanAudit {
+  bool enabled = false;
+  bool available = false;
+  std::string reason;
   int audited_models = 0;
   int program_operations = 0;
   int neural_network_layers = 0;
@@ -547,44 +533,69 @@ void audit_compute_plan(
   }
 }
 
-std::string compute_plan_audit_json(
+ComputePlanAudit build_compute_plan_audit(
     const std::vector<std::string>& paths,
     MLModelConfiguration* config,
     const DinfOptions* runtime_options) {
+  ComputePlanAudit audit;
   const bool enabled = dinf_option_bool(
       runtime_options,
       "computePlanAudit",
       dinf_option_bool(runtime_options, "diagnostics", false));
   if (!enabled) {
-    return "{\"enabled\":false}";
+    return audit;
   }
+  audit.enabled = true;
   if (@available(macOS 14.4, iOS 17.4, *)) {
-    ComputePlanAudit audit;
+    audit.available = true;
     for (const auto& path : paths) {
       audit_compute_plan(path, config, &audit);
     }
-    std::string out = "{\"enabled\":true,\"available\":true";
-    out += ",\"audited_models\":";
-    out += std::to_string(audit.audited_models);
-    out += ",\"program_operations\":";
-    out += std::to_string(audit.program_operations);
-    out += ",\"neural_network_layers\":";
-    out += std::to_string(audit.neural_network_layers);
-    out += ",\"error_count\":";
-    out += std::to_string(audit.error_count);
-    out += ",\"preferred_device_counts\":";
-    out += json_counts(audit.preferred);
-    out += ",\"supported_device_counts\":";
-    out += json_counts(audit.supported);
-    out += ",\"operator_counts\":";
-    out += json_counts(audit.operators);
-    out += ",\"errors\":";
-    out += dinf_json_string_array(audit.errors);
-    out += "}";
-    return out;
+    return audit;
   }
-  return "{\"enabled\":true,\"available\":false,"
-         "\"reason\":\"MLComputePlan requires macOS 14.4 or iOS 17.4\"}";
+  audit.reason = "MLComputePlan requires macOS 14.4 or iOS 17.4";
+  return audit;
+}
+
+void add_counts(
+    DinfDiagBuilder* out,
+    const std::string& path,
+    const std::map<std::string, int>& counts) {
+  out->AddMap(path);
+  for (const auto& entry : counts) {
+    out->AddInt(dinf_diag_path(path, entry.first), entry.second);
+  }
+}
+
+void add_compute_plan(
+    DinfDiagBuilder* out,
+    const std::string& prefix,
+    const ComputePlanAudit& audit) {
+  const std::string path = dinf_diag_path(prefix, "compute_plan");
+  out->AddMap(path);
+  out->AddBool(dinf_diag_path(path, "enabled"), audit.enabled);
+  out->AddBool(dinf_diag_path(path, "available"), audit.available);
+  if (!audit.reason.empty()) {
+    out->AddString(dinf_diag_path(path, "reason"), audit.reason);
+  }
+  out->AddInt(dinf_diag_path(path, "audited_models"), audit.audited_models);
+  out->AddInt(
+      dinf_diag_path(path, "program_operations"),
+      audit.program_operations);
+  out->AddInt(
+      dinf_diag_path(path, "neural_network_layers"),
+      audit.neural_network_layers);
+  out->AddInt(dinf_diag_path(path, "error_count"), audit.error_count);
+  add_counts(
+      out,
+      dinf_diag_path(path, "preferred_device_counts"),
+      audit.preferred);
+  add_counts(
+      out,
+      dinf_diag_path(path, "supported_device_counts"),
+      audit.supported);
+  add_counts(out, dinf_diag_path(path, "operator_counts"), audit.operators);
+  out->AddStringList(dinf_diag_path(path, "errors"), audit.errors);
 }
 
 struct CoreMlStage {
@@ -730,7 +741,7 @@ class CoreMlSession final : public DinfRuntimeSession {
       std::string mode,
       std::vector<std::string> input_names,
       std::vector<std::string> output_names,
-      std::string compute_plan_audit,
+      ComputePlanAudit compute_plan_audit,
       StringMap requested_outputs = {})
       : stages_(std::move(stages)),
         compute_units_(std::move(compute_units)),
@@ -867,40 +878,34 @@ class CoreMlSession final : public DinfRuntimeSession {
     return 0;
   }
 
-  std::string DiagnosticsJson() const override {
-    return std::string("{\"engine\":\"coreml\",\"compute_units\":\"") +
-           dinf_json_escape(compute_units_) + "\",\"layout\":\"" +
-           dinf_json_escape(layout_) + "\",\"mode\":\"" +
-           dinf_json_escape(mode_) + "\",\"loaded_models\":" +
-           std::to_string(loaded_model_count()) +
-           ",\"stage_count\":" + std::to_string(stages_.size()) +
-           ",\"input_names\":" + dinf_json_string_array(input_names_) +
-           ",\"output_names\":" + dinf_json_string_array(output_names_) +
-           ",\"stages\":" + stages_json() +
-           ",\"compute_plan\":" +
-           compute_plan_audit_ + "}";
+  void Diagnostics(
+      DinfDiagBuilder* out,
+      const std::string& prefix) const override {
+    out->AddString(dinf_diag_path(prefix, "engine"), "coreml");
+    out->AddString(dinf_diag_path(prefix, "compute_units"), compute_units_);
+    out->AddString(dinf_diag_path(prefix, "layout"), layout_);
+    out->AddString(dinf_diag_path(prefix, "mode"), mode_);
+    out->AddInt(dinf_diag_path(prefix, "loaded_models"), loaded_model_count());
+    out->AddInt(dinf_diag_path(prefix, "stage_count"), stages_.size());
+    out->AddStringList(dinf_diag_path(prefix, "input_names"), input_names_);
+    out->AddStringList(dinf_diag_path(prefix, "output_names"), output_names_);
+    const std::string stages_path = dinf_diag_path(prefix, "stages");
+    out->AddList(stages_path);
+    for (size_t i = 0; i < stages_.size(); ++i) {
+      const std::string stage_path =
+          dinf_diag_path(stages_path, std::to_string(i));
+      out->AddMap(stage_path);
+      out->AddString(dinf_diag_path(stage_path, "name"), stages_[i].name);
+      if (!stages_[i].op.empty()) {
+        out->AddString(dinf_diag_path(stage_path, "op"), stages_[i].op);
+      } else {
+        out->AddString(dinf_diag_path(stage_path, "model"), stages_[i].path);
+      }
+    }
+    add_compute_plan(out, prefix, compute_plan_audit_);
   }
 
  private:
-  std::string stages_json() const {
-    std::string out = "[";
-    for (size_t i = 0; i < stages_.size(); ++i) {
-      if (i > 0) {
-        out += ",";
-      }
-      out += "{\"name\":\"" + dinf_json_escape(stages_[i].name) +
-             "\"";
-      if (!stages_[i].op.empty()) {
-        out += ",\"op\":\"" + dinf_json_escape(stages_[i].op) + "\"";
-      } else {
-        out += ",\"model\":\"" + dinf_json_escape(stages_[i].path) + "\"";
-      }
-      out += "}";
-    }
-    out += "]";
-    return out;
-  }
-
   size_t loaded_model_count() const {
     size_t count = 0;
     for (const auto& stage : stages_) {
@@ -917,7 +922,7 @@ class CoreMlSession final : public DinfRuntimeSession {
   std::string mode_;
   std::vector<std::string> input_names_;
   std::vector<std::string> output_names_;
-  std::string compute_plan_audit_;
+  ComputePlanAudit compute_plan_audit_;
   StringMap requested_outputs_;
 };
 
@@ -1004,8 +1009,8 @@ DinfRuntimeSession* dinf_create_coreml_session(
       stage.path = path;
       paths.push_back(stage.path);
     }
-    const std::string compute_plan_audit =
-        compute_plan_audit_json(paths, config, runtime_options);
+    const ComputePlanAudit compute_plan_audit =
+        build_compute_plan_audit(paths, config, runtime_options);
     std::vector<std::string> input_names;
     std::vector<std::string> output_names;
     for (CoreMlStage& stage : stages) {

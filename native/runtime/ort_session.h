@@ -40,7 +40,9 @@ class Session final : public DinfRuntimeSession {
       size_t* output_count,
       std::string* error) override;
 
-  std::string DiagnosticsJson() const override;
+  void Diagnostics(
+      DinfDiagBuilder* out,
+      const std::string& prefix) const override;
 
  private:
   void ReleaseValues(std::vector<OrtValue*>& values);

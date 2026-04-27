@@ -84,6 +84,31 @@ struct DinfOptions {
   intptr_t count;
 };
 
+class DinfDiagBuilder {
+ public:
+  ~DinfDiagBuilder();
+
+  void AddString(const std::string& path, const std::string& value);
+  void AddInt(const std::string& path, int64_t value);
+  void AddBool(const std::string& path, bool value);
+  void AddDouble(const std::string& path, double value);
+  void AddMap(const std::string& path);
+  void AddList(const std::string& path);
+  void AddNull(const std::string& path);
+  void AddStringList(
+      const std::string& path,
+      const std::vector<std::string>& values);
+
+  DinfOptionEntry* Release(intptr_t* count);
+
+ private:
+  char* Copy(const std::string& value);
+  void Add(DinfOptionEntry entry);
+  void Free();
+
+  std::vector<DinfOptionEntry> entries_;
+};
+
 class DinfRuntimeSession {
  public:
   virtual ~DinfRuntimeSession() = default;
@@ -95,7 +120,9 @@ class DinfRuntimeSession {
       size_t* output_count,
       std::string* error) = 0;
 
-  virtual std::string DiagnosticsJson() const { return "{}"; }
+  virtual void Diagnostics(
+      DinfDiagBuilder* out,
+      const std::string& prefix) const;
 };
 
 extern "C" {
@@ -125,8 +152,13 @@ DINF_RUNTIME_EXPORT void dinf_cpp_free_str(char* value);
 
 DINF_RUNTIME_EXPORT void dinf_cpp_mem(DinfMemoryInfo* out);
 
-DINF_RUNTIME_EXPORT char* dinf_cpp_diag_json(
-    DinfRuntimeSession* session);
+DINF_RUNTIME_EXPORT DinfOptionEntry* dinf_cpp_diag(
+    DinfRuntimeSession* session,
+    intptr_t* count);
+
+DINF_RUNTIME_EXPORT void dinf_cpp_free_options(
+    DinfOptionEntry* entries,
+    intptr_t count);
 }
 
 DinfNamedTensor dinf_make_tensor(
@@ -143,6 +175,10 @@ char* dinf_copy_string(const std::string& value);
 std::string dinf_json_escape(const std::string& value);
 
 std::string dinf_json_string_array(const std::vector<std::string>& values);
+
+std::string dinf_diag_path(
+    const std::string& parent,
+    const std::string& key);
 
 DinfRuntimeSession* dinf_create_coreml_session(
     const char* model_path,

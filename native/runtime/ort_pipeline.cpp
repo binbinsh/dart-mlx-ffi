@@ -300,25 +300,31 @@ class PipelineSession final : public DinfRuntimeSession {
     return 0;
   }
 
-  std::string DiagnosticsJson() const override {
-    std::string stages = "[";
+  void Diagnostics(
+      DinfDiagBuilder* out,
+      const std::string& prefix) const override {
+    out->AddString(dinf_diag_path(prefix, "engine"), "onnx");
+    out->AddBool(dinf_diag_path(prefix, "pipeline"), true);
+    out->AddString(dinf_diag_path(prefix, "spec"), spec_path_);
+    out->AddInt(dinf_diag_path(prefix, "stage_count"), stages_.size());
+    const std::string stages_path = dinf_diag_path(prefix, "stages");
+    out->AddList(stages_path);
     for (size_t i = 0; i < stages_.size(); ++i) {
-      if (i > 0) {
-        stages += ",";
-      }
-      stages += "{\"name\":\"" + dinf_json_escape(stages_[i].name) + "\"";
+      const std::string stage_path =
+          dinf_diag_path(stages_path, std::to_string(i));
+      out->AddMap(stage_path);
+      out->AddString(dinf_diag_path(stage_path, "name"), stages_[i].name);
       if (!stages_[i].op.empty()) {
-        stages += ",\"op\":\"" + dinf_json_escape(stages_[i].op) + "\"";
+        out->AddString(dinf_diag_path(stage_path, "op"), stages_[i].op);
       } else {
-        stages += ",\"model\":\"" + dinf_json_escape(stages_[i].model_path) +
-                  "\",\"diagnostics\":" + stages_[i].session->DiagnosticsJson();
+        out->AddString(
+            dinf_diag_path(stage_path, "model"),
+            stages_[i].model_path);
+        const std::string diag_path = dinf_diag_path(stage_path, "diagnostics");
+        out->AddMap(diag_path);
+        stages_[i].session->Diagnostics(out, diag_path);
       }
-      stages += "}";
     }
-    stages += "]";
-    return "{\"engine\":\"onnx\",\"pipeline\":true,\"spec\":\"" +
-           dinf_json_escape(spec_path_) + "\",\"stage_count\":" +
-           std::to_string(stages_.size()) + ",\"stages\":" + stages + "}";
   }
 
  private:

@@ -584,14 +584,18 @@ int Session::Run(
   return 0;
 }
 
-std::string Session::DiagnosticsJson() const {
-  return std::string("{\"engine\":\"onnx\",\"provider\":\"") +
-         dinf_json_escape(provider_) + "\",\"provider_appended\":" +
-         (provider_appended_ ? "true" : "false") + ",\"num_threads\":" +
-         std::to_string(num_threads_) + ",\"available_providers\":" +
-         dinf_json_string_array(available_providers_) +
-         ",\"input_names\":" + dinf_json_string_array(input_names_) +
-         ",\"output_names\":" + dinf_json_string_array(output_names_) + "}";
+void Session::Diagnostics(
+    DinfDiagBuilder* out,
+    const std::string& prefix) const {
+  out->AddString(dinf_diag_path(prefix, "engine"), "onnx");
+  out->AddString(dinf_diag_path(prefix, "provider"), provider_);
+  out->AddBool(dinf_diag_path(prefix, "provider_appended"), provider_appended_);
+  out->AddInt(dinf_diag_path(prefix, "num_threads"), num_threads_);
+  out->AddStringList(
+      dinf_diag_path(prefix, "available_providers"),
+      available_providers_);
+  out->AddStringList(dinf_diag_path(prefix, "input_names"), input_names_);
+  out->AddStringList(dinf_diag_path(prefix, "output_names"), output_names_);
 }
 
 void Session::ReleaseValues(std::vector<OrtValue*>& values) {

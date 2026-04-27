@@ -541,16 +541,92 @@ void free_inputs(std::vector<DinfNamedTensor>& tensors) {
   tensors.clear();
 }
 
-json parse_json_string(char* raw) {
-  if (raw == nullptr) {
+std::vector<std::string> split_diag_path(const char* path) {
+  std::vector<std::string> segments;
+  if (path == nullptr || *path == '\0') {
+    return segments;
+  }
+  const std::string raw(path);
+  size_t start = 0;
+  while (start <= raw.size()) {
+    const size_t next = raw.find('\x1f', start);
+    segments.push_back(raw.substr(start, next - start));
+    if (next == std::string::npos) {
+      break;
+    }
+    start = next + 1;
+  }
+  return segments;
+}
+
+size_t diag_index(const std::string& segment) {
+  if (segment.empty() ||
+      !std::all_of(segment.begin(), segment.end(), [](unsigned char c) {
+        return std::isdigit(c) != 0;
+      })) {
+    return 0;
+  }
+  return static_cast<size_t>(std::stoull(segment));
+}
+
+json& diag_child(json& node, const std::string& segment) {
+  if (node.is_array()) {
+    const size_t index = diag_index(segment);
+    while (node.size() <= index) {
+      node.push_back(nullptr);
+    }
+    return node[index];
+  }
+  if (!node.is_object()) {
+    node = json::object();
+  }
+  return node[segment];
+}
+
+json diag_value(const DinfOptionEntry& entry) {
+  switch (entry.kind) {
+    case DINF_OPTION_STRING:
+      return entry.text == nullptr ? "" : entry.text;
+    case DINF_OPTION_INT:
+      return entry.int_value;
+    case DINF_OPTION_BOOL:
+      return entry.bool_value != 0;
+    case DINF_OPTION_MAP:
+      return json::object();
+    case DINF_OPTION_LIST:
+      return json::array();
+    case DINF_OPTION_DOUBLE:
+      return entry.double_value;
+    case DINF_OPTION_NULL:
+    default:
+      return nullptr;
+  }
+}
+
+void assign_diag(json& root, const DinfOptionEntry& entry) {
+  const auto segments = split_diag_path(entry.path);
+  if (segments.empty()) {
+    return;
+  }
+  json* node = &root;
+  for (const auto& segment : segments) {
+    node = &diag_child(*node, segment);
+  }
+  *node = diag_value(entry);
+}
+
+json diagnostics_json(DinfRuntimeSession* session) {
+  intptr_t count = 0;
+  DinfOptionEntry* entries = dinf_cpp_diag(session, &count);
+  if (entries == nullptr || count <= 0) {
     return json::object();
   }
-  const std::string text(raw);
-  dinf_cpp_free_str(raw);
-  if (text.empty()) {
-    return json::object();
+  json out = json::object();
+  for (intptr_t i = 0; i < count; ++i) {
+    assign_diag(out, entries[i]);
   }
-  return json::parse(text);
+  dinf_cpp_free_options(entries, count);
+  return out;
 }
 
 json tensor_values(const DinfTensor& tensor) {
@@ -823,7 +899,7 @@ int main(int argc, char** argv) {
 
     const DinfMemoryInfo memory_after = memory_info();
     update_peak_memory(&peak_memory, memory_after);
-    const json diagnostics = parse_json_string(dinf_cpp_diag_json(session));
+    const json diagnostics = diagnostics_json(session);
     const double per_iter_ms = iters > 0 ? timed_ms / iters : 0.0;
     const json memory_before_json = memory_json(memory_before);
     const json memory_after_json = memory_json(memory_after);

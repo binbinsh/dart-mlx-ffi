@@ -876,32 +876,50 @@ class LiteRtSession final : public DinfRuntimeSession {
     return 0;
   }
 
-  std::string DiagnosticsJson() const override {
-    return std::string("{\"engine\":\"litert\",\"library\":\"") +
-           dinf_json_escape(library_->path()) + "\",\"num_threads\":" +
-           std::to_string(num_threads_) + ",\"requested_delegate\":\"" +
-           dinf_json_escape(requested_delegate_) + "\",\"delegates\":" +
-           dinf_json_string_array(delegate_names_) +
-           ",\"support_libraries_loaded\":" +
-           dinf_json_string_array(support_library_loaded_) +
-           ",\"support_libraries_attempted\":" +
-           dinf_json_string_array(support_library_attempts_) +
-           ",\"input_names\":" + tensor_names(/*inputs=*/true) +
-           ",\"output_names\":" + tensor_names(/*inputs=*/false) +
-           ",\"artifact_path\":\"" + dinf_json_escape(artifact_.source_path) +
-           "\",\"resolved_artifact_path\":\"" +
-           dinf_json_escape(artifact_.model_path) +
-           "\",\"artifact_format\":\"" + dinf_json_escape(artifact_.source_format) +
-           "\",\"tflite_section_count\":" +
-           std::to_string(artifact_.section_count) +
-           ",\"selected_tflite_section\":" +
-           std::to_string(artifact_.selected_section) +
-           ",\"delegate_fallback_attempted\":" +
-           (delegate_fallback_attempted_ ? "true" : "false") + "}";
+  void Diagnostics(
+      DinfDiagBuilder* out,
+      const std::string& prefix) const override {
+    out->AddString(dinf_diag_path(prefix, "engine"), "litert");
+    out->AddString(dinf_diag_path(prefix, "library"), library_->path());
+    out->AddInt(dinf_diag_path(prefix, "num_threads"), num_threads_);
+    out->AddString(
+        dinf_diag_path(prefix, "requested_delegate"),
+        requested_delegate_);
+    out->AddStringList(dinf_diag_path(prefix, "delegates"), delegate_names_);
+    out->AddStringList(
+        dinf_diag_path(prefix, "support_libraries_loaded"),
+        support_library_loaded_);
+    out->AddStringList(
+        dinf_diag_path(prefix, "support_libraries_attempted"),
+        support_library_attempts_);
+    out->AddStringList(
+        dinf_diag_path(prefix, "input_names"),
+        tensor_name_values(/*inputs=*/true));
+    out->AddStringList(
+        dinf_diag_path(prefix, "output_names"),
+        tensor_name_values(/*inputs=*/false));
+    out->AddString(
+        dinf_diag_path(prefix, "artifact_path"),
+        artifact_.source_path);
+    out->AddString(
+        dinf_diag_path(prefix, "resolved_artifact_path"),
+        artifact_.model_path);
+    out->AddString(
+        dinf_diag_path(prefix, "artifact_format"),
+        artifact_.source_format);
+    out->AddInt(
+        dinf_diag_path(prefix, "tflite_section_count"),
+        artifact_.section_count);
+    out->AddInt(
+        dinf_diag_path(prefix, "selected_tflite_section"),
+        artifact_.selected_section);
+    out->AddBool(
+        dinf_diag_path(prefix, "delegate_fallback_attempted"),
+        delegate_fallback_attempted_);
   }
 
  private:
-  std::string tensor_names(bool inputs) const {
+  std::vector<std::string> tensor_name_values(bool inputs) const {
     const int32_t count = inputs
         ? api_.InputTensorCount(interpreter_)
         : api_.OutputTensorCount(interpreter_);
@@ -914,7 +932,7 @@ class LiteRtSession final : public DinfRuntimeSession {
       const char* name = tensor == nullptr ? nullptr : api_.TensorName(tensor);
       names.emplace_back(name == nullptr ? "" : name);
     }
-    return dinf_json_string_array(names);
+    return names;
   }
 
   std::unique_ptr<SharedLibrary> library_;

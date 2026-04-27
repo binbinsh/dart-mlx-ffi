@@ -113,24 +113,29 @@ pub fn zigSession(
     return builder.finish();
 }
 
-pub fn fromJson(allocator: std.mem.Allocator, json: []const u8) Error![]Entry {
+pub fn copyEntries(
+    allocator: std.mem.Allocator,
+    entries: [*c]const Entry,
+    count: isize,
+) Error![]Entry {
     var builder = Builder.init(allocator);
     errdefer builder.deinit();
-    const parsed = std.json.parseFromSlice(
-        std.json.Value,
-        allocator,
-        json,
-        .{ .duplicate_field_behavior = .use_last },
-    ) catch return builder.finish();
-    defer parsed.deinit();
-    switch (parsed.value) {
-        .object => |object| {
-            var it = object.iterator();
-            while (it.next()) |item| {
-                try addJsonValue(&builder, item.key_ptr.*, item.value_ptr.*);
-            }
-        },
-        else => {},
+    if (entries == null or count <= 0) {
+        return builder.finish();
+    }
+    const slice = entries[0..@intCast(count)];
+    for (slice) |entry| {
+        const path = entryPath(entry) orelse continue;
+        switch (entry.kind) {
+            string_kind => try builder.addString(path, entryText(entry)),
+            int_kind => try builder.addInt(path, entry.int_value),
+            bool_kind => try builder.addBool(path, entry.bool_value != 0),
+            map_kind => try builder.addMap(path),
+            list_kind => try builder.addList(path),
+            double_kind => try builder.addDouble(path, entry.double_value),
+            null_kind => try builder.addNull(path),
+            else => try builder.addNull(path),
+        }
     }
     return builder.finish();
 }
@@ -203,36 +208,6 @@ fn addStringList(builder: *Builder, parent: []const u8, key: []const u8, values:
     }
 }
 
-fn addJsonValue(builder: *Builder, path: []const u8, value: std.json.Value) Error!void {
-    switch (value) {
-        .null => try builder.addNull(path),
-        .bool => |item| try builder.addBool(path, item),
-        .integer => |item| try builder.addInt(path, item),
-        .float => |item| try builder.addDouble(path, item),
-        .number_string => |item| try builder.addString(path, item),
-        .string => |item| try builder.addString(path, item),
-        .array => |array| {
-            try builder.addList(path);
-            for (array.items, 0..) |item, index| {
-                const segment = std.fmt.allocPrint(builder.allocator, "{d}", .{index}) catch return error.OutOfMemory;
-                defer builder.allocator.free(segment);
-                const child = try join(builder.allocator, path, segment);
-                defer builder.allocator.free(child);
-                try addJsonValue(builder, child, item);
-            }
-        },
-        .object => |object| {
-            try builder.addMap(path);
-            var it = object.iterator();
-            while (it.next()) |item| {
-                const child = try join(builder.allocator, path, item.key_ptr.*);
-                defer builder.allocator.free(child);
-                try addJsonValue(builder, child, item.value_ptr.*);
-            }
-        },
-    }
-}
-
 fn join(allocator: std.mem.Allocator, parent: []const u8, child: []const u8) Error![]u8 {
     if (parent.len == 0) {
         return allocator.dupe(u8, child) catch return error.OutOfMemory;
@@ -260,13 +235,35 @@ fn freeEntry(entry: Entry) void {
     abi.freeString(entry.text);
 }
 
-test "diagnostic entries parse nested JSON" {
-    const entries = try fromJson(std.heap.c_allocator, "{\"provider\":\"CPU\",\"names\":[\"x\"],\"nested\":{\"ok\":true,\"n\":3}}");
+fn entryPath(entry: Entry) ?[]const u8 {
+    if (entry.path == null) {
+        return null;
+    }
+    const path = std.mem.span(entry.path);
+    return if (path.len == 0) null else path;
+}
+
+fn entryText(entry: Entry) []const u8 {
+    if (entry.text == null) {
+        return "";
+    }
+    return std.mem.span(entry.text);
+}
+
+test "diagnostic entries copy from typed adapter entries" {
+    const source = [_]Entry{
+        .{ .path = @constCast("provider"), .kind = string_kind, .text = @constCast("CPU"), .int_value = 0, .double_value = 0, .bool_value = 0 },
+        .{ .path = @constCast("names\x1f0"), .kind = string_kind, .text = @constCast("x"), .int_value = 0, .double_value = 0, .bool_value = 0 },
+        .{ .path = @constCast("nested\x1fok"), .kind = bool_kind, .text = null, .int_value = 0, .double_value = 0, .bool_value = 1 },
+    };
+    const entries = try copyEntries(std.heap.c_allocator, source[0..].ptr, @intCast(source.len));
     defer freeEntries(entries.ptr, @intCast(entries.len));
-    try std.testing.expect(entries.len >= 6);
+    try std.testing.expectEqual(@as(usize, 3), entries.len);
     try std.testing.expectEqualStrings("provider", entries[0].path[0..std.mem.len(entries[0].path)]);
     try std.testing.expectEqual(string_kind, entries[0].kind);
     try std.testing.expectEqualStrings("CPU", entries[0].text[0..std.mem.len(entries[0].text)]);
+    try std.testing.expectEqual(bool_kind, entries[2].kind);
+    try std.testing.expectEqual(@as(i32, 1), entries[2].bool_value);
 }
 
 test "Zig diagnostics include MLX backend map" {
