@@ -59,8 +59,8 @@ void main() {
           final g = got.data[i];
           final diff = (e - g).abs();
           final tol = absTol + relTol * e.abs();
-          if (diff > tol) {
-            if (diff > maxAbs) {
+          if (g.isNaN || g.isInfinite || diff > tol) {
+            if (diff > maxAbs || g.isNaN || g.isInfinite) {
               maxAbs = diff;
               argmaxAbs = i;
             }
