@@ -360,3 +360,106 @@ default-prewarm set in `bin/tts_server.dart` if appropriate.
 10. Wire into `bin/tts_server.dart`.
 
 Each step is testable in isolation against the corresponding Python reference.
+
+---
+
+## Handoff Snapshot (as of this session)
+
+### Done
+1. **Step 1 — Tokenizer.** Qwen2 byte-level BPE in Zig
+   (`qwen2_bpe.zig`, `qwen2_unicode.zig`, C ABI in
+   `qwen2_bpe_api.zig`). 20/20 HF parity at the Zig level
+   (`qwen2_parity_test.zig`).
+2. **Step 4 — Dart bindings + AR loop scaffold.**
+   - FFI bindings: `dinf_qwen2_bpe_{new,free,encode}` in
+     `lib/src/runtime/native_ops.dart`.
+   - High-level wrapper: `Qwen2BpeTokenizer` in
+     `lib/src/models/cosyvoice2/qwen2_tokenizer.dart` (loads
+     `vocab.json` + `merges.txt`, registers the 4 base + 16
+     CosyVoice2 specials).
+   - Dart parity test: `test/qwen2_tokenizer_parity_test.dart`
+     (gated on `QWEN2_TOKENIZER_DIR`, 20/20 passing through the
+     full Dart -> C ABI -> Zig path).
+   - LLM driver: `CosyVoice2LlmDriver`
+     (`lib/src/models/cosyvoice2/cosyvoice2_llm_driver.dart`),
+     owning `llm_prefill` + `llm_decode` + `llm_decoder_head`
+     sessions, the embedding NPZ tables, and the tokenizer.
+     Exposes `prefill / decodeStep / headLogits / embedTextTokens
+     / embedSpeechToken` primitives keyed off the actual ONNX I/O
+     names (`inputs_embeds`, `attention_mask`, `past_key_*`,
+     `past_value_*`, `present_key_*`, `present_value_*`, `hidden`,
+     `logits`).
+   - `CosyVoice2Paths` refreshed: `llm_prefill / llm_decode /
+     llm_decoder_head / hift_streaming` registered as
+     `requiredForSynthesis`; legacy monolithic `llm.onnx` kept
+     but downgraded to optional.
+3. **Step 9 — End-to-end smoke.**
+   - `bin/cosyvoice2_llm_smoke.dart` runs the full pipeline:
+     load partial bundle -> tokenize -> embed -> prefill -> 5
+     greedy decode steps -> head logits.
+   - Verified on CPU EP, RTX 5090 host. Sample run for
+     "你好，世界" produces token ids
+     `[56568, 52801, 3837, 99244, 97120]`, prefill ~63 ms,
+     decode steps ~52 ms each, sampled speech tokens within
+     `[0, 6564)`.
+
+### Deferred (open work)
+
+- **Step 2 — Mel extractors.** Need 80-mel extractor (for
+  `campplus`) and 128-mel extractor (for `speech_tokenizer_v2`).
+  Pure-Dart STFT or a Zig FFT helper; `kok_phon` already has
+  STFT primitives that can be specialized.
+- **Step 3 — Voice prompt path.** Wire `campplus` + a mel
+  extractor into a `SpeakerEmbeddingExtractor` (Dart) and
+  cache `speech_token_v2` outputs alongside speaker embeddings
+  per voice. Requires Step 2.
+- **Step 5 — RAS sampler.** `cosyvoice2.utils.common.ras_sampling`
+  needs a Zig port (`dinf_cosy_ras_sample`) plus a Dart
+  binding. Inputs: logits, win_size, tau, top_p, top_k,
+  decoded-history. Output: chosen token id. Today the smoke
+  uses greedy argmax — replace it before any quality eval.
+- **Step 6 — Flow.** Wire `flow_encoder_fp32` + the `flow.decoder.estimator.fp32`
+  diffusion loop. Decoder integrates ODE over a small number
+  of steps (default 10, CFG scale 0.7) — needs a Dart-side
+  scheduler. KV-style state-passing not needed; each step is
+  a clean forward pass over the conditioned mel stream.
+- **Step 7 — Vocoder + streaming.** `hift.onnx` works
+  position-by-position; `hift_streaming.onnx` carries
+  cross-chunk state. Need a Dart-side streamer that buffers
+  the upstream mel chunks and emits PCM in a
+  `Stream<Float32List>`.
+- **Step 8 — Reference parity.** Compare the full Dart
+  pipeline waveform against the upstream Python CosyVoice2
+  on a fixed seed/voice/text. Gate: correlation > 0.99 in
+  the windowed time domain, MSE < 1e-4 in mel space.
+- **Step 10 — Catalog & server.** Promote
+  `tts_backends_catalog` cosyvoice2 entry from `partial` to
+  `ready` (after Step 8 passes). Wire the new driver into
+  `bin/tts_server.dart` so existing TTS callers receive
+  pure-Dart cosyvoice2 audio.
+
+### Validation Commands
+
+- Whole-package analyze: `dart analyze`
+- Tokenizer parity (Dart): `QWEN2_TOKENIZER_DIR=<model-dir>/CosyVoice-BlankEN dart test test/qwen2_tokenizer_parity_test.dart`
+- Tokenizer parity (Zig): `QWEN2_TOKENIZER_DIR=<...>/CosyVoice-BlankEN QWEN2_TOKENIZER_CASES=test/fixtures/cosyvoice2/qwen2_tokenizer_cases.json $ZIG test native/zig_runtime/qwen2_parity_test.zig -lc`
+- E2E LLM smoke (CPU): `dart run bin/cosyvoice2_llm_smoke.dart --model-dir <model-dir> --provider cpu`
+- E2E LLM smoke (CUDA): `dart run bin/cosyvoice2_llm_smoke.dart --model-dir <model-dir> --provider cuda --device-id 0`
+
+### Critical Implementation Notes
+
+- The split-LLM ONNX exports use `inputs_embeds` (not
+  `input_ids`); embedding lookup happens Dart-side via
+  `llm_embeddings.npz`. Do not reintroduce a graph-level
+  embedding op — it would break weight sharing assumptions.
+- `present_key_*` shape from `llm_prefill` is `[B, 2, S, 64]`,
+  matching `past_key_*` consumed by `llm_decode`. The loop
+  must pass them through verbatim each step.
+- `attention_mask` grows by 1 per decode step. Today
+  `decodeStep` reallocates; for production hot loops this can
+  be replaced with a bump-allocated buffer reused across
+  steps.
+- Greedy argmax in the smoke is intentional. Replace with
+  `dinf_cosy_ras_sample` (Step 5) before any quality eval —
+  greedy collapses into repeating tokens after ~3 steps,
+  which is exactly what the current smoke output shows.
