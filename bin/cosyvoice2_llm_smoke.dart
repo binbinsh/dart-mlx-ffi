@@ -11,15 +11,17 @@
 //       --model-dir <path to CosyVoice2-0.5B> \
 //       [--text "你好，世界"] [--steps 5] [--provider cuda] [--device-id 0]
 //
-// Sampling is greedy argmax (no temperature/top-k); this is deliberate
-// so the smoke output is fully deterministic and useful for CI sanity
-// checks, not for reference-quality TTS.
+// Default sampling is greedy argmax (deterministic, useful for CI).
+// Pass `--sampler ras [--seed N]` to exercise the RAS sampler used by
+// production CosyVoice2 inference.
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dart_inference/models.dart';
+import 'package:dart_inference/src/models/cosyvoice2/cosyvoice2_ras_sampler.dart';
 
 void main(List<String> args) async {
   final opts = _parseArgs(args);
@@ -68,11 +70,21 @@ void main(List<String> args) async {
     );
 
     final logits0 = driver.headLogits(state.lastHidden);
-    final t0 = _argmax(logits0);
-    stdout.writeln('   step 0 sampled speech-token id: $t0');
+    final sampler = opts.sampler == 'ras'
+        ? RasSampler(rng: Random(opts.seed))
+        : null;
+    int pickToken(Float32List logits, List<int> history) {
+      if (sampler != null) return sampler.sample(logits, history);
+      return _argmax(logits);
+    }
+
+    final sampled = <int>[];
+    final t0 = pickToken(logits0, sampled);
+    sampled.add(t0);
+    stdout.writeln('   step 0 sampled speech-token id: $t0 '
+        '(sampler=${opts.sampler})');
 
     final stepLatencies = <double>[];
-    final sampled = <int>[t0];
     var current = t0;
     for (var step = 1; step <= opts.steps; step += 1) {
       final embed = driver.embedSpeechToken(current);
@@ -81,7 +93,7 @@ void main(List<String> args) async {
       final s1 = DateTime.now().microsecondsSinceEpoch;
       stepLatencies.add((s1 - s0) / 1000.0);
       final logits = driver.headLogits(state.lastHidden);
-      current = _argmax(logits);
+      current = pickToken(logits, sampled);
       sampled.add(current);
     }
     stdout.writeln(
@@ -123,6 +135,8 @@ class _Opts {
     required this.provider,
     required this.deviceId,
     required this.numThreads,
+    required this.sampler,
+    required this.seed,
   });
   final String modelDir;
   final String text;
@@ -130,6 +144,8 @@ class _Opts {
   final String provider;
   final int deviceId;
   final int numThreads;
+  final String sampler; // 'greedy' | 'ras'
+  final int seed;
 }
 
 _Opts _parseArgs(List<String> argv) {
@@ -139,6 +155,8 @@ _Opts _parseArgs(List<String> argv) {
   var provider = 'cuda';
   var deviceId = 0;
   var numThreads = 4;
+  var sampler = 'greedy';
+  var seed = 0;
   for (var i = 0; i < argv.length; i += 1) {
     final a = argv[i];
     String next() {
@@ -162,10 +180,17 @@ _Opts _parseArgs(List<String> argv) {
         deviceId = int.parse(next());
       case '--num-threads':
         numThreads = int.parse(next());
+      case '--sampler':
+        sampler = next();
+        if (sampler != 'greedy' && sampler != 'ras') {
+          throw ArgumentError('--sampler must be greedy or ras');
+        }
+      case '--seed':
+        seed = int.parse(next());
       case '-h':
       case '--help':
         stdout.writeln(
-            'Usage: cosyvoice2_llm_smoke --model-dir <path> [--text ...] [--steps N] [--provider cuda|cpu] [--device-id N] [--num-threads N]');
+            'Usage: cosyvoice2_llm_smoke --model-dir <path> [--text ...] [--steps N] [--provider cuda|cpu] [--device-id N] [--num-threads N] [--sampler greedy|ras] [--seed N]');
         exit(0);
       default:
         throw ArgumentError('Unknown flag: $a');
@@ -181,5 +206,7 @@ _Opts _parseArgs(List<String> argv) {
     provider: provider,
     deviceId: deviceId,
     numThreads: numThreads,
+    sampler: sampler,
+    seed: seed,
   );
 }
