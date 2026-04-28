@@ -226,7 +226,7 @@ final class TtsBackendCatalog {
         ),
       ],
       blockers: [
-        'Dart/Zig ONNX targets are defined for all core components, but local exported ONNX graphs are currently present only for campplus, speech_tokenizer_v2, and flow.decoder.estimator. Flow encoder, LLM token generation, HiFT vocoder, and text/audio prompt preprocessing still need complete Dart/Zig/ONNX migration.',
+        'Local exported ONNX graphs are present for campplus, speech_tokenizer_v2, flow.decoder.estimator, flow.encoder, and hift. The autoregressive LLM (llm.pt) still needs ONNX export plus a Zig autoregressive decode loop. Streaming with non-empty hift cache_source also requires a separate hift export.',
       ],
     ),
     TtsBackendCapability(
