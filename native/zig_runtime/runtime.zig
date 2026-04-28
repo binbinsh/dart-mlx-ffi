@@ -15,6 +15,7 @@ const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
 const open_opts = @import("open_opts.zig");
 const policy = @import("policy.zig");
+const qwen2_bpe_api = @import("qwen2_bpe_api.zig");
 const resolve = @import("resolve.zig");
 const structured_input_api = @import("structured_input_api.zig");
 const target_api = @import("target_api.zig");
@@ -43,6 +44,7 @@ comptime {
     _ = espeak_api;
     _ = fill_api;
     _ = kokoro_api;
+    _ = qwen2_bpe_api;
     _ = structured_input_api;
     _ = target_api;
     _ = text_api;
