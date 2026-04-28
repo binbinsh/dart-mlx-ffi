@@ -41,6 +41,20 @@ final class CosyVoice2Paths {
   String get vllmSafetensors => '$modelDir/vllm/model.safetensors';
   String get configPath => '$modelDir/cosyvoice2.yaml';
 
+  // Split-LLM ONNX exports (pure Dart serving path).  These superseded
+  // the monolithic `llm.onnx` once the LLM was decomposed into prefill
+  // (variable-length context), decode (single-token KV-cache step), and
+  // a separate decoder-head + embedding-table file.
+  String get llmPrefillOnnx => '$modelDir/llm_prefill.onnx';
+  String get llmDecodeOnnx => '$modelDir/llm_decode.onnx';
+  String get llmDecoderHeadOnnx => '$modelDir/llm_decoder_head.onnx';
+  String get llmEmbeddingsNpz => '$modelDir/llm_embeddings.npz';
+  String get hiftStreamingOnnx => '$modelDir/hift_streaming.onnx';
+
+  /// Directory holding the Qwen2 tokenizer (`vocab.json`, `merges.txt`,
+  /// `tokenizer_config.json`) consumed by [Qwen2BpeTokenizer.load].
+  String get qwen2TokenizerDir => '$modelDir/CosyVoice-BlankEN';
+
   List<CosyVoice2ComponentFile> componentFiles() => [
     CosyVoice2ComponentFile.onnx(
       name: 'campplus',
@@ -80,6 +94,30 @@ final class CosyVoice2Paths {
       name: 'llm',
       role: 'semantic_speech_token_generator',
       path: llmOnnx,
+      requiredForSynthesis: false,
+      sourcePath: llmCheckpoint,
+      sourceFormat: 'torch_checkpoint',
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'llm_prefill',
+      role: 'semantic_speech_token_generator_prefill',
+      path: llmPrefillOnnx,
+      requiredForSynthesis: true,
+      sourcePath: llmCheckpoint,
+      sourceFormat: 'torch_checkpoint',
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'llm_decode',
+      role: 'semantic_speech_token_generator_decode',
+      path: llmDecodeOnnx,
+      requiredForSynthesis: true,
+      sourcePath: llmCheckpoint,
+      sourceFormat: 'torch_checkpoint',
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'llm_decoder_head',
+      role: 'semantic_speech_token_decoder_head',
+      path: llmDecoderHeadOnnx,
       requiredForSynthesis: true,
       sourcePath: llmCheckpoint,
       sourceFormat: 'torch_checkpoint',
@@ -97,6 +135,14 @@ final class CosyVoice2Paths {
       role: 'vocoder',
       path: hiftOnnx,
       requiredForSynthesis: true,
+      sourcePath: hiftCheckpoint,
+      sourceFormat: 'torch_checkpoint',
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'hift_streaming',
+      role: 'vocoder_streaming',
+      path: hiftStreamingOnnx,
+      requiredForSynthesis: false,
       sourcePath: hiftCheckpoint,
       sourceFormat: 'torch_checkpoint',
     ),

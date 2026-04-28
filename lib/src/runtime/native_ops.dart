@@ -294,6 +294,55 @@ external int bpeEncode(
 );
 
 @ffi.Native<
+  ffi.Pointer<ffi.Void> Function(
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+    ffi.Pointer<ffi.Int64>,
+    ffi.IntPtr,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+    ffi.IntPtr,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+    ffi.Pointer<ffi.Int64>,
+    ffi.IntPtr,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+  )
+>(symbol: 'dinf_qwen2_bpe_new')
+external ffi.Pointer<ffi.Void> qwen2BpeNew(
+  ffi.Pointer<ffi.Pointer<ffi.Char>> vocabKeys,
+  ffi.Pointer<ffi.Int64> vocabIds,
+  int vocabCount,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> mergeKeys,
+  int mergeCount,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> specialTexts,
+  ffi.Pointer<ffi.Int64> specialIds,
+  int specialCount,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> error,
+);
+
+@ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>(
+  symbol: 'dinf_qwen2_bpe_free',
+)
+external void qwen2BpeFree(ffi.Pointer<ffi.Void> handle);
+
+@ffi.Native<
+  ffi.Int32 Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<ffi.Char>,
+    ffi.IntPtr,
+    ffi.Pointer<ffi.Int64>,
+    ffi.Pointer<ffi.IntPtr>,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+  )
+>(symbol: 'dinf_qwen2_bpe_encode')
+external int qwen2BpeEncode(
+  ffi.Pointer<ffi.Void> handle,
+  ffi.Pointer<ffi.Char> text,
+  int maxLength,
+  ffi.Pointer<ffi.Int64> ids,
+  ffi.Pointer<ffi.IntPtr> count,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> error,
+);
+
+@ffi.Native<
   ffi.Pointer<ffi.Char> Function(
     ffi.Pointer<ffi.Char>,
     ffi.Pointer<ffi.Char>,
