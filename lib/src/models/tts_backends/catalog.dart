@@ -172,6 +172,7 @@ final class TtsBackendCatalog {
         'llm_decoder_head.onnx',
         'llm_embeddings.npz',
         'hift.onnx',
+        'hift_streaming.onnx',
       ],
       onnxTargets: [
         TtsBackendOnnxTarget(
@@ -219,6 +220,12 @@ final class TtsBackendCatalog {
           path: 'models/CosyVoice2-0.5B/hift.onnx',
           sourceNames: ['hift'],
         ),
+        TtsBackendOnnxTarget(
+          name: 'hift_streaming',
+          role: 'vocoder_streaming',
+          path: 'models/CosyVoice2-0.5B/hift_streaming.onnx',
+          sourceNames: ['hift'],
+        ),
       ],
       sourceAssets: [
         TtsBackendSourceAsset(
@@ -241,7 +248,7 @@ final class TtsBackendCatalog {
         ),
       ],
       blockers: [
-        'All ONNX graphs are exported (campplus, speech_tokenizer_v2, flow.decoder.estimator, flow.encoder, llm_prefill, llm_decode, llm_decoder_head, hift) plus llm_embeddings.npz for token-table lookups. Remaining work: Zig glue for the autoregressive decode loop (prefill -> head -> sample -> embed -> decode -> head -> sample -> ...) using ras_sampling, and a separate hift export with non-empty cache_source for cross-chunk streaming.',
+        'All ONNX graphs are exported (campplus, speech_tokenizer_v2, flow.decoder.estimator, flow.encoder, llm_prefill, llm_decode, llm_decoder_head, hift, hift_streaming) plus llm_embeddings.npz for token-table lookups. Remaining work: Zig glue for the autoregressive decode loop (prefill -> head -> sample -> embed -> decode -> head -> sample -> ...) using ras_sampling, then wire hift_streaming for cross-chunk streaming.',
       ],
     ),
     TtsBackendCapability(
