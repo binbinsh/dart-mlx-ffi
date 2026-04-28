@@ -120,23 +120,21 @@ pub fn copyEntries(
 ) Error![]Entry {
     var builder = Builder.init(allocator);
     errdefer builder.deinit();
-    if (entries == null or count <= 0) {
-        return builder.finish();
-    }
-    const slice = entries[0..@intCast(count)];
-    for (slice) |entry| {
-        const path = entryPath(entry) orelse continue;
-        switch (entry.kind) {
-            string_kind => try builder.addString(path, entryText(entry)),
-            int_kind => try builder.addInt(path, entry.int_value),
-            bool_kind => try builder.addBool(path, entry.bool_value != 0),
-            map_kind => try builder.addMap(path),
-            list_kind => try builder.addList(path),
-            double_kind => try builder.addDouble(path, entry.double_value),
-            null_kind => try builder.addNull(path),
-            else => try builder.addNull(path),
-        }
-    }
+    try appendEntries(&builder, entries, count);
+    return builder.finish();
+}
+
+pub fn adapterSession(
+    allocator: std.mem.Allocator,
+    engine: []const u8,
+    zig_version: []const u8,
+    entries: [*c]const Entry,
+    count: isize,
+) Error![]Entry {
+    var builder = Builder.init(allocator);
+    errdefer builder.deinit();
+    try addBase(&builder, engine, "adapter", zig_version);
+    try appendEntries(&builder, entries, count);
     return builder.finish();
 }
 
@@ -161,6 +159,30 @@ fn addBase(builder: *Builder, engine: []const u8, mode: []const u8, zig_version:
     try builder.addBoolField("mlx_backend", "linked", mlx_backend.linked);
     try builder.addBoolField("mlx_backend", "enabled", mlx_backend.enabled);
     try addStringList(builder, "mlx_backend", "registered_artifacts", &.{ "mlxfn", "dart_inference_linear" });
+}
+
+fn appendEntries(
+    builder: *Builder,
+    entries: [*c]const Entry,
+    count: isize,
+) Error!void {
+    if (entries == null or count <= 0) {
+        return;
+    }
+    const slice = entries[0..@intCast(count)];
+    for (slice) |entry| {
+        const path = entryPath(entry) orelse continue;
+        switch (entry.kind) {
+            string_kind => try builder.addString(path, entryText(entry)),
+            int_kind => try builder.addInt(path, entry.int_value),
+            bool_kind => try builder.addBool(path, entry.bool_value != 0),
+            map_kind => try builder.addMap(path),
+            list_kind => try builder.addList(path),
+            double_kind => try builder.addDouble(path, entry.double_value),
+            null_kind => try builder.addNull(path),
+            else => try builder.addNull(path),
+        }
+    }
 }
 
 fn addMlxSession(builder: *Builder, parent: []const u8, session: *const mlx_backend.Session) Error!void {
@@ -264,6 +286,30 @@ test "diagnostic entries copy from typed adapter entries" {
     try std.testing.expectEqualStrings("CPU", entries[0].text[0..std.mem.len(entries[0].text)]);
     try std.testing.expectEqual(bool_kind, entries[2].kind);
     try std.testing.expectEqual(@as(i32, 1), entries[2].bool_value);
+}
+
+test "adapter diagnostics include Zig bridge base fields" {
+    const source = [_]Entry{
+        .{ .path = @constCast("provider"), .kind = string_kind, .text = @constCast("CUDAExecutionProvider"), .int_value = 0, .double_value = 0, .bool_value = 0 },
+    };
+    const entries = try adapterSession(std.heap.c_allocator, "onnx", "0.16.0", source[0..].ptr, @intCast(source.len));
+    defer freeEntries(entries.ptr, @intCast(entries.len));
+
+    var found_mode = false;
+    var found_provider = false;
+    for (entries) |entry| {
+        const path = entry.path[0..std.mem.len(entry.path)];
+        if (std.mem.eql(u8, path, "mode")) {
+            found_mode = true;
+            try std.testing.expectEqualStrings("adapter", entry.text[0..std.mem.len(entry.text)]);
+        }
+        if (std.mem.eql(u8, path, "provider")) {
+            found_provider = true;
+            try std.testing.expectEqualStrings("CUDAExecutionProvider", entry.text[0..std.mem.len(entry.text)]);
+        }
+    }
+    try std.testing.expect(found_mode);
+    try std.testing.expect(found_provider);
 }
 
 test "Zig diagnostics include MLX backend map" {

@@ -11,6 +11,15 @@
 
 namespace dinf_ort {
 
+struct TensorMetadata {
+  std::string name;
+  std::string onnx_type;
+  std::string dtype;
+  int32_t dtype_id = 0;
+  std::vector<int64_t> shape;
+  std::vector<std::string> symbolic_shape;
+};
+
 class Session final : public DinfRuntimeSession {
  public:
   Session(
@@ -24,6 +33,8 @@ class Session final : public DinfRuntimeSession {
       std::vector<std::string> available_providers,
       std::vector<std::string> input_names,
       std::vector<std::string> output_names,
+      std::vector<TensorMetadata> input_metadata,
+      std::vector<TensorMetadata> output_metadata,
       int num_threads,
       bool provider_appended);
 
@@ -59,6 +70,8 @@ class Session final : public DinfRuntimeSession {
   std::vector<std::string> available_providers_;
   std::vector<std::string> input_names_;
   std::vector<std::string> output_names_;
+  std::vector<TensorMetadata> input_metadata_;
+  std::vector<TensorMetadata> output_metadata_;
   int num_threads_;
   bool provider_appended_;
 };

@@ -4,7 +4,6 @@
 #include "options.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <utility>
@@ -60,6 +59,72 @@ int32_t RuntimeDtype(ONNXTensorElementDataType dtype) {
   }
 }
 
+std::string OrtDtypeName(ONNXTensorElementDataType dtype) {
+  switch (dtype) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+      return "float32";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      return "uint8";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      return "int8";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
+      return "uint16";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
+      return "int16";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+      return "int32";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+      return "int64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING:
+      return "string";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
+      return "bool";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+      return "float16";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:
+      return "float64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32:
+      return "uint32";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64:
+      return "uint64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64:
+      return "complex64";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128:
+      return "complex128";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16:
+      return "bfloat16";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN:
+      return "float8e4m3fn";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ:
+      return "float8e4m3fnuz";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2:
+      return "float8e5m2";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ:
+      return "float8e5m2fnuz";
+    default:
+      return "undefined";
+  }
+}
+
+std::string OnnxTypeName(ONNXType type) {
+  switch (type) {
+    case ONNX_TYPE_TENSOR:
+      return "tensor";
+    case ONNX_TYPE_SEQUENCE:
+      return "sequence";
+    case ONNX_TYPE_MAP:
+      return "map";
+    case ONNX_TYPE_OPAQUE:
+      return "opaque";
+    case ONNX_TYPE_SPARSETENSOR:
+      return "sparse_tensor";
+    case ONNX_TYPE_OPTIONAL:
+      return "optional";
+    default:
+      return "unknown";
+  }
+}
+
 std::string StatusMessage(const OrtApi* api, OrtStatus* status) {
   if (status == nullptr) {
     return "";
@@ -75,13 +140,6 @@ bool Ok(const OrtApi* api, OrtStatus* status, std::string* error) {
   }
   *error = StatusMessage(api, status);
   return false;
-}
-
-std::string Lower(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return value;
 }
 
 #if defined(_WIN32)
@@ -206,68 +264,167 @@ std::vector<std::string> SessionNames(
   return names;
 }
 
-std::string CanonicalProvider(std::string provider) {
-  const std::string value = Lower(provider);
-  if (value.empty() || value == "cpu") {
-    return "CPUExecutionProvider";
+std::vector<TensorMetadata> SessionMetadata(
+    const OrtApi* api,
+    OrtSession* session,
+    OrtAllocator* allocator,
+    bool inputs,
+    std::string* error) {
+  size_t count = 0;
+  if (inputs) {
+    if (!Ok(api, api->SessionGetInputCount(session, &count), error)) {
+      return {};
+    }
+  } else if (!Ok(api, api->SessionGetOutputCount(session, &count), error)) {
+    return {};
   }
-  if (value == "cuda") {
-    return "CUDAExecutionProvider";
+
+  std::vector<TensorMetadata> metadata;
+  metadata.reserve(count);
+  for (size_t i = 0; i < count; ++i) {
+    char* name = nullptr;
+    OrtStatus* name_status = inputs
+        ? api->SessionGetInputName(session, i, allocator, &name)
+        : api->SessionGetOutputName(session, i, allocator, &name);
+    if (!Ok(api, name_status, error)) {
+      return {};
+    }
+
+    TensorMetadata item;
+    item.name = name == nullptr ? "" : name;
+    allocator->Free(allocator, name);
+
+    OrtTypeInfo* type_info = nullptr;
+    OrtStatus* type_status = inputs
+        ? api->SessionGetInputTypeInfo(session, i, &type_info)
+        : api->SessionGetOutputTypeInfo(session, i, &type_info);
+    if (!Ok(api, type_status, error)) {
+      return {};
+    }
+
+    ONNXType onnx_type = ONNX_TYPE_UNKNOWN;
+    if (!Ok(api, api->GetOnnxTypeFromTypeInfo(type_info, &onnx_type), error)) {
+      api->ReleaseTypeInfo(type_info);
+      return {};
+    }
+    item.onnx_type = OnnxTypeName(onnx_type);
+
+    if (onnx_type == ONNX_TYPE_TENSOR) {
+      const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
+      if (!Ok(api, api->CastTypeInfoToTensorInfo(type_info, &tensor_info), error)) {
+        api->ReleaseTypeInfo(type_info);
+        return {};
+      }
+      if (tensor_info != nullptr) {
+        ONNXTensorElementDataType dtype =
+            ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+        if (!Ok(api, api->GetTensorElementType(tensor_info, &dtype), error)) {
+          api->ReleaseTypeInfo(type_info);
+          return {};
+        }
+        item.dtype = OrtDtypeName(dtype);
+        item.dtype_id = RuntimeDtype(dtype);
+
+        size_t rank = 0;
+        if (!Ok(api, api->GetDimensionsCount(tensor_info, &rank), error)) {
+          api->ReleaseTypeInfo(type_info);
+          return {};
+        }
+        item.shape.resize(rank);
+        if (rank > 0) {
+          if (!Ok(api, api->GetDimensions(tensor_info, item.shape.data(), rank), error)) {
+            api->ReleaseTypeInfo(type_info);
+            return {};
+          }
+          std::vector<const char*> symbols(rank);
+          std::string symbol_error;
+          if (Ok(
+                  api,
+                  api->GetSymbolicDimensions(
+                      tensor_info,
+                      symbols.data(),
+                      rank),
+                  &symbol_error)) {
+            item.symbolic_shape.reserve(rank);
+            for (const auto* symbol : symbols) {
+              item.symbolic_shape.emplace_back(symbol == nullptr ? "" : symbol);
+            }
+          }
+        }
+      }
+    }
+
+    api->ReleaseTypeInfo(type_info);
+    metadata.push_back(std::move(item));
   }
-  if (value == "tensorrt" || value == "trt") {
-    return "TensorrtExecutionProvider";
-  }
-  if (value == "directml" || value == "dml") {
-    return "DmlExecutionProvider";
-  }
-  if (value == "openvino") {
-    return "OpenVINOExecutionProvider";
-  }
-  if (value == "rocm") {
-    return "ROCMExecutionProvider";
-  }
-  if (value == "qnn" || value == "npu") {
-    return "QNNExecutionProvider";
-  }
-  if (value == "xnnpack") {
-    return "XnnpackExecutionProvider";
-  }
-  return provider;
+  return metadata;
 }
 
-std::string ChooseProvider(
-    const DinfOptions* runtime_options,
-    const std::vector<std::string>& providers) {
-  std::string requested =
-      dinf_option_string(runtime_options, "provider",
-          dinf_option_string(runtime_options, "executionProvider",
-              dinf_option_string(runtime_options, "ortProvider")));
-  if (!requested.empty()) {
-    return CanonicalProvider(requested);
+std::vector<std::string> MetadataNames(
+    const std::vector<TensorMetadata>& metadata) {
+  std::vector<std::string> names;
+  names.reserve(metadata.size());
+  for (const auto& item : metadata) {
+    names.push_back(item.name);
   }
-  if (!dinf_options_contains_token(runtime_options, "gpu") &&
-      !dinf_options_contains_token(runtime_options, "npu")) {
-    return "CPUExecutionProvider";
-  }
-  const std::vector<std::string> gpu_order = {
-      "CUDAExecutionProvider",
-      "TensorrtExecutionProvider",
-      "DmlExecutionProvider",
-      "ROCMExecutionProvider",
-      "OpenVINOExecutionProvider",
-      "CoreMLExecutionProvider",
-      "XnnpackExecutionProvider",
-  };
-  const std::vector<std::string> npu_order = {
-      "QNNExecutionProvider",
-      "OpenVINOExecutionProvider",
-  };
-  const auto& order =
-      dinf_options_contains_token(runtime_options, "npu") ? npu_order : gpu_order;
-  for (const auto& provider : order) {
-    if (ContainsProvider(providers, provider)) {
-      return provider;
+  return names;
+}
+
+std::vector<std::string> ShapeSignature(const TensorMetadata& metadata) {
+  std::vector<std::string> signature;
+  signature.reserve(metadata.shape.size());
+  for (size_t i = 0; i < metadata.shape.size(); ++i) {
+    if (i < metadata.symbolic_shape.size() &&
+        !metadata.symbolic_shape[i].empty()) {
+      signature.push_back(metadata.symbolic_shape[i]);
+    } else {
+      signature.push_back(std::to_string(metadata.shape[i]));
     }
+  }
+  return signature;
+}
+
+void AddIntList(
+    DinfDiagBuilder* out,
+    const std::string& path,
+    const std::vector<int64_t>& values) {
+  out->AddList(path);
+  for (size_t i = 0; i < values.size(); ++i) {
+    out->AddInt(dinf_diag_path(path, std::to_string(i)), values[i]);
+  }
+}
+
+void AddTensorMetadataList(
+    DinfDiagBuilder* out,
+    const std::string& path,
+    const std::vector<TensorMetadata>& metadata) {
+  out->AddList(path);
+  for (size_t i = 0; i < metadata.size(); ++i) {
+    const auto& item = metadata[i];
+    const std::string item_path = dinf_diag_path(path, std::to_string(i));
+    out->AddMap(item_path);
+    out->AddString(dinf_diag_path(item_path, "name"), item.name);
+    out->AddString(dinf_diag_path(item_path, "onnx_type"), item.onnx_type);
+    if (!item.dtype.empty()) {
+      out->AddString(dinf_diag_path(item_path, "dtype"), item.dtype);
+    }
+    out->AddInt(dinf_diag_path(item_path, "dtype_id"), item.dtype_id);
+    out->AddInt(dinf_diag_path(item_path, "rank"), item.shape.size());
+    AddIntList(out, dinf_diag_path(item_path, "shape"), item.shape);
+    out->AddStringList(
+        dinf_diag_path(item_path, "symbolic_shape"),
+        item.symbolic_shape);
+    out->AddStringList(
+        dinf_diag_path(item_path, "shape_signature"),
+        ShapeSignature(item));
+  }
+}
+
+std::string RequestedProvider(const DinfOptions* runtime_options) {
+  const std::string provider =
+      dinf_option_string(runtime_options, "provider");
+  if (!provider.empty()) {
+    return provider;
   }
   return "CPUExecutionProvider";
 }
@@ -300,15 +457,13 @@ bool AppendProvider(
     cuda_options.device_id =
         std::max(0, dinf_option_int(runtime_options, "deviceId", 0));
     const int cuda_mem_limit_mb =
-        dinf_option_int(runtime_options, "cudaMemoryLimitMb",
-            dinf_option_int(runtime_options, "gpuMemoryLimitMb", 0));
+        dinf_option_int(runtime_options, "cudaMemoryLimitMb", 0);
     if (cuda_mem_limit_mb > 0) {
       cuda_options.gpu_mem_limit =
           static_cast<size_t>(cuda_mem_limit_mb) * 1024ULL * 1024ULL;
     }
     const int arena_extend_strategy =
-        dinf_option_int(runtime_options, "cudaArenaExtendStrategy",
-            dinf_option_int(runtime_options, "gpuArenaExtendStrategy", -1));
+        dinf_option_int(runtime_options, "cudaArenaExtendStrategy", -1);
     if (arena_extend_strategy >= 0) {
       cuda_options.arena_extend_strategy = arena_extend_strategy;
     }
@@ -339,8 +494,7 @@ bool AppendProvider(
     trt_options.trt_min_subgraph_size =
         std::max(0, dinf_option_int(runtime_options, "trtMinSubgraphSize", 0));
     const int trt_workspace_mb =
-        dinf_option_int(runtime_options, "trtWorkspaceMemoryLimitMb",
-            dinf_option_int(runtime_options, "trtMaxWorkspaceSizeMb", 0));
+        dinf_option_int(runtime_options, "trtWorkspaceMemoryLimitMb", 0);
     if (trt_workspace_mb > 0) {
       trt_options.trt_max_workspace_size =
           static_cast<size_t>(trt_workspace_mb) * 1024ULL * 1024ULL;
@@ -352,8 +506,7 @@ bool AppendProvider(
     trt_options.trt_dump_subgraphs =
         dinf_option_bool(runtime_options, "trtDumpSubgraphs", false) ? 1 : 0;
     const std::string trt_cache_path =
-        dinf_option_string(runtime_options, "trtCacheDir",
-            dinf_option_string(runtime_options, "trtEngineCachePath"));
+        dinf_option_string(runtime_options, "trtEngineCachePath");
     if (!trt_cache_path.empty()) {
       trt_options.trt_engine_cache_enable = 1;
       trt_options.trt_engine_cache_path = trt_cache_path.c_str();
@@ -412,6 +565,8 @@ Session::Session(
     std::vector<std::string> available_providers,
     std::vector<std::string> input_names,
     std::vector<std::string> output_names,
+    std::vector<TensorMetadata> input_metadata,
+    std::vector<TensorMetadata> output_metadata,
     int num_threads,
     bool provider_appended)
     : api_(api),
@@ -424,6 +579,8 @@ Session::Session(
       available_providers_(std::move(available_providers)),
       input_names_(std::move(input_names)),
       output_names_(std::move(output_names)),
+      input_metadata_(std::move(input_metadata)),
+      output_metadata_(std::move(output_metadata)),
       num_threads_(num_threads),
       provider_appended_(provider_appended) {}
 
@@ -472,27 +629,13 @@ int Session::Run(
     }
   }
 
-  size_t output_name_count = 0;
-  if (!Ok(api_, api_->SessionGetOutputCount(session_, &output_name_count), error)) {
-    ReleaseValues(input_values);
-    return 1;
-  }
-  std::vector<char*> owned_names;
   std::vector<const char*> output_names;
-  owned_names.reserve(output_name_count);
-  output_names.reserve(output_name_count);
-  for (size_t i = 0; i < output_name_count; ++i) {
-    char* name = nullptr;
-    if (!Ok(api_, api_->SessionGetOutputName(session_, i, allocator_, &name), error)) {
-      ReleaseValues(input_values);
-      ReleaseNames(owned_names);
-      return 1;
-    }
-    output_names.push_back(name);
-    owned_names.push_back(name);
+  output_names.reserve(output_names_.size());
+  for (const auto& name : output_names_) {
+    output_names.push_back(name.c_str());
   }
 
-  std::vector<OrtValue*> output_values(output_name_count);
+  std::vector<OrtValue*> output_values(output_names.size());
   if (!Ok(api_,
           api_->Run(
               session_,
@@ -506,7 +649,6 @@ int Session::Run(
           error)) {
     ReleaseValues(input_values);
     ReleaseValues(output_values);
-    ReleaseNames(owned_names);
     return 1;
   }
 
@@ -516,7 +658,6 @@ int Session::Run(
     if (!Ok(api_, api_->GetTensorTypeAndShape(output_values[i], &info), error)) {
       ReleaseValues(input_values);
       ReleaseValues(output_values);
-      ReleaseNames(owned_names);
       return 1;
     }
     ONNXTensorElementDataType ort_type;
@@ -524,7 +665,6 @@ int Session::Run(
       api_->ReleaseTensorTypeAndShapeInfo(info);
       ReleaseValues(input_values);
       ReleaseValues(output_values);
-      ReleaseNames(owned_names);
       return 1;
     }
     const int32_t dtype = RuntimeDtype(ort_type);
@@ -537,7 +677,6 @@ int Session::Run(
       api_->ReleaseTensorTypeAndShapeInfo(info);
       ReleaseValues(input_values);
       ReleaseValues(output_values);
-      ReleaseNames(owned_names);
       return 1;
     }
     std::vector<int64_t> shape(rank);
@@ -545,7 +684,6 @@ int Session::Run(
       api_->ReleaseTensorTypeAndShapeInfo(info);
       ReleaseValues(input_values);
       ReleaseValues(output_values);
-      ReleaseNames(owned_names);
       return 1;
     }
     size_t count = 0;
@@ -553,7 +691,6 @@ int Session::Run(
       api_->ReleaseTensorTypeAndShapeInfo(info);
       ReleaseValues(input_values);
       ReleaseValues(output_values);
-      ReleaseNames(owned_names);
       return 1;
     }
     api_->ReleaseTensorTypeAndShapeInfo(info);
@@ -561,7 +698,6 @@ int Session::Run(
     if (!Ok(api_, api_->GetTensorMutableData(output_values[i], &data), error)) {
       ReleaseValues(input_values);
       ReleaseValues(output_values);
-      ReleaseNames(owned_names);
       return 1;
     }
     produced.push_back(dinf_make_tensor(
@@ -574,7 +710,6 @@ int Session::Run(
 
   ReleaseValues(input_values);
   ReleaseValues(output_values);
-  ReleaseNames(owned_names);
   *output_count = produced.size();
   *outputs = static_cast<DinfNamedTensor*>(
       std::malloc(sizeof(DinfNamedTensor) * produced.size()));
@@ -596,6 +731,14 @@ void Session::Diagnostics(
       available_providers_);
   out->AddStringList(dinf_diag_path(prefix, "input_names"), input_names_);
   out->AddStringList(dinf_diag_path(prefix, "output_names"), output_names_);
+  AddTensorMetadataList(
+      out,
+      dinf_diag_path(prefix, "input_metadata"),
+      input_metadata_);
+  AddTensorMetadataList(
+      out,
+      dinf_diag_path(prefix, "output_metadata"),
+      output_metadata_);
 }
 
 void Session::ReleaseValues(std::vector<OrtValue*>& values) {
@@ -656,7 +799,7 @@ std::unique_ptr<Session> CreateSession(
     *error = provider_error;
     return nullptr;
   }
-  const std::string provider = ChooseProvider(runtime_options, providers);
+  const std::string provider = RequestedProvider(runtime_options);
   bool provider_appended = false;
   if (!AppendProvider(
           api,
@@ -700,8 +843,8 @@ std::unique_ptr<Session> CreateSession(
     api->ReleaseEnv(env);
     return nullptr;
   }
-  std::vector<std::string> input_names =
-      SessionNames(api, session, allocator, true, error);
+  std::vector<TensorMetadata> input_metadata =
+      SessionMetadata(api, session, allocator, true, error);
   if (!error->empty()) {
     api->ReleaseMemoryInfo(memory_info);
     api->ReleaseSession(session);
@@ -709,8 +852,8 @@ std::unique_ptr<Session> CreateSession(
     api->ReleaseEnv(env);
     return nullptr;
   }
-  std::vector<std::string> output_names =
-      SessionNames(api, session, allocator, false, error);
+  std::vector<TensorMetadata> output_metadata =
+      SessionMetadata(api, session, allocator, false, error);
   if (!error->empty()) {
     api->ReleaseMemoryInfo(memory_info);
     api->ReleaseSession(session);
@@ -718,6 +861,8 @@ std::unique_ptr<Session> CreateSession(
     api->ReleaseEnv(env);
     return nullptr;
   }
+  std::vector<std::string> input_names = MetadataNames(input_metadata);
+  std::vector<std::string> output_names = MetadataNames(output_metadata);
   return std::unique_ptr<Session>(new Session(
       api,
       env,
@@ -729,6 +874,8 @@ std::unique_ptr<Session> CreateSession(
       providers,
       std::move(input_names),
       std::move(output_names),
+      std::move(input_metadata),
+      std::move(output_metadata),
       num_threads,
       provider_appended));
 }

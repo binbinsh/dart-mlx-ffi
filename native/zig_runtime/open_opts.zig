@@ -47,6 +47,9 @@ pub fn merge(
     if (!hasRoot(backend, "engine") and !hasRoot(metadata, "engine")) {
         try out.append(allocator, textEntry("engine", policy.engineName(engine).ptr));
     }
+    if (engine == @intFromEnum(policy.Engine.onnx)) {
+        try normalizeOnnxProviderOptions(allocator, &out);
+    }
     return out.toOwnedSlice(allocator) catch error.OutOfMemory;
 }
 
@@ -127,6 +130,16 @@ fn rootValue(entries: []const Entry, key: []const u8) ?Entry {
     return null;
 }
 
+fn rootIndex(entries: []const Entry, key: []const u8) ?usize {
+    for (entries, 0..) |entry, index| {
+        const path = entryPath(entry) orelse continue;
+        if (std.mem.eql(u8, path, key)) {
+            return index;
+        }
+    }
+    return null;
+}
+
 fn root(path: []const u8) []const u8 {
     const index = std.mem.indexOfScalar(u8, path, sep) orelse return path;
     return path[0..index];
@@ -176,6 +189,161 @@ fn boolEntry(path: [*c]const u8, value: bool) Entry {
     return .{ .path = path, .kind = bool_kind, .text = null, .int_value = 0, .double_value = 0, .bool_value = if (value) 1 else 0 };
 }
 
+fn int64Entry(path: [*c]const u8, value: i64) Entry {
+    return .{ .path = path, .kind = int_kind, .text = null, .int_value = value, .double_value = 0, .bool_value = 0 };
+}
+
+fn normalizeOnnxProviderOptions(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(Entry),
+) Error!void {
+    if (rootIndex(out.items, "provider")) |index| {
+        const entry = out.items[index];
+        if (entry.kind == string_kind) {
+            if (canonicalProvider(entryText(entry))) |provider| {
+                out.items[index] = textEntry(entry.path, provider);
+            }
+        }
+    } else if (rootValue(out.items, "executionProvider") orelse rootValue(out.items, "ortProvider")) |entry| {
+        if (entry.kind == string_kind) {
+            const provider = canonicalProvider(entryText(entry)) orelse entry.text;
+            try out.append(allocator, textEntry("provider", provider));
+        }
+    } else {
+        try out.append(allocator, textEntry("provider", defaultOnnxProvider(out.items)));
+    }
+
+    try appendIntAlias(allocator, out, "cudaMemoryLimitMb", "gpuMemoryLimitMb");
+    try appendIntAlias(allocator, out, "cudaArenaExtendStrategy", "gpuArenaExtendStrategy");
+    try appendIntAlias(allocator, out, "trtWorkspaceMemoryLimitMb", "trtMaxWorkspaceSizeMb");
+    try appendStringAlias(allocator, out, "trtEngineCachePath", "trtCacheDir");
+    if (!hasRoot(out.items, "trtEngineCacheEnable")) {
+        if (rootValue(out.items, "trtCacheDir")) |entry| {
+            if (entry.kind == string_kind and entryText(entry).len > 0) {
+                try out.append(allocator, boolEntry("trtEngineCacheEnable", true));
+            }
+        }
+    }
+}
+
+fn defaultOnnxProvider(entries: []const Entry) [*c]const u8 {
+    if (containsTextToken(entries, "npu")) {
+        return "QNNExecutionProvider";
+    }
+    if (containsTextToken(entries, "gpu")) {
+        return "CUDAExecutionProvider";
+    }
+    return "CPUExecutionProvider";
+}
+
+fn containsTextToken(entries: []const Entry, token: []const u8) bool {
+    for (entries) |entry| {
+        if (entry.kind == string_kind and std.mem.eql(u8, entryText(entry), token)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn appendIntAlias(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(Entry),
+    target: []const u8,
+    source: []const u8,
+) Error!void {
+    if (hasRoot(out.items, target)) {
+        return;
+    }
+    const value = rootValue(out.items, source) orelse return;
+    if (value.kind != int_kind) {
+        return;
+    }
+    try out.append(allocator, int64Entry(aliasPath(target), value.int_value));
+}
+
+fn appendStringAlias(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(Entry),
+    target: []const u8,
+    source: []const u8,
+) Error!void {
+    if (hasRoot(out.items, target)) {
+        return;
+    }
+    const value = rootValue(out.items, source) orelse return;
+    if (value.kind != string_kind or entryText(value).len == 0) {
+        return;
+    }
+    try out.append(allocator, textEntry(aliasPath(target), value.text));
+}
+
+fn aliasPath(path: []const u8) [*c]const u8 {
+    if (std.mem.eql(u8, path, "cudaMemoryLimitMb")) return "cudaMemoryLimitMb";
+    if (std.mem.eql(u8, path, "cudaArenaExtendStrategy")) return "cudaArenaExtendStrategy";
+    if (std.mem.eql(u8, path, "trtWorkspaceMemoryLimitMb")) return "trtWorkspaceMemoryLimitMb";
+    if (std.mem.eql(u8, path, "trtEngineCachePath")) return "trtEngineCachePath";
+    return "";
+}
+
+fn canonicalProvider(value: []const u8) ?[*c]const u8 {
+    if (asciiEqualsIgnoreCase(value, "cpu") or
+        asciiEqualsIgnoreCase(value, "CPUExecutionProvider"))
+    {
+        return "CPUExecutionProvider";
+    }
+    if (asciiEqualsIgnoreCase(value, "cuda") or
+        asciiEqualsIgnoreCase(value, "CUDAExecutionProvider"))
+    {
+        return "CUDAExecutionProvider";
+    }
+    if (asciiEqualsIgnoreCase(value, "trt") or
+        asciiEqualsIgnoreCase(value, "tensorrt") or
+        asciiEqualsIgnoreCase(value, "TensorrtExecutionProvider"))
+    {
+        return "TensorrtExecutionProvider";
+    }
+    if (asciiEqualsIgnoreCase(value, "directml") or
+        asciiEqualsIgnoreCase(value, "dml") or
+        asciiEqualsIgnoreCase(value, "DmlExecutionProvider"))
+    {
+        return "DmlExecutionProvider";
+    }
+    if (asciiEqualsIgnoreCase(value, "openvino") or
+        asciiEqualsIgnoreCase(value, "OpenVINOExecutionProvider"))
+    {
+        return "OpenVINOExecutionProvider";
+    }
+    if (asciiEqualsIgnoreCase(value, "rocm") or
+        asciiEqualsIgnoreCase(value, "ROCMExecutionProvider"))
+    {
+        return "ROCMExecutionProvider";
+    }
+    if (asciiEqualsIgnoreCase(value, "qnn") or
+        asciiEqualsIgnoreCase(value, "npu") or
+        asciiEqualsIgnoreCase(value, "QNNExecutionProvider"))
+    {
+        return "QNNExecutionProvider";
+    }
+    if (asciiEqualsIgnoreCase(value, "xnnpack") or
+        asciiEqualsIgnoreCase(value, "XnnpackExecutionProvider"))
+    {
+        return "XnnpackExecutionProvider";
+    }
+    return null;
+}
+
+fn asciiEqualsIgnoreCase(left: []const u8, right: []const u8) bool {
+    if (left.len != right.len) {
+        return false;
+    }
+    for (left, right) |l, r| {
+        if (std.ascii.toLower(l) != std.ascii.toLower(r)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 fn findPath(entries: []const Entry, path: []const u8) ?Entry {
     for (entries) |entry| {
         const entry_path = entryPath(entry) orelse continue;
@@ -206,7 +374,7 @@ test "runtime open options are merged as typed entries" {
     );
     defer std.testing.allocator.free(options);
     try std.testing.expectEqual(@as(usize, 8), options.len);
-    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "provider").?), "cuda"));
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "provider").?), "CUDAExecutionProvider"));
     try std.testing.expectEqual(@as(i32, 0), findPath(options, "diagnostics").?.bool_value);
     try std.testing.expectEqual(@as(i32, list_kind), findPath(options, "accelerators").?.kind);
     try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "accelerators\x1f0").?), "gpu"));
@@ -226,6 +394,93 @@ test "runtime open options preserve nested entries" {
     try std.testing.expectEqual(@as(i32, list_kind), findPath(options, "items").?.kind);
     try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "items\x1f0").?), "a"));
     try std.testing.expectEqual(@as(i64, 7), findPath(options, "items\x1f1").?.int_value);
+}
+
+test "ONNX default provider is selected in Zig from accelerator preference" {
+    const gpu_options = try merge(
+        std.testing.allocator,
+        @intFromEnum(policy.Engine.onnx),
+        policy.accel_gpu | policy.accel_cpu,
+        false,
+        0,
+        &.{},
+        &.{},
+    );
+    defer std.testing.allocator.free(gpu_options);
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(gpu_options, "provider").?), "CUDAExecutionProvider"));
+
+    const cpu_options = try merge(
+        std.testing.allocator,
+        @intFromEnum(policy.Engine.onnx),
+        0,
+        false,
+        0,
+        &.{},
+        &.{},
+    );
+    defer std.testing.allocator.free(cpu_options);
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(cpu_options, "provider").?), "CPUExecutionProvider"));
+}
+
+test "ONNX provider aliases are folded into provider in Zig" {
+    const backend = [_]Entry{textEntry("executionProvider", "dml")};
+    const options = try merge(
+        std.testing.allocator,
+        @intFromEnum(policy.Engine.onnx),
+        policy.accel_gpu,
+        true,
+        0,
+        &.{},
+        &backend,
+    );
+    defer std.testing.allocator.free(options);
+
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "provider").?), "DmlExecutionProvider"));
+}
+
+test "ONNX provider options are canonicalized in Zig" {
+    const backend = [_]Entry{
+        textEntry("provider", "trt"),
+        .{ .path = "trtMaxWorkspaceSizeMb", .kind = int_kind, .text = null, .int_value = 4096, .double_value = 0, .bool_value = 0 },
+        textEntry("trtCacheDir", "/tmp/trt-cache"),
+    };
+    const options = try merge(
+        std.testing.allocator,
+        @intFromEnum(policy.Engine.onnx),
+        policy.accel_gpu,
+        true,
+        0,
+        &.{},
+        &backend,
+    );
+    defer std.testing.allocator.free(options);
+
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "provider").?), "TensorrtExecutionProvider"));
+    try std.testing.expectEqual(@as(i64, 4096), findPath(options, "trtWorkspaceMemoryLimitMb").?.int_value);
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "trtEngineCachePath").?), "/tmp/trt-cache"));
+    try std.testing.expectEqual(@as(i32, 1), findPath(options, "trtEngineCacheEnable").?.bool_value);
+}
+
+test "ONNX CUDA memory aliases are canonicalized in Zig" {
+    const backend = [_]Entry{
+        textEntry("provider", "cuda"),
+        .{ .path = "gpuMemoryLimitMb", .kind = int_kind, .text = null, .int_value = 8192, .double_value = 0, .bool_value = 0 },
+        .{ .path = "gpuArenaExtendStrategy", .kind = int_kind, .text = null, .int_value = 1, .double_value = 0, .bool_value = 0 },
+    };
+    const options = try merge(
+        std.testing.allocator,
+        @intFromEnum(policy.Engine.onnx),
+        policy.accel_gpu,
+        false,
+        0,
+        &.{},
+        &backend,
+    );
+    defer std.testing.allocator.free(options);
+
+    try std.testing.expect(std.mem.eql(u8, entryText(findPath(options, "provider").?), "CUDAExecutionProvider"));
+    try std.testing.expectEqual(@as(i64, 8192), findPath(options, "cudaMemoryLimitMb").?.int_value);
+    try std.testing.expectEqual(@as(i64, 1), findPath(options, "cudaArenaExtendStrategy").?.int_value);
 }
 
 test "runtime open text lookup honors backend overrides" {

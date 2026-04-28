@@ -5,6 +5,7 @@ const path = std.Io.Dir.path;
 const max_env_json_bytes = 1024 * 1024;
 
 const env_file_name = ".dart_inference_runtime_env.json";
+const disabled_env_sentinel = "<dart_inference:no-runtime-env>";
 
 const default_ort_libs = [_][]const u8{
     "libcudart.so.12",
@@ -35,6 +36,7 @@ const Pair = struct {
 
 const Env = struct {
     allocator: std.mem.Allocator,
+    process_enabled: bool = true,
     values: std.ArrayList(Pair) = .empty,
 
     fn load(
@@ -45,6 +47,12 @@ const Env = struct {
     ) !Env {
         var env = Env{ .allocator = allocator };
         errdefer env.deinit();
+        if (runtime_env_file) |value| {
+            if (std.mem.eql(u8, value, disabled_env_sentinel)) {
+                env.process_enabled = false;
+                return env;
+            }
+        }
         const file = try resolveEnvFile(allocator, io, runtime_env_file, search_roots);
         defer if (file) |value| allocator.free(value);
         if (file) |value| {
@@ -100,12 +108,14 @@ const Env = struct {
     }
 
     fn valueOwned(self: *const Env, name: []const u8) !?[]u8 {
-        const process_value = try getenvOwned(self.allocator, name);
-        if (process_value) |value| {
-            if (value.len > 0) {
-                return value;
+        if (self.process_enabled) {
+            const process_value = try getenvOwned(self.allocator, name);
+            if (process_value) |value| {
+                if (value.len > 0) {
+                    return value;
+                }
+                self.allocator.free(value);
             }
-            self.allocator.free(value);
         }
         for (self.values.items) |item| {
             if (std.mem.eql(u8, item.key, name) and item.value.len > 0) {
@@ -284,8 +294,11 @@ fn resolveEnvFile(
     search_roots: []const u8,
 ) !?[]u8 {
     if (runtime_env_file) |value| {
-        if (value.len > 0 and isFile(io, value)) {
-            return allocator.dupe(u8, value) catch error.OutOfMemory;
+        if (value.len > 0) {
+            if (isFile(io, value)) {
+                return allocator.dupe(u8, value) catch error.OutOfMemory;
+            }
+            return null;
         }
     }
     const explicit = try getenvOwned(allocator, "DART_INFERENCE_RUNTIME_ENV_FILE");

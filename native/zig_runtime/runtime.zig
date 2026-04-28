@@ -1,15 +1,25 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("abi.zig");
+const audio_api = @import("audio_api.zig");
+const bpe_api = @import("bpe_api.zig");
 const coreml = @import("coreml.zig");
+const decode_api = @import("decode_api.zig");
 const diag = @import("diag.zig");
+const espeak_api = @import("espeak_api.zig");
+const fill_api = @import("fill_api.zig");
 const hf = @import("hf.zig");
+const kokoro_api = @import("kokoro_api.zig");
 const mem = @import("mem.zig");
 const rt_env = @import("env.zig");
 const mlx_backend = @import("mlx_backend.zig");
 const open_opts = @import("open_opts.zig");
 const policy = @import("policy.zig");
 const resolve = @import("resolve.zig");
+const structured_input_api = @import("structured_input_api.zig");
+const target_api = @import("target_api.zig");
+const text_api = @import("text_api.zig");
+const vector_api = @import("vector_api.zig");
 
 const pinned_zig_version = "0.16.0";
 const Engine = policy.Engine;
@@ -25,6 +35,19 @@ const copyCString = abi.copyCString;
 const validTensor = abi.validTensor;
 const copyTensor = abi.copyTensor;
 const mlx_artifacts = "mlxfn\x1edart_inference_linear";
+
+comptime {
+    _ = audio_api;
+    _ = bpe_api;
+    _ = decode_api;
+    _ = espeak_api;
+    _ = fill_api;
+    _ = kokoro_api;
+    _ = structured_input_api;
+    _ = target_api;
+    _ = text_api;
+    _ = vector_api;
+}
 
 const SessionMode = enum {
     echo,
@@ -841,9 +864,14 @@ export fn dinf_diag(handle: ?*anyopaque, count_out: ?*isize) [*c]diag.Entry {
     const entries = if (session.mode == .adapter) blk: {
         var adapter_count: isize = 0;
         const adapter_entries = cpp.dinf_cpp_diag(session.adapter_handle, &adapter_count);
-        if (adapter_entries == null or adapter_count <= 0) return null;
         defer cpp.dinf_cpp_free_options(adapter_entries, adapter_count);
-        break :blk diag.copyEntries(allocator, adapter_entries, adapter_count) catch return null;
+        break :blk diag.adapterSession(
+            allocator,
+            policy.engineName(session.engine),
+            pinned_zig_version,
+            adapter_entries,
+            adapter_count,
+        ) catch return null;
     } else blk: {
         const mode = switch (session.mode) {
             .echo => "echo",
