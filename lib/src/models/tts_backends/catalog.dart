@@ -167,7 +167,10 @@ final class TtsBackendCatalog {
         'speech_tokenizer_v2.onnx',
         'flow.decoder.estimator.fp32.onnx',
         'flow.encoder.fp32.onnx',
-        'llm.onnx',
+        'llm_prefill.onnx',
+        'llm_decode.onnx',
+        'llm_decoder_head.onnx',
+        'llm_embeddings.npz',
         'hift.onnx',
       ],
       onnxTargets: [
@@ -193,9 +196,21 @@ final class TtsBackendCatalog {
           sourceNames: ['flow_encoder_fp32'],
         ),
         TtsBackendOnnxTarget(
-          name: 'llm',
-          role: 'semantic_speech_token_generator',
-          path: 'models/CosyVoice2-0.5B/llm.onnx',
+          name: 'llm_prefill',
+          role: 'semantic_speech_token_generator_prefill',
+          path: 'models/CosyVoice2-0.5B/llm_prefill.onnx',
+          sourceNames: ['llm'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'llm_decode',
+          role: 'semantic_speech_token_generator_decode',
+          path: 'models/CosyVoice2-0.5B/llm_decode.onnx',
+          sourceNames: ['llm'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'llm_decoder_head',
+          role: 'semantic_speech_token_generator_head',
+          path: 'models/CosyVoice2-0.5B/llm_decoder_head.onnx',
           sourceNames: ['llm'],
         ),
         TtsBackendOnnxTarget(
@@ -226,7 +241,7 @@ final class TtsBackendCatalog {
         ),
       ],
       blockers: [
-        'Local exported ONNX graphs are present for campplus, speech_tokenizer_v2, flow.decoder.estimator, flow.encoder, and hift. The autoregressive LLM (llm.pt) still needs ONNX export plus a Zig autoregressive decode loop. Streaming with non-empty hift cache_source also requires a separate hift export.',
+        'All ONNX graphs are exported (campplus, speech_tokenizer_v2, flow.decoder.estimator, flow.encoder, llm_prefill, llm_decode, llm_decoder_head, hift) plus llm_embeddings.npz for token-table lookups. Remaining work: Zig glue for the autoregressive decode loop (prefill -> head -> sample -> embed -> decode -> head -> sample -> ...) using ras_sampling, and a separate hift export with non-empty cache_source for cross-chunk streaming.',
       ],
     ),
     TtsBackendCapability(
