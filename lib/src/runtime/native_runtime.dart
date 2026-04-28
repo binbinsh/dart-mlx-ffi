@@ -189,6 +189,26 @@ final class NativeTensorBuffer {
     }
   }
 
+  /// Adopts memory returned by the Zig runtime and releases it with
+  /// `dinf_free_buf` when this buffer closes.
+  factory NativeTensorBuffer.adopt({
+    required RuntimeTensorDataType dtype,
+    required List<int> shape,
+    required int byteLength,
+    required ffi.Pointer<ffi.Void> pointer,
+  }) {
+    if (byteLength < 0) {
+      throw RangeError.value(byteLength, 'byteLength');
+    }
+    if (byteLength == 0) {
+      return NativeTensorBuffer._(dtype, shape, 0, ffi.nullptr);
+    }
+    if (pointer == ffi.nullptr) {
+      throw ArgumentError.value(pointer, 'pointer', 'must not be null');
+    }
+    return NativeTensorBuffer._(dtype, shape, byteLength, pointer);
+  }
+
   factory NativeTensorBuffer.float32(List<int> shape) =>
       NativeTensorBuffer.allocate(
         dtype: RuntimeTensorDataType.float32,
@@ -239,6 +259,11 @@ final class NativeTensorBuffer {
 
   bool get isClosed => _pointer == ffi.nullptr && byteLength > 0;
 
+  ffi.Pointer<ffi.Void> get nativeData {
+    _checkOpen();
+    return _pointer;
+  }
+
   Uint8List get bytes {
     _checkOpen();
     return _bytes;
@@ -250,6 +275,29 @@ final class NativeTensorBuffer {
       dtype: dtype,
       shape: shape,
       bytes: _bytes,
+      nativeData: _pointer,
+      owner: this,
+    );
+    _nativeRuntimeTensorBuffers[value] = this;
+    return value;
+  }
+
+  RuntimeTensor tensorView({
+    required List<int> shape,
+    required int byteLength,
+  }) {
+    _checkOpen();
+    if (byteLength < 0 || byteLength > this.byteLength) {
+      throw RangeError.range(byteLength, 0, this.byteLength, 'byteLength');
+    }
+    final bytes = byteLength == this.byteLength
+        ? _bytes
+        : Uint8List.sublistView(_bytes, 0, byteLength);
+    final value = RuntimeTensor(
+      dtype: dtype,
+      shape: shape,
+      bytes: bytes,
+      nativeData: _pointer,
       owner: this,
     );
     _nativeRuntimeTensorBuffers[value] = this;
@@ -295,9 +343,9 @@ final class NativeTensorBuffer {
 
   ffi.Pointer<ffi.Void> _pointerForRun(int tensorByteLength) {
     _checkOpen();
-    if (tensorByteLength != byteLength) {
+    if (tensorByteLength > byteLength) {
       throw StateError(
-        'Native tensor buffer byte length changed from $byteLength to '
+        'Native tensor buffer byte length exceeded $byteLength with '
         '$tensorByteLength.',
       );
     }
@@ -622,6 +670,10 @@ final class _NativeModelSession implements ModelSession {
     if (nativeBuffer != null) {
       return nativeBuffer._pointerForRun(tensor.bytes.lengthInBytes);
     }
+    final nativeData = tensor.nativeData;
+    if (nativeData != null && nativeData != ffi.nullptr) {
+      return nativeData;
+    }
     final bytes = tensor.bytes;
     return _inputBytesPointer(name, bytes);
   }
@@ -873,6 +925,7 @@ Map<String, Object?> _decodeOutputs(
       dtype: _dtypeFromId(tensor.dtype),
       shape: shape,
       bytes: bytes,
+      nativeData: tensor.data,
       owner: owner,
     );
   }

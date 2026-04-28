@@ -1,6 +1,9 @@
+import 'dart:ffi' as ffi;
+
 import 'package:test/test.dart';
 
 import 'package:dart_inference/models.dart';
+import 'package:dart_inference/runtime.dart';
 
 void main() {
   test('strips SSML sub aliases for TTS text', () {
@@ -108,5 +111,181 @@ void main() {
       composeSsml('今天是2026年。', chinese),
       '<speak>今天是<sub alias="二零二六">2026</sub>年。</speak>',
     );
+  });
+
+  test('composes SSML through Zig with Dart UTF-16 offsets', () {
+    final ir = FrontendIr()
+      ..tnZhItems.add(
+        TnItem(
+          start: 3,
+          end: 7,
+          surface: '2026',
+          tnType: 'DIGIT',
+          spoken: '二零二六',
+        ),
+      );
+
+    expect(
+      composeSsml('🙂年2026', ir),
+      '<speak>🙂年<sub alias="二零二六">2026</sub></speak>',
+    );
+  });
+
+  test('decodes native-backed structured logits through Zig helpers', () {
+    final buffers = <NativeTensorBuffer>[];
+    NativeTensorBuffer tensor(List<int> shape, List<double> values) {
+      final buffer = NativeTensorBuffer.float32(shape);
+      buffer.asFloat32List().setAll(0, values);
+      buffers.add(buffer);
+      return buffer;
+    }
+
+    List<double> logits(List<int> ids, int classes) {
+      final out = List<double>.filled(ids.length * classes, -5);
+      for (var i = 0; i < ids.length; i++) {
+        out[i * classes + ids[i]] = 5;
+      }
+      return out;
+    }
+
+    try {
+      final decoder = StructuredDecoder(
+        emotionLabels: const ['sad', 'happy'],
+        tnEnTypes: const ['UNKNOWN', 'CARDINAL'],
+        tnZhTypes: const [],
+        targetResolver: PronunciationTargetResolver(
+          homographPronunciations: const ['lead_noun', 'lead_verb'],
+          polyphonePronunciations: const [],
+          homographSurfaceCandidates: const {},
+          polyphoneSurfaceCandidates: const {},
+        ),
+        englishTnLexicon: const {},
+        emphasisThreshold: 0.5,
+      );
+      final outputs = <String, Object?>{
+        'emotion_logits': tensor(const [1, 2], const [-2, 2]).tensor,
+        'emphasis_char_logits': tensor(const [
+          1,
+          6,
+          5,
+        ], logits(const [4, 0, 0, 0, 0, 0], 5)).tensor,
+        'homograph_pron_logits_multi': tensor(
+          const [1, 1, 2],
+          const [0.1, 0.9],
+        ).tensor,
+        'tn_en_char_span_logits': tensor(const [
+          1,
+          6,
+          5,
+        ], logits(const [0, 0, 0, 0, 0, 4], 5)).tensor,
+        'tn_en_char_type_logits': tensor(const [
+          1,
+          6,
+          2,
+        ], logits(const [0, 0, 0, 0, 0, 1], 2)).tensor,
+      };
+
+      final ir = decoder.decode(
+        text: 'Lead 1',
+        numChars: 6,
+        outputs: outputs,
+        homographTargets: const [
+          PronunciationItem(
+            start: 0,
+            end: 4,
+            surface: 'Lead',
+            pronunciation: '',
+          ),
+        ],
+        polyphoneTargets: const [],
+      );
+
+      expect(ir.emotionLabels, ['happy']);
+      expect(ir.emphasisSpans.single.toJson(), {
+        'start': 0,
+        'end': 1,
+        'label': 'EMPHASIS',
+      });
+      expect(ir.homographItems.single.pronunciation, 'lead_verb');
+      expect(ir.tnEnItems.single.toJson(), {
+        'start': 5,
+        'end': 6,
+        'surface': '1',
+        'tnType': 'CARDINAL',
+        'spoken': 'one',
+      });
+    } finally {
+      for (final buffer in buffers) {
+        buffer.close();
+      }
+    }
+  });
+
+  test('encodes structured inputs into native-backed tensors', () {
+    final builder = StructuredInputBuilder(
+      tokenizer: MmBertBpeTokenizer(
+        vocab: const {
+          '<pad>': 0,
+          '<eos>': 1,
+          '<bos>': 2,
+          '<unk>': 3,
+          '▁': 4,
+          'L': 5,
+          'e': 6,
+          'a': 7,
+          'd': 8,
+        },
+        mergeRanks: const {},
+        bosId: 2,
+        eosId: 1,
+        padId: 0,
+        unkId: 3,
+      ),
+      charVocab: CharVocab(
+        const {'<pad>': 0, '<unk>': 1, 'L': 2, 'e': 3, 'a': 4, 'd': 5},
+        padId: 0,
+        unkId: 1,
+      ),
+      config: StructuredFrontendConfig(
+        batchSize: 1,
+        tokenLength: 8,
+        charLength: 8,
+        homographTargets: 1,
+        polyphoneTargets: 1,
+        numHomographClasses: 2,
+        numPolyphoneClasses: 2,
+        emphasisThreshold: 0.5,
+      ),
+      targetResolver: PronunciationTargetResolver(
+        homographPronunciations: const ['lead_noun', 'lead_verb'],
+        polyphonePronunciations: const [],
+        homographSurfaceCandidates: const {
+          'Lead': ['lead_noun', 'lead_verb'],
+        },
+        polyphoneSurfaceCandidates: const {},
+      ),
+    );
+    final encoded = builder.encodeBatch(const ['Lead']);
+    try {
+      final inputs = encoded.toModelInputs(
+        batchSize: 1,
+        tokenLength: 8,
+        charLength: 8,
+        homographTargets: 1,
+        polyphoneTargets: 1,
+        numHomographClasses: 2,
+        numPolyphoneClasses: 2,
+      );
+      final inputIds = inputs['input_ids']! as RuntimeTensor;
+      final homographMasks =
+          inputs['homograph_candidate_masks']! as RuntimeTensor;
+
+      expect(inputIds.nativeData, isNot(ffi.nullptr));
+      expect(homographMasks.nativeData, isNot(ffi.nullptr));
+      expect(inputIds.asInt64List().first, 2);
+      expect(encoded.homographTargets.single.single.surface, 'Lead');
+    } finally {
+      encoded.close();
+    }
   });
 }

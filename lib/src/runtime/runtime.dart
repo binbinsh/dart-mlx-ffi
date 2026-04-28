@@ -184,60 +184,50 @@ final class RuntimeTensor {
     required this.dtype,
     required this.shape,
     required this.bytes,
+    this.nativeData,
     Object? owner,
   }) : _owner = owner;
 
   factory RuntimeTensor.float32(List<int> shape, Float32List data) {
-    return RuntimeTensor(
-      dtype: RuntimeTensorDataType.float32,
-      shape: shape,
-      bytes: _copyBytes(data),
-    );
+    final buffer = NativeTensorBuffer.float32(shape);
+    buffer.copyFrom(data);
+    return buffer.tensor;
   }
 
   factory RuntimeTensor.int32(List<int> shape, Int32List data) {
-    return RuntimeTensor(
-      dtype: RuntimeTensorDataType.int32,
-      shape: shape,
-      bytes: _copyBytes(data),
-    );
+    final buffer = NativeTensorBuffer.int32(shape);
+    buffer.copyFrom(data);
+    return buffer.tensor;
   }
 
   factory RuntimeTensor.int64(List<int> shape, Int64List data) {
-    return RuntimeTensor(
-      dtype: RuntimeTensorDataType.int64,
-      shape: shape,
-      bytes: _copyBytes(data),
-    );
+    final buffer = NativeTensorBuffer.int64(shape);
+    buffer.copyFrom(data);
+    return buffer.tensor;
   }
 
   factory RuntimeTensor.uint8(List<int> shape, Uint8List data) {
-    return RuntimeTensor(
-      dtype: RuntimeTensorDataType.uint8,
-      shape: shape,
-      bytes: _copyBytes(data),
-    );
+    final buffer = NativeTensorBuffer.uint8(shape);
+    buffer.copyFrom(data);
+    return buffer.tensor;
   }
 
   factory RuntimeTensor.boolean(List<int> shape, Uint8List data) {
-    return RuntimeTensor(
-      dtype: RuntimeTensorDataType.boolean,
-      shape: shape,
-      bytes: _copyBytes(data),
-    );
+    final buffer = NativeTensorBuffer.boolean(shape);
+    buffer.copyFrom(data);
+    return buffer.tensor;
   }
 
   factory RuntimeTensor.float64(List<int> shape, Float64List data) {
-    return RuntimeTensor(
-      dtype: RuntimeTensorDataType.float64,
-      shape: shape,
-      bytes: _copyBytes(data),
-    );
+    final buffer = NativeTensorBuffer.float64(shape);
+    buffer.copyFrom(data);
+    return buffer.tensor;
   }
 
   final RuntimeTensorDataType dtype;
   final List<int> shape;
   final Uint8List bytes;
+  final ffi.Pointer<ffi.Void>? nativeData;
   // Keeps native output owners alive for external typed-data backed tensors.
   // ignore: unused_field
   final Object? _owner;
@@ -446,10 +436,6 @@ final class _SelectedRuntime {
 
   final RuntimeResolution resolution;
   final ModelRuntime runtime;
-}
-
-Uint8List _copyBytes(TypedData data) {
-  return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 }
 
 /// Runtime selection policy.

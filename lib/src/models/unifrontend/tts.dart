@@ -56,8 +56,6 @@ final class UniFrontendKokoroTtsRuntime {
 
   String get phonemizerBackend => phonemizer.backendName;
 
-  bool get phonemizerProcessFallbackAllowed => phonemizer.allowProcessFallback;
-
   Future<UniFrontendKokoroTtsResult> synthesize({
     required String text,
     String phonemes = '',
@@ -133,5 +131,3 @@ final class UniFrontendKokoroTtsRuntime {
     phonemizer.dispose();
   }
 }
-
-bool looksChinese(String text) => RegExp(r'[\u4e00-\u9fff]').hasMatch(text);

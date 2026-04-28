@@ -4,6 +4,54 @@
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
 - Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.85`.
+- Added a generic TTS ONNX component bundle that can inspect, load, run, and metadata-smoke any provider ONNX target declared in the catalog, so newly exported Chatterbox, IndexTTS2, NeuTTS Air, Dia2, VibeVoice, and Qwen3-TTS graphs automatically use the same Dart -> Zig -> ONNX Runtime path.
+- Added structured TTS backend ONNX migration manifests and a library-level provider asset audit so blocked local providers report exact Dart/Zig/ONNX target graphs, current source weights, and missing required runtime assets without relying on CLI-local path heuristics.
+- Made CosyVoice2 migration status ONNX-target-first: all core components now have explicit Dart/Zig/ONNX target paths with legacy source artifacts recorded only as export sources, loaded CosyVoice2 ONNX components can be retrieved and run by name through the bundle API, and newly exported ONNX components can smoke from runtime input metadata without per-component Dart input code.
+- Moved ONNX provider alias/default selection into Zig open-option normalization, removed duplicate provider/option alias policy from the C++ ORT adapter, added Zig bridge base fields to adapter diagnostics, and exposed TensorRT EP cache/workspace/subgraph flags plus reusable TensorRT dependency auditing for TTS, structured frontend, smoke, and ONNX server startup paths.
+- Moved `VectorStore` cosine search, batched index insertion, top-k ranking, and `l2Normalise` math into a Zig-owned native vector module exposed through `dinf_vec_*`, leaving Dart to hold only document metadata and result wrapping.
+- Moved Kokoro float32 concatenation and float32-to-PCM16 WAV encoding into Zig through `dinf_audio_*`, including a chunked path that writes multi-chunk synthesis output without Dart pre-concatenating audio.
+- Moved UniFrontend structured-logit argmax and sigmoid-mask scanning into Zig through `dinf_dec_*`, reusing native-backed runtime output tensors without copying logits back through Dart loops.
+- Removed the legacy Dart heap-tensor fallback paths from UniFrontend decoding, so structured logits must stay native-backed and all argmax/sigmoid/BIOES/span-type work goes through Zig.
+- Removed the obsolete Dart-facing `dinf_dec_sigmoid` mask ABI after structured decoding moved to native active-label and span helpers.
+- Moved UniFrontend binary span boundary scanning into Zig through `dinf_dec_spans`, avoiding Dart-side per-character scanning after sigmoid thresholding.
+- Moved UniFrontend BIOES argmax/span decoding into Zig through `dinf_dec_bioes`, so emphasis and TN span heads no longer materialize Dart id lists first.
+- Moved UniFrontend TN span type majority voting into Zig through `dinf_dec_span_types`, avoiding Dart-side per-character type tallying.
+- Moved UniFrontend emotion active-label scanning and best-label fallback into Zig through `dinf_dec_active`.
+- Moved UniFrontend encoded input tensors onto Zig-owned native buffers with Zig-side bulk fill, so structured frontend inference no longer copies fixed input/mask tensors from Dart heap buffers before each native run.
+- Consolidated UniFrontend native input reset into `dinf_struct_reset`, reducing the per-batch buffer clear/fill path from eight Dart FFI calls to one Zig call.
+- Moved Kokoro ONNX input tensors onto reusable Zig-owned native buffers with dynamic tensor views, avoiding the runtime scratch-copy step for token ids, style vectors, and speed scalars.
+- Consolidated Kokoro per-chunk ONNX input framing, voice-row selection, and speed scalar writes into `dinf_kok_inputs`, replacing the Dart-side multi-call prep path.
+- Moved the remaining Kokoro voice-row copy helper to `dinf_kok_row` and removed the unused Dart-facing generic fill/copy ABI bindings.
+- Moved ONNX convenience tensor helpers onto Zig-owned native buffers, so helper-created int64/float32/bool inputs no longer need a second native scratch copy during runtime calls.
+- Moved `RuntimeTensor` typed factories onto Zig-owned native buffers, making factory-created runtime inputs native-backed by default.
+- Moved Kokoro ONNX audio output chunk handoff to native tensor pointers, so multi-chunk WAV encoding no longer copies each generated audio chunk into a Dart `Float32List` first.
+- Moved UniFrontend token-span, target, and candidate mask writes into Zig fill helpers, keeping structured frontend mask mutation on native-backed buffers.
+- Consolidated UniFrontend target/candidate mask row writes behind `dinf_struct_matches`, letting Zig consume matcher results directly instead of round-tripping candidate ids through Dart lists.
+- Moved UniFrontend pronunciation candidate-id rows into the Zig target matcher handle, so matched targets return precomputed native candidate ids instead of rebuilding them from Dart maps during input encoding.
+- Moved UniFrontend token/attention and char/mask row writes into Zig helpers backed by reusable native scratch buffers.
+- Moved UniFrontend char-vocab lookup and char/mask row filling into `dinf_fill_chars_i64`, removing the Dart-side per-character id loop in structured input encoding.
+- Moved UniFrontend MmBERT BPE tokenization into a Zig-owned tokenizer handle through `dinf_bpe_*`, so structured input encoding fills native token ids and token offsets without Dart-side BPE merge loops or token-list copies.
+- Changed UniFrontend token input encoding to use `dinf_bpe_fill`, letting Zig write `input_ids`, `attention_mask`, and token offsets in one pass without a Dart token scratch buffer or a second fill call.
+- Moved UniFrontend SSML stripping for TTS text into Zig through `dinf_text_strip_ssml`, replacing Dart-side RegExp tag removal on the frontend output path.
+- Moved UniFrontend SSML composition, XML escaping, and Dart UTF-16 span slicing into Zig through `dinf_text_ssml`.
+- Moved UniFrontend emphasis span trimming and whitespace-merge normalization into Zig through `dinf_text_norm_spans`.
+- Moved UniFrontend English/Chinese TN item overlap selection and ordering into Zig through `dinf_text_select_tn`.
+- Moved UniFrontend Chinese-script detection into Zig through `dinf_text_has_zh`, removing the TTS routing RegExp from Dart.
+- Moved UniFrontend fallback TN text verbalization and Chinese/English TN preference scoring into Zig through `dinf_text_tn_*`.
+- Moved Kokoro eSpeak-NG dynamic library loading, initialization, voice selection, and phoneme calls behind Zig through `dinf_esp_*`, removing Dart-side direct eSpeak C FFI.
+- Removed the Dart-side `espeak-ng` process fallback and moved eSpeak data-path environment/default directory resolution into Zig, keeping Kokoro phonemization on the `Dart -> Zig -> C library` path.
+- Consolidated the default Kokoro phonemizer pipeline behind `dinf_esp_kok_*`, so normalization, language routing, mixed-script splitting, SSML/pinyin handling, eSpeak calls, post-processing, and cleanup run inside Zig with a single Dart call per uncached request.
+- Moved Kokoro `config.json` vocab parsing into Zig through `dinf_kok_vocab`, so runtime load no longer JSON-decodes the token vocab or fills vocab buffers in Dart.
+- Moved Kokoro voice `.npz` loading, ZIP store/deflate extraction, and float32 `.npy` parsing into Zig through `dinf_kok_npz`, so Dart no longer depends on `archive` or materializes decompressed voice arrays before native buffer adoption.
+- Fixed Zig-owned Kokoro `.npz` entry names to return null-terminated ABI strings instead of borrowing raw ZIP name slices.
+- Moved Kokoro phoneme filtering, chunk planning, and token id generation into Zig through `dinf_kok_*`, so TTS synthesis consumes native token chunks without Dart-side chunk strings or token-list copies.
+- Moved Kokoro English text normalization and eSpeak phoneme post-processing into Zig through `dinf_kok_norm` and `dinf_kok_post`.
+- Moved Kokoro SSML plain-text extraction, explicit phoneme cleanup, and pinyin phoneme-tag detection/normalization into Zig through compact `dinf_kok_*` text helpers.
+- Moved Kokoro phonemizer language routing and mixed CJK/Latin run splitting into Zig through `dinf_kok_lang` and `dinf_kok_runs`.
+- Moved Kokoro `<phoneme ph="...">` SSML parsing into Zig through `dinf_kok_ssml`, removing the Dart-side tag scanning RegExp.
+- Moved Kokoro eSpeak phoneme cleanup into Zig through `dinf_kok_clean`, replacing per-call Dart regex cleanup on the phonemizer output path.
+- Fixed UniFrontend emphasis span normalization so decoded spans are normalized before the mutable destination list is cleared.
+- Split the Dart-facing vector ABI exports into `vector_api.zig` so `runtime.zig` stays below the source-size limit during continued migration.
 - Split Zig-owned memory snapshot collection into `mem.zig`, keeping `dinf_mem` stable while leaving `runtime.zig` room for further migration work under the source-size limit.
 - Trimmed Dart-side run-path allocation by writing typed-list inputs directly into the reusable native descriptor arena before `dinf_run`, avoiding transient `RuntimeTensor` and shape-list wrappers.
 - Replaced the private adapter diagnostics JSON callback with typed diagnostic entries and added a `vendors/` rule forbidding vendored source edits unless explicitly requested.

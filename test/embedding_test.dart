@@ -1,4 +1,3 @@
-@TestOn('mac-os')
 library;
 
 import 'dart:math' as math;
@@ -79,6 +78,31 @@ void main() {
       }
       final results = store.search([1, 0, 0], topK: 3);
       expect(results.length, 3);
+    });
+
+    test('addAll builds native index in one batch', () {
+      final store = VectorStore();
+      store.addAll([
+        const VectorEntry(id: 'a', embedding: [1.0, 0.0], text: 'First'),
+        const VectorEntry(id: 'b', embedding: [0.8, 0.2], text: 'Second'),
+        const VectorEntry(id: 'c', embedding: [0.0, 1.0], text: 'Third'),
+      ]);
+
+      expect(store.length, 3);
+      final results = store.search([1.0, 0.0], topK: 2);
+      expect(results.map((result) => result.entry.id), ['a', 'b']);
+    });
+
+    test('addAll validates dimensions before native insert', () {
+      final store = VectorStore();
+      expect(
+        () => store.addAll([
+          const VectorEntry(id: 'a', embedding: [1.0, 0.0]),
+          const VectorEntry(id: 'b', embedding: [1.0]),
+        ]),
+        throwsArgumentError,
+      );
+      expect(store.length, 0);
     });
 
     test('ragContext builds context string', () {
@@ -172,6 +196,14 @@ void main() {
       store.add(VectorEntry(id: 'a', embedding: [1.0, 0.0]));
       final results = store.search([-1.0, 0.0], topK: 1);
       expect(results.first.score, closeTo(-1.0, 1e-10));
+    });
+
+    test('zero-dimensional vectors have similarity 0.0', () {
+      final store = VectorStore();
+      store.add(const VectorEntry(id: 'empty', embedding: []));
+      final results = store.search(const [], topK: 1);
+      expect(results.first.entry.id, 'empty');
+      expect(results.first.score, 0.0);
     });
   });
 }

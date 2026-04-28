@@ -101,6 +101,42 @@ The former raw/shim/stable APIs and old Dart-facing MLX C++ bridge have been
 removed from the package source. New provider work should add coarse model
 runtime calls behind Zig instead of reintroducing Dart-side per-op FFI.
 
+### UniFrontend TTS Smoke
+
+`dart_inference:tts_backends_status` can audit UniFrontend provider assets and
+smoke local ONNX TTS components through the Dart -> Zig -> ONNX Runtime path:
+
+```sh
+dart run dart_inference:tts_backends_status \
+  --root /path/to/unifrontend \
+  --provider cuda \
+  --smoke-onnx
+```
+
+CosyVoice2 status is ONNX-target-first: existing `.pt`, `.zip`, and
+`.safetensors` files are reported as export sources, while runtime readiness is
+based on the required ONNX targets (`flow.encoder.fp32.onnx`, `llm.onnx`, and
+`hift.onnx` in addition to the already loadable components).
+
+The provider asset audit is also ONNX-target-first for the remaining local TTS
+backends. It reports each target graph path, the source weight file it should be
+exported from, missing required ONNX assets, and whether that provider can run
+through the pure `Dart -> Zig -> ONNX Runtime` path today.
+
+Catalog-declared TTS ONNX targets also get a generic component bundle in the
+status output. When an exported target graph appears on disk, the same bundle
+can load it, run it by component name, and build synthetic smoke inputs from
+ONNX Runtime metadata without adding provider-specific Dart glue.
+
+Use `--provider tensorrt --trt-cache-dir <dir> --trt-workspace-mb <mb>` to
+benchmark TensorRT EP where ONNX Runtime exposes it. Add `--trt-fp16` only when
+the graph has been checked for acceptable FP16 parity. The status output also
+includes a TensorRT dependency audit, so missing `libnvinfer*` libraries are
+reported separately from model-load failures and TensorRT loads are skipped
+until the runtime dependencies are visible. `tts_infer`, `tts_server`,
+`structured_frontend_infer`, `structured_smoke_infer`, and `onnx_server` use
+the same preflight check for strict TensorRT requests.
+
 ## Local Validation
 
 ```sh

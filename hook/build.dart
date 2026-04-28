@@ -625,7 +625,7 @@ Future<void> _runProcess(
 Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
   final dependencies = <Uri>{};
   final runtimeOverride = _runtimeEnvOverrideFile(packageRoot.toFilePath());
-  if (runtimeOverride != null && runtimeOverride.existsSync()) {
+  if (runtimeOverride != null) {
     dependencies.add(runtimeOverride.uri);
   }
   for (final relativePath in const [

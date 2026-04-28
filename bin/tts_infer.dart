@@ -13,10 +13,15 @@ Future<void> main(List<String> args) async {
   final numThreads = int.tryParse(parsed.option('num-threads') ?? '4') ?? 4;
   final cudaMemoryLimitMb =
       int.tryParse(parsed.option('cuda-memory-limit-mb') ?? '') ?? 16384;
-  final allowEspeakProcessFallback = parsed.flag(
-    'allow-espeak-process-fallback',
-  );
   final trtCacheDir = parsed.option('trt-cache-dir');
+  if (requireProvider) {
+    final dependencyError = _runtimeDependencyError(root, provider, parsed);
+    if (dependencyError != null) {
+      stderr.writeln(dependencyError);
+      exitCode = 78;
+      return;
+    }
+  }
   final preloadLibraries = _preloadLibrariesFromArgs(parsed, root: root);
   final backendOptions = <String, Object?>{
     if (parsed.flag('trt-fp16')) 'trtFp16': true,
@@ -53,7 +58,6 @@ Future<void> main(List<String> args) async {
       requireProvider: requireProvider,
       numThreads: numThreads,
       cudaMemoryLimitMb: cudaMemoryLimitMb,
-      allowEspeakProcessFallback: allowEspeakProcessFallback,
       preloadLibraries: preloadLibraries,
       backendOptions: backendOptions,
     ),
@@ -179,4 +183,16 @@ List<String> _preloadLibrariesFromArgs(_Args parsed, {required String root}) {
     ],
     runtimeEnvSearchRoots: [root],
   );
+}
+
+String? _runtimeDependencyError(String root, String provider, _Args parsed) {
+  final audit = RuntimeDependencyAudit.inspect(
+    root: root,
+    provider: provider,
+    extraSearchDirs: [
+      ...parsed.values('cuda-library-dir'),
+      ...parsed.values('native-library-dir'),
+    ],
+  );
+  return audit.skipReason;
 }

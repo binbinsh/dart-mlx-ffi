@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:dart_inference/runtime.dart';
 
+import 'onnx_server_preflight.dart';
+
 Future<void> main(List<String> args) async {
   final parsed = _Args(args);
   final modelPath = parsed.option('model', required: true)!;
@@ -15,6 +17,15 @@ Future<void> main(List<String> args) async {
   final requireProvider = parsed.flag('require-provider');
   final trtFp16 = parsed.flag('trt-fp16');
   final backendOptionsExtra = _backendOptionsFromArgs(parsed);
+  final runtimeRoot = onnxRuntimeRoot(
+    explicitRuntimeRoot: parsed.option('runtime-root'),
+    explicitRoot: parsed.option('root'),
+  );
+  final dependencySearchDirs = onnxDependencySearchDirs(
+    cudaLibraryDirs: parsed.values('cuda-library-dir'),
+    nativeLibraryDirs: parsed.values('native-library-dir'),
+    libraryDirs: parsed.values('library-dir'),
+  );
   final deviceId = parsed.option('device-id') == null
       ? null
       : int.tryParse(parsed.option('device-id')!);
@@ -34,13 +45,18 @@ Future<void> main(List<String> args) async {
       deviceId: deviceId,
       numThreads: numThreads,
       backendOptionsExtra: backendOptionsExtra,
+      runtimeRoot: runtimeRoot,
+      dependencySearchDirs: dependencySearchDirs,
     );
   } catch (error, stack) {
-    final payload = {'type': 'fatal', 'error': '$error', 'stack': '$stack'};
+    final payload = onnxServerFatalPayload(error, stack);
     if (_isBinaryProtocol(protocol)) {
       await _writeBinaryFrame(payload);
     } else {
       stdout.writeln(jsonEncode(payload));
+    }
+    if (error is OnnxServerPreflightException) {
+      exitCode = 78;
     }
     return;
   }
@@ -67,6 +83,8 @@ Future<void> main(List<String> args) async {
       defaultDeviceId: deviceId,
       defaultNumThreads: numThreads,
       defaultBackendOptionsExtra: backendOptionsExtra,
+      defaultRuntimeRoot: runtimeRoot,
+      defaultDependencySearchDirs: dependencySearchDirs,
     );
   } else {
     await _serveJsonl(
@@ -80,6 +98,8 @@ Future<void> main(List<String> args) async {
       defaultDeviceId: deviceId,
       defaultNumThreads: numThreads,
       defaultBackendOptionsExtra: backendOptionsExtra,
+      defaultRuntimeRoot: runtimeRoot,
+      defaultDependencySearchDirs: dependencySearchDirs,
     );
   }
   for (final item in sessions.values) {
@@ -116,7 +136,15 @@ _LoadedSession _loadSession({
   required int? deviceId,
   required int? numThreads,
   required Map<String, Object?> backendOptionsExtra,
+  required String? runtimeRoot,
+  required List<String> dependencySearchDirs,
 }) {
+  preflightOnnxProvider(
+    provider: provider,
+    requireProvider: requireProvider,
+    runtimeRoot: runtimeRoot,
+    dependencySearchDirs: dependencySearchDirs,
+  );
   final spec = ModelSpec(
     id: 'unifrontend_onnx_bridge_$sessionId',
     family: 'unifrontend_onnx_bridge',
@@ -173,6 +201,8 @@ _LoadedSession _loadSessionFromPayload({
   required int? defaultDeviceId,
   required int? defaultNumThreads,
   required Map<String, Object?> defaultBackendOptionsExtra,
+  required String? defaultRuntimeRoot,
+  required List<String> defaultDependencySearchDirs,
 }) {
   final sessionId = (payload['session_id'] ?? '').toString().trim();
   final modelPath = (payload['model'] ?? '').toString().trim();
@@ -195,6 +225,11 @@ _LoadedSession _loadSessionFromPayload({
     ...defaultBackendOptionsExtra,
     ..._backendOptionsFromPayload(payload),
   };
+  final runtimeRoot = onnxRuntimeRootFromPayload(payload, defaultRuntimeRoot);
+  final dependencySearchDirs = [
+    ...defaultDependencySearchDirs,
+    ...onnxDependencySearchDirsFromPayload(payload),
+  ];
   return _loadSession(
     sessionId: sessionId,
     modelPath: modelPath,
@@ -205,6 +240,8 @@ _LoadedSession _loadSessionFromPayload({
     deviceId: deviceId,
     numThreads: numThreads,
     backendOptionsExtra: backendOptionsExtra,
+    runtimeRoot: runtimeRoot,
+    dependencySearchDirs: dependencySearchDirs,
   );
 }
 
@@ -328,6 +365,8 @@ Future<void> _serveJsonl({
   required int? defaultDeviceId,
   required int? defaultNumThreads,
   required Map<String, Object?> defaultBackendOptionsExtra,
+  required String? defaultRuntimeRoot,
+  required List<String> defaultDependencySearchDirs,
 }) async {
   stdout.writeln(jsonEncode(readyPayload));
   await for (final line
@@ -374,6 +413,8 @@ Future<void> _serveJsonl({
           defaultDeviceId: defaultDeviceId,
           defaultNumThreads: defaultNumThreads,
           defaultBackendOptionsExtra: defaultBackendOptionsExtra,
+          defaultRuntimeRoot: defaultRuntimeRoot,
+          defaultDependencySearchDirs: defaultDependencySearchDirs,
         );
         final existing = sessions[loaded.sessionId];
         if (existing != null) {
@@ -403,12 +444,7 @@ Future<void> _serveJsonl({
       );
     } catch (error, stack) {
       stdout.writeln(
-        jsonEncode({
-          'type': 'error',
-          'id': requestId,
-          'error': '$error',
-          'stack': '$stack',
-        }),
+        jsonEncode(onnxServerErrorPayload(requestId, error, stack)),
       );
     }
   }
@@ -425,6 +461,8 @@ Future<void> _serveBinary({
   required int? defaultDeviceId,
   required int? defaultNumThreads,
   required Map<String, Object?> defaultBackendOptionsExtra,
+  required String? defaultRuntimeRoot,
+  required List<String> defaultDependencySearchDirs,
 }) async {
   await _writeBinaryFrame(readyPayload);
   final parser = _BinaryFrameParser();
@@ -466,6 +504,8 @@ Future<void> _serveBinary({
             defaultDeviceId: defaultDeviceId,
             defaultNumThreads: defaultNumThreads,
             defaultBackendOptionsExtra: defaultBackendOptionsExtra,
+            defaultRuntimeRoot: defaultRuntimeRoot,
+            defaultDependencySearchDirs: defaultDependencySearchDirs,
           );
           final existing = sessions[loaded.sessionId];
           if (existing != null) {
@@ -500,12 +540,9 @@ Future<void> _serveBinary({
           'diagnostics': result.diagnostics,
         }, bodyChunks: encoded.chunks);
       } catch (error, stack) {
-        await _writeBinaryFrame({
-          'type': 'error',
-          'id': requestId,
-          'error': '$error',
-          'stack': '$stack',
-        });
+        await _writeBinaryFrame(
+          onnxServerErrorPayload(requestId, error, stack),
+        );
       }
     }
   }

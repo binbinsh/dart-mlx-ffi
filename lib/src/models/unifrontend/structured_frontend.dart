@@ -1,11 +1,16 @@
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dart_inference/runtime.dart';
+import 'package:ffi/ffi.dart';
+
+import '../../runtime/native_bindings.dart' as native;
 
 part 'structured_input.dart';
+part 'structured_ssml.dart';
 part 'structured_targets.dart';
 
 final class StructuredFrontendResult {
@@ -116,39 +121,47 @@ final class DartStructuredFrontendRuntime {
           .sublist(start, math.min(start + config.batchSize, texts.length))
           .toList(growable: false);
       final encoded = inputBuilder.encodeBatch(chunk);
-      final outputs = session.run(
-        encoded.toModelInputs(
-          batchSize: config.batchSize,
-          tokenLength: config.tokenLength,
-          charLength: config.charLength,
-          homographTargets: config.homographTargets,
-          polyphoneTargets: config.polyphoneTargets,
-          numHomographClasses: config.numHomographClasses,
-          numPolyphoneClasses: config.numPolyphoneClasses,
-        ),
-      );
-      final provider = outputs.providerOr(selectedProvider);
-      for (var row = 0; row < encoded.activeRows; row++) {
-        final text = encoded.texts[row];
-        final ir = decoder.decode(
-          text: text,
-          numChars: encoded.numChars[row],
-          outputs: outputs.outputs,
-          homographTargets: encoded.homographTargets[row],
-          polyphoneTargets: encoded.polyphoneTargets[row],
-          rowIndex: row,
-        );
-        final ssml = composeSsml(text, ir);
-        results.add(
-          StructuredFrontendResult(
-            input: text,
-            ir: ir,
-            ssml: ssml,
-            ttsText: stripSsmlForTts(ssml),
-            elapsedMicroseconds: 0,
-            provider: provider,
+      try {
+        final outputs = session.run(
+          encoded.toModelInputs(
+            batchSize: config.batchSize,
+            tokenLength: config.tokenLength,
+            charLength: config.charLength,
+            homographTargets: config.homographTargets,
+            polyphoneTargets: config.polyphoneTargets,
+            numHomographClasses: config.numHomographClasses,
+            numPolyphoneClasses: config.numPolyphoneClasses,
           ),
         );
+        try {
+          final provider = outputs.providerOr(selectedProvider);
+          for (var row = 0; row < encoded.activeRows; row++) {
+            final text = encoded.texts[row];
+            final ir = decoder.decode(
+              text: text,
+              numChars: encoded.numChars[row],
+              outputs: outputs.outputs,
+              homographTargets: encoded.homographTargets[row],
+              polyphoneTargets: encoded.polyphoneTargets[row],
+              rowIndex: row,
+            );
+            final ssml = composeSsml(text, ir);
+            results.add(
+              StructuredFrontendResult(
+                input: text,
+                ir: ir,
+                ssml: ssml,
+                ttsText: stripSsmlForTts(ssml),
+                elapsedMicroseconds: 0,
+                provider: provider,
+              ),
+            );
+          }
+        } finally {
+          outputs.close();
+        }
+      } finally {
+        encoded.close();
       }
     }
     sw.stop();
@@ -170,6 +183,8 @@ final class DartStructuredFrontendRuntime {
   }
 
   void close() {
+    inputBuilder.close();
+    decoder.close();
     session.close();
   }
 }
@@ -287,6 +302,10 @@ final class StructuredDecoder {
     );
   }
 
+  void close() {
+    targetResolver.close();
+  }
+
   FrontendIr decode({
     required String text,
     required int numChars,
@@ -308,18 +327,20 @@ final class StructuredDecoder {
           ? rowIndex * emotionCount
           : 0;
       final limit = math.min(emotionLabels.length, emotionCount);
-      for (var i = 0; i < limit; i++) {
-        final value = emotion.data[emotionOffset + i];
-        final prob = 1.0 / (1.0 + math.exp(-value));
-        if (prob >= 0.5) {
-          ir.emotionLabels.add(emotionLabels[i]);
+      if (limit > 0) {
+        final ids = _activeIdsFromTensor(
+          emotion,
+          offset: emotionOffset,
+          count: limit,
+          threshold: 0.5,
+        );
+        for (final id in ids.active) {
+          ir.emotionLabels.add(emotionLabels[id]);
         }
-        if (value > emotion.data[emotionOffset + best]) {
-          best = i;
+        best = ids.best;
+        if (ir.emotionLabels.isEmpty) {
+          ir.emotionLabels.add(emotionLabels[best]);
         }
-      }
-      if (ir.emotionLabels.isEmpty) {
-        ir.emotionLabels.add(emotionLabels[best]);
       }
     }
     final emph = _floatTensor(outputs['emphasis_char_logits']);
@@ -328,24 +349,20 @@ final class StructuredDecoder {
         final labelCount = emph.shape.last;
         final charLength = emph.shape[emph.shape.length - 2];
         final rowOffset = rowIndex * charLength * labelCount;
-        final ids = <int>[];
-        for (var c = 0; c < numChars; c++) {
-          var best = 0;
-          var bestVal = -double.infinity;
-          for (var k = 0; k < labelCount; k++) {
-            final v = emph.data[rowOffset + c * labelCount + k];
-            if (v > bestVal) {
-              bestVal = v;
-              best = k;
-            }
-          }
-          ids.add(best);
-        }
-        ir.emphasisSpans.addAll(_decodeBioes(ids, numChars, 'EMPHASIS'));
+        ir.emphasisSpans.addAll(
+          _decodeBioesFromTensor(
+            tensor: emph,
+            base: rowOffset,
+            itemCount: numChars,
+            stride: labelCount,
+            classCount: labelCount,
+            label: 'EMPHASIS',
+          ),
+        );
       } else {
         ir.emphasisSpans.addAll(
           _decodeBinarySpans(
-            emph.data,
+            emph,
             numChars,
             'EMPHASIS',
             emphasisThreshold,
@@ -353,9 +370,13 @@ final class StructuredDecoder {
           ),
         );
       }
+      final normalizedEmphasis = _normalizeEmphasisSpans(
+        text,
+        ir.emphasisSpans,
+      );
       ir.emphasisSpans
         ..clear()
-        ..addAll(_normalizeEmphasisSpans(text, ir.emphasisSpans));
+        ..addAll(normalizedEmphasis);
     }
     ir.homographItems.addAll(
       _decodePronunciationItems(
@@ -410,9 +431,10 @@ final class StructuredDecoder {
 }
 
 final class _FloatTensor {
-  _FloatTensor(this.data, this.shape);
+  _FloatTensor(this.data, this.shape, this.nativeData);
   final Float32List data;
   final List<int> shape;
+  final ffi.Pointer<ffi.Float> nativeData;
 }
 
 _FloatTensor? _floatTensor(Object? value) {
@@ -426,33 +448,161 @@ _FloatTensor? _floatTensor(Object? value) {
       value.bytes.lengthInBytes ~/ 4,
     ),
     value.shape,
+    value.nativeData?.cast<ffi.Float>() ?? ffi.nullptr,
   );
 }
 
 List<SpanLabel> _decodeBinarySpans(
-  Float32List logits,
+  _FloatTensor tensor,
   int numChars,
   String label,
   double threshold, {
   int offset = 0,
 }) {
   final spans = <SpanLabel>[];
-  int? start;
+  final logits = tensor.data;
   final limit = math.min(numChars, math.max(0, logits.length - offset));
-  for (var i = 0; i < limit; i++) {
-    final prob = 1.0 / (1.0 + math.exp(-logits[offset + i]));
-    final active = prob >= threshold;
-    if (active && start == null) {
-      start = i;
-    } else if (!active && start != null) {
-      spans.add(SpanLabel(start, i, label));
-      start = null;
+  final pointer = tensor.nativeData;
+  if (limit <= 0) {
+    return const [];
+  }
+  _requireNative(pointer);
+  final starts = calloc<ffi.Int32>(limit);
+  final ends = calloc<ffi.Int32>(limit);
+  final count = calloc<ffi.IntPtr>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.decSpans(
+      pointer,
+      tensor.data.length,
+      offset,
+      limit,
+      numChars,
+      threshold,
+      starts,
+      ends,
+      count,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeDecodeError(error));
     }
+    for (var i = 0; i < count.value; i++) {
+      spans.add(SpanLabel(starts[i], ends[i], label));
+    }
+    return spans;
+  } finally {
+    calloc
+      ..free(starts)
+      ..free(ends)
+      ..free(count)
+      ..free(error);
   }
-  if (start != null) {
-    spans.add(SpanLabel(start, numChars, label));
+}
+
+List<int> _argmaxIds({
+  required _FloatTensor tensor,
+  required int base,
+  required int itemCount,
+  required int stride,
+  required int classCount,
+}) {
+  if (itemCount <= 0 || classCount <= 0) {
+    return const [];
   }
-  return spans;
+  final pointer = tensor.nativeData;
+  _requireNative(pointer);
+  final out = calloc<ffi.Int32>(itemCount);
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.decArgmax(
+      pointer,
+      tensor.data.length,
+      base,
+      itemCount,
+      stride,
+      classCount,
+      out,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeDecodeError(error));
+    }
+    return out.asTypedList(itemCount).toList(growable: false);
+  } finally {
+    calloc
+      ..free(out)
+      ..free(error);
+  }
+}
+
+final class _ActiveIds {
+  _ActiveIds({required this.active, required this.best});
+
+  final List<int> active;
+  final int best;
+}
+
+_ActiveIds _activeIdsFromTensor(
+  _FloatTensor tensor, {
+  required int offset,
+  required int count,
+  required double threshold,
+}) {
+  if (count <= 0) {
+    return _ActiveIds(active: const [], best: 0);
+  }
+  final pointer = tensor.nativeData;
+  _requireNative(pointer);
+  final out = calloc<ffi.Int32>(count);
+  final activeCount = calloc<ffi.IntPtr>();
+  final best = calloc<ffi.Int32>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.decActive(
+      pointer,
+      tensor.data.length,
+      offset,
+      count,
+      threshold,
+      out,
+      activeCount,
+      best,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeDecodeError(error));
+    }
+    return _ActiveIds(
+      active: out.asTypedList(activeCount.value).toList(growable: false),
+      best: best.value,
+    );
+  } finally {
+    calloc
+      ..free(out)
+      ..free(activeCount)
+      ..free(best)
+      ..free(error);
+  }
+}
+
+void _requireNative(ffi.Pointer<ffi.Float> pointer) {
+  if (pointer == ffi.nullptr) {
+    throw StateError(
+      'Structured decoder requires native-backed float32 tensors.',
+    );
+  }
+}
+
+String _takeDecodeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
+  final value = error.value;
+  if (value == ffi.nullptr) return 'Native decoder call failed.';
+  try {
+    return value.cast<Utf8>().toDartString();
+  } finally {
+    native.freeStr(value);
+    error.value = ffi.nullptr;
+  }
 }
 
 List<TnItem> _decodeTnItems({
@@ -471,44 +621,29 @@ List<TnItem> _decodeTnItems({
   final labelCount = spanTensor.shape.last;
   final spanCharLength = spanTensor.shape[spanTensor.shape.length - 2];
   final spanRowOffset = rowIndex * spanCharLength * labelCount;
-  final spanIds = <int>[];
-  for (var c = 0; c < numChars; c++) {
-    var best = 0;
-    var bestVal = -double.infinity;
-    for (var k = 0; k < labelCount; k++) {
-      final v = spanTensor.data[spanRowOffset + c * labelCount + k];
-      if (v > bestVal) {
-        bestVal = v;
-        best = k;
-      }
-    }
-    spanIds.add(best);
-  }
-  final spans = _decodeBioes(spanIds, numChars, 'TN');
+  final spans = _decodeBioesFromTensor(
+    tensor: spanTensor,
+    base: spanRowOffset,
+    itemCount: numChars,
+    stride: labelCount,
+    classCount: labelCount,
+    label: 'TN',
+  );
   final items = <TnItem>[];
   final typeCount = typeTensor.shape.last;
   final typeCharLength = typeTensor.shape[typeTensor.shape.length - 2];
   final typeRowOffset = rowIndex * typeCharLength * typeCount;
-  for (final span in spans) {
-    final counts = List<int>.filled(math.max(typeCount, 1), 0);
-    for (var c = span.start; c < span.end; c++) {
-      var best = 0;
-      var bestVal = -double.infinity;
-      for (var k = 0; k < typeCount; k++) {
-        final v = typeTensor.data[typeRowOffset + c * typeCount + k];
-        if (v > bestVal) {
-          bestVal = v;
-          best = k;
-        }
-      }
-      counts[best] += 1;
-    }
-    var typeId = 0;
-    for (var i = 1; i < counts.length; i++) {
-      if (counts[i] > counts[typeId]) {
-        typeId = i;
-      }
-    }
+  final spanTypeIds = _spanTypeIdsFromTensor(
+    tensor: typeTensor,
+    base: typeRowOffset,
+    itemCount: numChars,
+    stride: typeCount,
+    classCount: typeCount,
+    spans: spans,
+  );
+  for (var spanIndex = 0; spanIndex < spans.length; spanIndex++) {
+    final span = spans[spanIndex];
+    final typeId = spanTypeIds[spanIndex];
     final surface = text.substring(span.start, span.end);
     final type = typeId < typeLabels.length ? typeLabels[typeId] : 'UNKNOWN';
     final spoken = chinese
@@ -527,292 +662,102 @@ List<TnItem> _decodeTnItems({
   return items;
 }
 
-List<SpanLabel> _decodeBioes(List<int> ids, int numChars, String label) {
-  final out = <SpanLabel>[];
-  int? start;
-  for (var i = 0; i < math.min(numChars, ids.length); i++) {
-    final id = ids[i];
-    if (id == 4) {
-      out.add(SpanLabel(i, i + 1, label));
-      start = null;
-    } else if (id == 1) {
-      start = i;
-    } else if (id == 3 && start != null) {
-      out.add(SpanLabel(start, i + 1, label));
-      start = null;
-    } else if (id == 0) {
-      start = null;
-    }
-  }
-  return out;
-}
-
-const _emphasisTrimCharacters = ' \t\r\n"\\\'. ,;:!?()[]{}';
-
-List<SpanLabel> _normalizeEmphasisSpans(String text, List<SpanLabel> spans) {
-  final trimmed = <SpanLabel>[];
-  for (final span in spans) {
-    var start = span.start;
-    var end = span.end;
-    while (start < end && _emphasisTrimCharacters.contains(text[start])) {
-      start += 1;
-    }
-    while (end > start && _emphasisTrimCharacters.contains(text[end - 1])) {
-      end -= 1;
-    }
-    if (end > start) {
-      trimmed.add(SpanLabel(start, end, span.label));
-    }
-  }
-  if (trimmed.isEmpty) {
+List<int> _spanTypeIdsFromTensor({
+  required _FloatTensor tensor,
+  required int base,
+  required int itemCount,
+  required int stride,
+  required int classCount,
+  required List<SpanLabel> spans,
+}) {
+  if (spans.isEmpty) {
     return const [];
   }
-  final merged = <SpanLabel>[trimmed.first];
-  for (final span in trimmed.skip(1)) {
-    final previous = merged.last;
-    final gap = text.substring(previous.end, span.start);
-    if (gap.isNotEmpty && gap.trim().isEmpty) {
-      merged[merged.length - 1] = SpanLabel(
-        previous.start,
-        span.end,
-        previous.label,
-      );
-    } else {
-      merged.add(span);
+  if (classCount <= 0) {
+    return List<int>.filled(spans.length, 0, growable: false);
+  }
+  final pointer = tensor.nativeData;
+  _requireNative(pointer);
+  final starts = calloc<ffi.Int32>(spans.length);
+  final ends = calloc<ffi.Int32>(spans.length);
+  final counts = calloc<ffi.Int32>(classCount);
+  final out = calloc<ffi.Int32>(spans.length);
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    for (var i = 0; i < spans.length; i++) {
+      starts[i] = spans[i].start;
+      ends[i] = spans[i].end;
     }
-  }
-  return merged;
-}
-
-String composeSsml(String text, FrontendIr ir) {
-  final tags = <_Tag>[];
-  for (final span in ir.emphasisSpans) {
-    tags.add(_Tag(span.start, span.end, 'emphasis', const {}));
-  }
-  for (final item in [...ir.homographItems, ...ir.polyphoneItems]) {
-    if (item.pronunciation.isNotEmpty) {
-      tags.add(
-        _Tag(item.start, item.end, 'phoneme', {'ph': item.pronunciation}),
-      );
+    final status = native.decSpanTypes(
+      pointer,
+      tensor.data.length,
+      base,
+      itemCount,
+      stride,
+      classCount,
+      starts,
+      ends,
+      spans.length,
+      counts,
+      out,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeDecodeError(error));
     }
+    return out.asTypedList(spans.length).toList(growable: false);
+  } finally {
+    calloc
+      ..free(starts)
+      ..free(ends)
+      ..free(counts)
+      ..free(out)
+      ..free(error);
   }
-  for (final item in _selectTnItems(text, ir)) {
-    if (item.spoken.isNotEmpty && item.spoken != item.surface) {
-      tags.add(_Tag(item.start, item.end, 'sub', {'alias': item.spoken}));
+}
+
+List<SpanLabel> _decodeBioesFromTensor({
+  required _FloatTensor tensor,
+  required int base,
+  required int itemCount,
+  required int stride,
+  required int classCount,
+  required String label,
+}) {
+  if (itemCount <= 0 || classCount <= 0) {
+    return const [];
+  }
+  final pointer = tensor.nativeData;
+  _requireNative(pointer);
+  final starts = calloc<ffi.Int32>(itemCount);
+  final ends = calloc<ffi.Int32>(itemCount);
+  final count = calloc<ffi.IntPtr>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.decBioes(
+      pointer,
+      tensor.data.length,
+      base,
+      itemCount,
+      stride,
+      classCount,
+      starts,
+      ends,
+      count,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeDecodeError(error));
     }
+    return [
+      for (var i = 0; i < count.value; i++)
+        SpanLabel(starts[i], ends[i], label),
+    ];
+  } finally {
+    calloc
+      ..free(starts)
+      ..free(ends)
+      ..free(count)
+      ..free(error);
   }
-  tags.sort(
-    (a, b) => a.start == b.start
-        ? a.end.compareTo(b.end)
-        : a.start.compareTo(b.start),
-  );
-  final inner = _applyTags(text, tags);
-  if (ir.emotionLabels.isNotEmpty) {
-    return '<speak><emotion type="${_xml(ir.emotionLabels.first)}">$inner</emotion></speak>';
-  }
-  return '<speak>$inner</speak>';
-}
-
-List<TnItem> _selectTnItems(String text, FrontendIr ir) {
-  if (ir.tnEnItems.isEmpty) {
-    return ir.tnZhItems;
-  }
-  if (ir.tnZhItems.isEmpty) {
-    return ir.tnEnItems;
-  }
-  final primary = _preferChineseTn(text) ? ir.tnZhItems : ir.tnEnItems;
-  final secondary = identical(primary, ir.tnZhItems)
-      ? ir.tnEnItems
-      : ir.tnZhItems;
-  final selected = <TnItem>[];
-  void addNonOverlapping(Iterable<TnItem> items) {
-    for (final item in items) {
-      final overlaps = selected.any(
-        (taken) => !(item.end <= taken.start || item.start >= taken.end),
-      );
-      if (!overlaps) {
-        selected.add(item);
-      }
-    }
-  }
-
-  addNonOverlapping(primary);
-  addNonOverlapping(secondary);
-  selected.sort((a, b) {
-    final startCompare = a.start.compareTo(b.start);
-    if (startCompare != 0) {
-      return startCompare;
-    }
-    return a.end.compareTo(b.end);
-  });
-  return selected;
-}
-
-bool _preferChineseTn(String text) {
-  var cjk = 0;
-  var latin = 0;
-  for (final rune in text.runes) {
-    if (rune >= 0x4e00 && rune <= 0x9fff) {
-      cjk += 1;
-    } else if ((rune >= 0x41 && rune <= 0x5a) ||
-        (rune >= 0x61 && rune <= 0x7a)) {
-      latin += 1;
-    }
-  }
-  return cjk > 0 && cjk >= latin;
-}
-
-final class _Tag {
-  _Tag(this.start, this.end, this.name, this.attrs);
-  final int start;
-  final int end;
-  final String name;
-  final Map<String, String> attrs;
-}
-
-String _applyTags(String text, List<_Tag> tags) {
-  final out = StringBuffer();
-  var cursor = 0;
-  for (final tag in tags) {
-    if (tag.start < cursor || tag.end <= tag.start || tag.end > text.length) {
-      continue;
-    }
-    out.write(_xml(text.substring(cursor, tag.start)));
-    final attrs = tag.attrs.entries
-        .map((e) => ' ${e.key}="${_xml(e.value)}"')
-        .join();
-    out.write('<${tag.name}$attrs>');
-    out.write(_xml(text.substring(tag.start, tag.end)));
-    out.write('</${tag.name}>');
-    cursor = tag.end;
-  }
-  out.write(_xml(text.substring(cursor)));
-  return out.toString();
-}
-
-String _xml(String value) => value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-
-String stripSsmlForTts(String ssml) {
-  return ssml
-      .replaceAllMapped(
-        RegExp(
-          r'<sub\b[^>]*alias="([^"]*)"[^>]*>.*?</sub>',
-          caseSensitive: false,
-        ),
-        (m) => m.group(1) ?? '',
-      )
-      .replaceAll(RegExp(r'<[^>]+>'), '');
-}
-
-String _verbalizeEnglishWithLexicon(
-  String surface,
-  String type,
-  Map<String, Map<String, String>> lexicon,
-) {
-  final typed = lexicon[type];
-  final trimmed = surface.trim();
-  return typed?[surface] ??
-      typed?[trimmed] ??
-      lexicon['UNKNOWN']?[surface] ??
-      lexicon['UNKNOWN']?[trimmed] ??
-      verbalizeEnglish(surface);
-}
-
-String verbalizeEnglish(String surface) {
-  final s = surface.trim();
-  final money = RegExp(r'^\$([0-9]+)(?:\.([0-9]{1,2}))?$').firstMatch(s);
-  if (money != null) {
-    final dollars = _englishInt(int.tryParse(money.group(1)!) ?? 0);
-    final centsRaw = money.group(2);
-    if (centsRaw == null) {
-      return '$dollars dollars';
-    }
-    final cents = _englishInt(int.tryParse(centsRaw.padRight(2, '0')) ?? 0);
-    return '$dollars dollars and $cents cents';
-  }
-  final n = int.tryParse(s.replaceAll(',', ''));
-  if (n != null) {
-    return _englishInt(n);
-  }
-  return s;
-}
-
-String verbalizeChinese(String surface) {
-  const digits = {
-    '0': '零',
-    '1': '一',
-    '2': '二',
-    '3': '三',
-    '4': '四',
-    '5': '五',
-    '6': '六',
-    '7': '七',
-    '8': '八',
-    '9': '九',
-  };
-  return surface.split('').map((ch) => digits[ch] ?? ch).join();
-}
-
-String _englishInt(int n) {
-  const small = [
-    'zero',
-    'one',
-    'two',
-    'three',
-    'four',
-    'five',
-    'six',
-    'seven',
-    'eight',
-    'nine',
-    'ten',
-    'eleven',
-    'twelve',
-    'thirteen',
-    'fourteen',
-    'fifteen',
-    'sixteen',
-    'seventeen',
-    'eighteen',
-    'nineteen',
-  ];
-  const tens = [
-    '',
-    '',
-    'twenty',
-    'thirty',
-    'forty',
-    'fifty',
-    'sixty',
-    'seventy',
-    'eighty',
-    'ninety',
-  ];
-  if (n < 0) {
-    return 'minus ${_englishInt(-n)}';
-  }
-  if (n < 20) {
-    return small[n];
-  }
-  if (n < 100) {
-    final r = n % 10;
-    return r == 0 ? tens[n ~/ 10] : '${tens[n ~/ 10]} ${small[r]}';
-  }
-  if (n < 1000) {
-    final r = n % 100;
-    return r == 0
-        ? '${small[n ~/ 100]} hundred'
-        : '${small[n ~/ 100]} hundred ${_englishInt(r)}';
-  }
-  if (n < 1000000) {
-    final r = n % 1000;
-    return r == 0
-        ? '${_englishInt(n ~/ 1000)} thousand'
-        : '${_englishInt(n ~/ 1000)} thousand ${_englishInt(r)}';
-  }
-  return n.toString();
 }

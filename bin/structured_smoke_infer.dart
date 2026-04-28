@@ -17,6 +17,26 @@ Future<void> main(List<String> args) async {
   final iters = int.tryParse(parsed.option('iters') ?? '30') ?? 30;
   final trtCacheDir = parsed.option('trt-cache-dir');
   final preloadLibraries = _preloadLibrariesFromArgs(parsed);
+  if (requireProvider) {
+    final audit = RuntimeDependencyAudit.inspect(
+      root: _runtimeSearchRoot(parsed),
+      provider: provider,
+      extraSearchDirs: _runtimeLibraryDirsFromArgs(parsed),
+    );
+    final dependencyError = audit.skipReason;
+    if (dependencyError != null) {
+      stdout.writeln(
+        jsonEncode({
+          'ok': false,
+          'stage': 'preflight',
+          'error': dependencyError,
+          'runtimeDependencyAudit': audit.toJson(),
+        }),
+      );
+      exitCode = 78;
+      return;
+    }
+  }
 
   final batchSize = int.tryParse(parsed.option('batch-size') ?? '8') ?? 8;
   final tokenLength =
@@ -259,3 +279,24 @@ List<String> _preloadLibrariesFromArgs(_Args parsed) {
     ],
   );
 }
+
+String? _runtimeSearchRoot(_Args parsed) {
+  for (final value in [
+    parsed.option('runtime-root'),
+    parsed.option('root'),
+    Platform.environment['UNIFRONTEND_ROOT'],
+    Directory.current.path,
+  ]) {
+    final trimmed = value?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+List<String> _runtimeLibraryDirsFromArgs(_Args parsed) => [
+  ...parsed.values('cuda-library-dir'),
+  ...parsed.values('native-library-dir'),
+  ...parsed.values('library-dir'),
+];

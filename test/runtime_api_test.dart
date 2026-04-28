@@ -56,6 +56,43 @@ void main() {
       );
     });
 
+    test('audits TensorRT runtime dependencies without loading ORT', () {
+      final audit = RuntimeDependencyAudit.inspect(
+        root: '/path/that/does/not/exist',
+        provider: 'TensorrtExecutionProvider',
+        environment: const {},
+        includeSystemDirs: false,
+      );
+
+      expect(audit.tensorrtRequested, isTrue);
+      expect(audit.tensorrtReady, isFalse);
+      expect(audit.skipReason, contains('TensorRT 10 missing'));
+      expect(audit.toJson()['tensorrtReady'], isFalse);
+    });
+
+    test('accepts TensorRT 10 libraries from an explicit runtime dir', () {
+      final dir = Directory.systemTemp.createTempSync('runtime-trt-audit-');
+      try {
+        for (final name in RuntimeDependencyAudit.tensorRt10Libraries) {
+          File('${dir.path}/$name').writeAsBytesSync(const []);
+        }
+
+        final audit = RuntimeDependencyAudit.inspect(
+          root: null,
+          provider: 'trt',
+          environment: const {},
+          extraSearchDirs: [dir.path],
+          includeSystemDirs: false,
+        );
+
+        expect(audit.tensorrtReady, isTrue);
+        expect(audit.tensorrt10.ready, isTrue);
+        expect(audit.skipReason, isNull);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
     test('prefers Core ML over preview MLX safetensors on macOS', () {
       final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
       expect(resolver.resolve(spec).engine, RuntimeEngine.coreml);
@@ -326,14 +363,15 @@ void main() {
   });
 
   group('RuntimeTensor', () {
-    test('wraps typed data and exposes typed views', () {
+    test('creates native-backed typed tensor factories', () {
       final source = Float32List.fromList([1, 2, 3]);
       final tensor = RuntimeTensor.float32([3], source);
       source[0] = 99;
 
       expect(tensor.dtype, RuntimeTensorDataType.float32);
       expect(tensor.shape, [3]);
-      expect(tensor.asFloat32List(), [99, 2, 3]);
+      expect(tensor.asFloat32List(), [1, 2, 3]);
+      expect(tensor.nativeData, isNotNull);
     });
 
     test('allocates Zig-owned native input buffers', () {
@@ -345,6 +383,20 @@ void main() {
         expect(tensor.dtype, RuntimeTensorDataType.float32);
         expect(tensor.shape, [3]);
         expect(tensor.asFloat32List(), [1, 2, 3]);
+      } finally {
+        buffer.close();
+      }
+    });
+
+    test('views a prefix of a Zig-owned native input buffer', () {
+      final buffer = NativeTensorBuffer.int64([1, 4]);
+      try {
+        buffer.asInt64List().setAll(0, [1, 2, 3, 4]);
+        final tensor = buffer.tensorView(shape: const [1, 2], byteLength: 16);
+
+        expect(tensor.shape, [1, 2]);
+        expect(tensor.asInt64List(), [1, 2]);
+        expect(tensor.nativeData, isNotNull);
       } finally {
         buffer.close();
       }

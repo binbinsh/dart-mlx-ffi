@@ -6,13 +6,15 @@ import 'package:test/test.dart';
 import 'package:dart_inference/runtime.dart';
 
 void main() {
-  test('creates zero-copy int64 tensor view', () {
+  test('creates native-backed int64 tensor', () {
     final values = Int64List.fromList([1, 2, 3, 4]);
     final tensor = int64Tensor(values, const [2, 2]);
+    values[0] = 99;
 
     expect(tensor.dtype, RuntimeTensorDataType.int64);
     expect(tensor.shape, [2, 2]);
     expect(tensor.asInt64List(), [1, 2, 3, 4]);
+    expect(tensor.nativeData, isNotNull);
   });
 
   test('views float32 tensor bytes with offset', () {

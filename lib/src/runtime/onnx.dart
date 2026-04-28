@@ -6,7 +6,10 @@ import 'package:ffi/ffi.dart';
 import '../models/shared/model_spec.dart';
 import '../models/shared/runtime_metadata.dart';
 import 'native_bindings.dart' as native;
+import 'native_runtime.dart';
 import 'runtime.dart';
+
+const _disabledRuntimeEnvFile = '<dart_inference:no-runtime-env>';
 
 /// Convenience configuration for loading an ONNX Runtime session through the
 /// package's native runtime bridge.
@@ -92,7 +95,11 @@ final class DartOnnxSession {
 
   DartOnnxResult run(Map<String, Object?> inputs) {
     final outputs = _session.run(ModelInputs(inputs));
-    return DartOnnxResult(outputs.values, outputs.diagnostics);
+    return DartOnnxResult(
+      outputs.values,
+      outputs.diagnostics,
+      release: outputs.close,
+    );
   }
 
   void close() {
@@ -101,33 +108,41 @@ final class DartOnnxSession {
 }
 
 final class DartOnnxResult {
-  const DartOnnxResult(this.outputs, this.diagnostics);
+  const DartOnnxResult(
+    this.outputs,
+    this.diagnostics, {
+    void Function()? release,
+  }) : _release = release;
 
   final Map<String, Object?> outputs;
   final Map<String, Object?> diagnostics;
+  final void Function()? _release;
 
   String providerOr(String fallback) =>
       '${diagnostics['provider'] ?? fallback}';
+
+  void close() {
+    _release?.call();
+  }
 }
 
-RuntimeTensor int64Tensor(Int64List values, List<int> shape) => RuntimeTensor(
-  dtype: RuntimeTensorDataType.int64,
-  shape: shape,
-  bytes: Uint8List.view(values.buffer),
-);
+RuntimeTensor int64Tensor(Int64List values, List<int> shape) {
+  final buffer = NativeTensorBuffer.int64(shape);
+  buffer.copyFrom(values);
+  return buffer.tensor;
+}
 
-RuntimeTensor float32Tensor(Float32List values, List<int> shape) =>
-    RuntimeTensor(
-      dtype: RuntimeTensorDataType.float32,
-      shape: shape,
-      bytes: Uint8List.view(values.buffer),
-    );
+RuntimeTensor float32Tensor(Float32List values, List<int> shape) {
+  final buffer = NativeTensorBuffer.float32(shape);
+  buffer.copyFrom(values);
+  return buffer.tensor;
+}
 
-RuntimeTensor boolTensor(Uint8List values, List<int> shape) => RuntimeTensor(
-  dtype: RuntimeTensorDataType.boolean,
-  shape: shape,
-  bytes: values,
-);
+RuntimeTensor boolTensor(Uint8List values, List<int> shape) {
+  final buffer = NativeTensorBuffer.boolean(shape);
+  buffer.copyFrom(values);
+  return buffer.tensor;
+}
 
 Float32List float32View(RuntimeTensor tensor) => Float32List.view(
   tensor.bytes.buffer,
@@ -156,6 +171,7 @@ List<String> discoverOnnxRuntimePreloadLibraries({
   Iterable<String> libraryDirectories = const [],
   Iterable<String> libraryNames = const [],
 }) => _ortLibs(
+  runtimeEnvFile: _disabledRuntimeEnvFile,
   explicitLibraries: explicitLibraries,
   libraryDirectories: libraryDirectories,
   libraryNames: libraryNames,

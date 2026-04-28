@@ -21,7 +21,6 @@ environment:
   sdk: ^3.11.1
 
 dependencies:
-  archive: ^4.0.7
   code_assets: ^1.0.0
   ffi: ^2.1.4
   hooks: ^1.0.0

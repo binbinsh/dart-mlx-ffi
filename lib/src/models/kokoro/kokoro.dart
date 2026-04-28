@@ -5,6 +5,7 @@ export 'kokoro_onnx.dart'
         chunkPhonemesForKokoro,
         concatFloat32,
         encodeWavPcm16,
+        encodeWavPcm16Chunks,
         filterPhonemesForVocab,
         kokoroMaxPhonemeTokens,
         loadNpz,

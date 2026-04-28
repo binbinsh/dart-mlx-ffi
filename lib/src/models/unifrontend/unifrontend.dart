@@ -15,8 +15,8 @@ export 'structured_frontend.dart'
         TnItem,
         TokenizedText,
         composeSsml,
+        looksChinese,
         stripSsmlForTts,
         verbalizeChinese,
         verbalizeEnglish;
-export 'tts.dart'
-    show UniFrontendKokoroTtsResult, UniFrontendKokoroTtsRuntime, looksChinese;
+export 'tts.dart' show UniFrontendKokoroTtsResult, UniFrontendKokoroTtsRuntime;

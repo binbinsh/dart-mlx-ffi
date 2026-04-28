@@ -3,10 +3,9 @@ import 'package:test/test.dart';
 import 'package:dart_inference/models.dart';
 
 void main() {
-  test('uses strict FFI phonemization by default', () {
+  test('uses Zig eSpeak phonemization by default', () {
     final phonemizer = KokoroPhonemizer();
 
-    expect(phonemizer.allowProcessFallback, isFalse);
     expect(phonemizer.backendName, 'lazy');
   });
 
@@ -26,6 +25,36 @@ void main() {
     expect(first, 'en-us|Hello Moon');
     expect(second, first);
     expect(calls, 1);
+  });
+
+  test('normalizes English text through Zig before phonemization', () async {
+    final calls = <String>[];
+    final phonemizer = KokoroPhonemizer.withBackend((
+      text, {
+      required language,
+    }) {
+      calls.add('$language:$text');
+      return text;
+    });
+
+    await phonemizer.phonemize('Dr. Smith paid \$1.50 at 12:05 in 2026');
+
+    expect(calls, [
+      "en-us:Doctor Smith paid 1 dollar and 50 cents at 12 oh 5 in 20 26",
+    ]);
+  });
+
+  test('post-processes English phoneme output through Zig', () async {
+    final phonemizer = KokoroPhonemizer.withBackend((
+      text, {
+      required language,
+    }) {
+      return 'kəkˈoːɹoʊ nˈaɪnti ahˈʌndɹɪd z! r x ɬ ʲ';
+    });
+
+    final phonemes = await phonemizer.phonemize('kokoro');
+
+    expect(phonemes, 'kˈoʊkəɹoʊ nˈaɪndi a hˈʌndɹɪdz! ɹ k l j');
   });
 
   test(
@@ -140,13 +169,13 @@ void main() {
   });
 
   test('uses eSpeak-NG FFI when the native library is available', () async {
-    final phonemizer = KokoroPhonemizer(allowProcessFallback: false);
+    final phonemizer = KokoroPhonemizer();
     try {
       final phonemes = await phonemizer.phonemize('Hello World');
       expect(phonemes, isNotEmpty);
       expect(phonemes, isNot(contains('\u200d')));
       expect(phonemes, contains('h'));
-      expect(phonemizer.backendName, 'espeak_ffi');
+      expect(phonemizer.backendName, 'espeak_zig');
     } catch (error) {
       markTestSkipped('eSpeak-NG FFI library unavailable: $error');
     } finally {
@@ -155,11 +184,11 @@ void main() {
   });
 
   test('mixed-language FFI output strips eSpeak voice markers', () async {
-    final phonemizer = KokoroPhonemizer(allowProcessFallback: false);
+    final phonemizer = KokoroPhonemizer();
     try {
       final phonemes = await phonemizer.phonemize('Hello 你好', language: 'cmn');
       expect(phonemes, isNot(contains(RegExp(r'\([a-z]{2,3}\)'))));
-      expect(phonemizer.backendName, 'espeak_ffi');
+      expect(phonemizer.backendName, 'espeak_zig');
     } catch (error) {
       markTestSkipped('eSpeak-NG FFI library unavailable: $error');
     } finally {

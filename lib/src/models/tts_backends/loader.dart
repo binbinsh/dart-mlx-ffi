@@ -1,5 +1,6 @@
 import '../kokoro/kokoro.dart';
 import '../unifrontend/unifrontend.dart';
+import '../cosyvoice2/cosyvoice2.dart';
 import '../../runtime/onnx.dart';
 import 'runtime.dart';
 
@@ -8,6 +9,7 @@ final class DartUniFrontendTtsPaths {
     required this.kokoroModelPath,
     required this.kokoroVoicesPath,
     required this.kokoroConfigPath,
+    required this.cosyVoice2Paths,
     required this.structuredModelPath,
     required this.structuredExportConfigPath,
     required this.structuredConfigPath,
@@ -28,6 +30,7 @@ final class DartUniFrontendTtsPaths {
           '$normalized/src/ttsbackends/providers/kokoro/models/voices.npz',
       kokoroConfigPath:
           '$normalized/src/ttsbackends/providers/kokoro/models/config.json',
+      cosyVoice2Paths: CosyVoice2Paths.fromUniFrontendRoot(normalized),
       structuredModelPath:
           '$normalized/artifacts/onnx/structured-mmbert-focus-v2-step-20000.online-multi.fixed8.512x1024.onnx',
       structuredExportConfigPath:
@@ -48,6 +51,7 @@ final class DartUniFrontendTtsPaths {
   final String kokoroModelPath;
   final String kokoroVoicesPath;
   final String kokoroConfigPath;
+  final CosyVoice2Paths cosyVoice2Paths;
   final String structuredModelPath;
   final String structuredExportConfigPath;
   final String structuredConfigPath;
@@ -60,6 +64,7 @@ final class DartUniFrontendTtsPaths {
     String? kokoroModelPath,
     String? kokoroVoicesPath,
     String? kokoroConfigPath,
+    CosyVoice2Paths? cosyVoice2Paths,
     String? structuredModelPath,
     String? structuredExportConfigPath,
     String? structuredConfigPath,
@@ -72,6 +77,7 @@ final class DartUniFrontendTtsPaths {
       kokoroModelPath: kokoroModelPath ?? this.kokoroModelPath,
       kokoroVoicesPath: kokoroVoicesPath ?? this.kokoroVoicesPath,
       kokoroConfigPath: kokoroConfigPath ?? this.kokoroConfigPath,
+      cosyVoice2Paths: cosyVoice2Paths ?? this.cosyVoice2Paths,
       structuredModelPath: structuredModelPath ?? this.structuredModelPath,
       structuredExportConfigPath:
           structuredExportConfigPath ?? this.structuredExportConfigPath,
@@ -95,7 +101,6 @@ final class DartTtsRuntimeOptions {
     this.requireProvider = true,
     this.numThreads = 4,
     this.cudaMemoryLimitMb = 16384,
-    this.allowEspeakProcessFallback = false,
     this.preloadLibraries = const [],
     this.backendOptions = const {},
   });
@@ -105,7 +110,6 @@ final class DartTtsRuntimeOptions {
   final bool requireProvider;
   final int numThreads;
   final int cudaMemoryLimitMb;
-  final bool allowEspeakProcessFallback;
   final List<String> preloadLibraries;
   final Map<String, Object?> backendOptions;
 
@@ -115,7 +119,6 @@ final class DartTtsRuntimeOptions {
     bool? requireProvider,
     int? numThreads,
     int? cudaMemoryLimitMb,
-    bool? allowEspeakProcessFallback,
     List<String>? preloadLibraries,
     Map<String, Object?>? backendOptions,
   }) {
@@ -125,8 +128,6 @@ final class DartTtsRuntimeOptions {
       requireProvider: requireProvider ?? this.requireProvider,
       numThreads: numThreads ?? this.numThreads,
       cudaMemoryLimitMb: cudaMemoryLimitMb ?? this.cudaMemoryLimitMb,
-      allowEspeakProcessFallback:
-          allowEspeakProcessFallback ?? this.allowEspeakProcessFallback,
       preloadLibraries: preloadLibraries ?? this.preloadLibraries,
       backendOptions: backendOptions ?? this.backendOptions,
     );
@@ -178,9 +179,7 @@ Future<DartTtsBackendRegistry> loadUniFrontendKokoroTtsRegistry({
     final tts = UniFrontendKokoroTtsRuntime(
       frontend: frontend,
       kokoro: kokoro,
-      phonemizer: KokoroPhonemizer(
-        allowProcessFallback: options.allowEspeakProcessFallback,
-      ),
+      phonemizer: KokoroPhonemizer(),
     );
     return DartTtsBackendRegistry(backends: [KokoroTtsBackend(tts)]);
   } catch (_) {

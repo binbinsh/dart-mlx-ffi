@@ -9,6 +9,7 @@ export 'src/models/shared/metal_gate.dart';
 export 'src/models/shared/stream_acc.dart';
 export 'src/models/shared/embedding.dart';
 
+export 'src/models/cosyvoice2/cosyvoice2.dart';
 export 'src/models/kokoro/kokoro.dart';
 export 'src/models/tts_backends/tts_backends.dart';
 export 'src/models/unifrontend/unifrontend.dart';

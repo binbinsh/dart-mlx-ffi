@@ -116,8 +116,6 @@ final class KokoroTtsBackend implements DartTtsBackend {
     'structuredOnnxProvider': runtime.frontendProvider,
     'kokoroOnnxProvider': runtime.kokoroProvider,
     'phonemizerBackend': runtime.phonemizerBackend,
-    'phonemizerProcessFallbackAllowed':
-        runtime.phonemizerProcessFallbackAllowed,
   };
 
   @override

@@ -1,22 +1,25 @@
-import 'dart:convert';
-import 'dart:io';
+import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+import 'package:ffi/ffi.dart';
 import 'package:dart_inference/runtime.dart';
+import '../../runtime/native_bindings.dart' as native;
 
 final class KokoroDartRuntime {
   KokoroDartRuntime._({
     required this.session,
-    required this.vocab,
+    required _KokoroVocab nativeVocab,
     required this.voices,
     required this.selectedProvider,
-  });
+    required _KokoroInputScratch scratch,
+  }) : _nativeVocab = nativeVocab,
+       _scratch = scratch;
 
   final DartOnnxSession session;
-  final Map<String, int> vocab;
+  final _KokoroVocab _nativeVocab;
   final Map<String, NpyArray> voices;
   final String selectedProvider;
+  final _KokoroInputScratch _scratch;
 
   List<String> get voiceNames => voices.keys.toList(growable: false)..sort();
 
@@ -30,9 +33,7 @@ final class KokoroDartRuntime {
     required int numThreads,
     Map<String, Object?> backendOptions = const {},
   }) async {
-    final config = jsonDecode(await File(configPath).readAsString());
-    final vocabRaw = (config as Map)['vocab'] as Map;
-    final vocab = vocabRaw.map((k, v) => MapEntry(k.toString(), v as int));
+    final nativeVocab = _loadKokoroVocab(configPath);
     final voices = await loadNpz(voicesPath);
     final session = DartOnnxSession.load(
       DartOnnxConfig(
@@ -48,9 +49,13 @@ final class KokoroDartRuntime {
     );
     return KokoroDartRuntime._(
       session: session,
-      vocab: vocab,
+      nativeVocab: nativeVocab,
       voices: voices,
       selectedProvider: session.selectedProvider,
+      scratch: _KokoroInputScratch(
+        maxInputLength: kokoroMaxPhonemeTokens + 2,
+        styleLength: voices.values.first.rowLength,
+      ),
     );
   }
 
@@ -64,75 +69,117 @@ final class KokoroDartRuntime {
     if (voiceArray == null) {
       throw FormatException('unknown Kokoro voice: $voice');
     }
-    final chunks = chunkPhonemes(phonemes);
-    if (chunks.isEmpty) {
-      throw FormatException('phonemes produced no Kokoro token ids');
+    final plan = _planKokoro(phonemes, _nativeVocab);
+    final audioChunks = <_KokoroAudioChunk>[];
+    try {
+      if (plan.tokenCount == 0 || plan.chunkCount == 0) {
+        throw FormatException('phonemes produced no Kokoro token ids');
+      }
+      var tokenOffset = 0;
+      for (var i = 0; i < plan.chunkCount; i += 1) {
+        final tokenCount = plan.lengths[i];
+        audioChunks.add(
+          _synthesizeNativeTokenIds(
+            tokenIds: plan.tokens + tokenOffset,
+            tokenCount: tokenCount,
+            voiceArray: voiceArray,
+            speed: speed,
+          ),
+        );
+        tokenOffset += tokenCount;
+      }
+      return _encodeWavPcm16TensorChunks(audioChunks, 24000);
+    } finally {
+      for (final chunk in audioChunks) {
+        chunk.close();
+      }
+      plan.close();
     }
-    final audioChunks = <Float32List>[];
-    for (final chunk in chunks) {
-      audioChunks.add(
-        _synthesizeTokenIds(
-          tokenIds: phonemeTokenIds(chunk),
-          voiceArray: voiceArray,
-          speed: speed,
-        ),
-      );
-    }
-    return encodeWavPcm16(concatFloat32(audioChunks), 24000);
   }
 
-  Float32List _synthesizeTokenIds({
-    required List<int> tokenIds,
+  _KokoroAudioChunk _synthesizeNativeTokenIds({
+    required ffi.Pointer<ffi.Int64> tokenIds,
+    required int tokenCount,
     required NpyArray voiceArray,
     required double speed,
   }) {
-    if (tokenIds.isEmpty) {
-      return Float32List(0);
+    if (tokenCount == 0) {
+      return _KokoroAudioChunk.empty();
     }
-    if (tokenIds.length > kokoroMaxPhonemeTokens) {
+    if (tokenCount > kokoroMaxPhonemeTokens) {
       throw StateError(
-        'Kokoro phoneme chunk has ${tokenIds.length} tokens, '
+        'Kokoro phoneme chunk has $tokenCount tokens, '
         'max is $kokoroMaxPhonemeTokens',
       );
     }
-    final tokenCount = tokenIds.length;
-    final inputIds = Int64List(tokenCount + 2);
-    inputIds[0] = 0;
-    for (var i = 0; i < tokenCount; i++) {
-      inputIds[i + 1] = tokenIds[i];
+    final outputs = session.run(
+      _scratch.inputs(
+        tokenIds: tokenIds,
+        tokenCount: tokenCount,
+        voiceArray: voiceArray,
+        speed: speed,
+      ),
+    );
+    try {
+      final audioTensor = outputs.outputs.values
+          .whereType<RuntimeTensor>()
+          .first;
+      return _KokoroAudioChunk(audioTensor, outputs);
+    } catch (_) {
+      outputs.close();
+      rethrow;
     }
-    inputIds[tokenCount + 1] = 0;
-    final style = voiceArray.row(tokenCount);
-    final outputs = session.run({
-      'input_ids': int64Tensor(inputIds, [1, inputIds.length]),
-      'style': float32Tensor(style, [1, style.length]),
-      'speed': float32Tensor(Float32List.fromList([speed]), const [1]),
-    });
-    final audioTensor = outputs.outputs.values.whereType<RuntimeTensor>().first;
-    return Float32List.fromList(float32View(audioTensor));
   }
 
   String filterPhonemes(String phonemes) =>
-      filterPhonemesForVocab(phonemes, vocab.keys.toSet());
+      _filterKokoro(phonemes, _nativeVocab.codes, _nativeVocab.count);
 
   List<String> chunkPhonemes(
     String phonemes, {
     int maxTokens = kokoroMaxPhonemeTokens,
-  }) => chunkPhonemesForKokoro(phonemes, vocab, maxTokens: maxTokens);
+  }) {
+    final plan = _planKokoro(
+      phonemes,
+      _nativeVocab,
+      maxTokens: maxTokens,
+      includeText: true,
+    );
+    try {
+      return plan.chunks();
+    } finally {
+      plan.close();
+    }
+  }
 
-  int phonemeTokenCount(String phonemes) => phonemeTokenIds(phonemes).length;
+  int phonemeTokenCount(String phonemes) {
+    final plan = _planKokoro(phonemes, _nativeVocab);
+    try {
+      return plan.tokenCount;
+    } finally {
+      plan.close();
+    }
+  }
 
-  int phonemeChunkCount(String phonemes) => chunkPhonemes(phonemes).length;
+  int phonemeChunkCount(String phonemes) {
+    final plan = _planKokoro(phonemes, _nativeVocab);
+    try {
+      return plan.chunkCount;
+    } finally {
+      plan.close();
+    }
+  }
 
   List<int> phonemeTokenIds(String phonemes) {
-    final tokenIds = <int>[];
-    for (final rune in phonemes.runes) {
-      final token = vocab[String.fromCharCode(rune)];
-      if (token != null) {
-        tokenIds.add(token);
-      }
+    final plan = _planKokoro(phonemes, _nativeVocab);
+    try {
+      return List<int>.generate(
+        plan.tokenCount,
+        (index) => plan.tokens[index],
+        growable: false,
+      );
+    } finally {
+      plan.close();
     }
-    return tokenIds;
   }
 
   String resolveVoice(String requested) {
@@ -140,7 +187,122 @@ final class KokoroDartRuntime {
   }
 
   void close() {
+    _scratch.close();
+    _nativeVocab.close();
+    for (final voice in voices.values) {
+      voice.close();
+    }
     session.close();
+  }
+}
+
+final class _KokoroInputScratch {
+  _KokoroInputScratch({required this.maxInputLength, required int styleLength})
+    : inputIds = NativeTensorBuffer.int64([1, maxInputLength]),
+      style = NativeTensorBuffer.float32([1, styleLength]),
+      speed = NativeTensorBuffer.float32(const [1]);
+
+  final int maxInputLength;
+  final NativeTensorBuffer inputIds;
+  final NativeTensorBuffer style;
+  final NativeTensorBuffer speed;
+  bool _closed = false;
+
+  Map<String, Object?> inputs({
+    required ffi.Pointer<ffi.Int64> tokenIds,
+    required int tokenCount,
+    required NpyArray voiceArray,
+    required double speed,
+  }) {
+    final inputLength = tokenCount + 2;
+    if (inputLength > maxInputLength) {
+      throw StateError(
+        'Kokoro input length $inputLength exceeds native input buffer.',
+      );
+    }
+
+    final styleLength = voiceArray.rowLength;
+    _fillKokoroInputs(
+      inputIds: inputIds,
+      tokenIds: tokenIds,
+      tokenCount: tokenCount,
+      style: style,
+      voiceArray: voiceArray,
+      voiceRowLength: styleLength,
+      speedBuffer: this.speed,
+      speed: speed,
+    );
+
+    return {
+      'input_ids': inputIds.tensorView(
+        shape: [1, inputLength],
+        byteLength: inputLength * 8,
+      ),
+      'style': style.tensorView(
+        shape: [1, styleLength],
+        byteLength: styleLength * 4,
+      ),
+      'speed': this.speed.tensor,
+    };
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    inputIds.close();
+    style.close();
+    speed.close();
+  }
+}
+
+void _fillKokoroInputs({
+  required NativeTensorBuffer inputIds,
+  required ffi.Pointer<ffi.Int64> tokenIds,
+  required int tokenCount,
+  required NativeTensorBuffer style,
+  required NpyArray voiceArray,
+  required int voiceRowLength,
+  required NativeTensorBuffer speedBuffer,
+  required double speed,
+}) {
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.kokInputs(
+      inputIds.nativeData.cast<ffi.Int64>(),
+      inputIds.byteLength ~/ 8,
+      tokenIds,
+      tokenCount,
+      style.nativeData.cast<ffi.Float>(),
+      style.byteLength ~/ 4,
+      voiceArray._buffer.nativeData.cast<ffi.Float>(),
+      voiceArray._buffer.byteLength ~/ 4,
+      voiceArray.shape.first,
+      voiceRowLength,
+      speedBuffer.nativeData.cast<ffi.Float>(),
+      speedBuffer.byteLength ~/ 4,
+      speed,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeNativeError(error));
+    }
+  } finally {
+    calloc.free(error);
+  }
+}
+
+final class _KokoroAudioChunk {
+  _KokoroAudioChunk(this.tensor, this._outputs);
+
+  _KokoroAudioChunk.empty() : tensor = null, _outputs = null;
+
+  final RuntimeTensor? tensor;
+  final DartOnnxResult? _outputs;
+
+  void close() {
+    _outputs?.close();
   }
 }
 
@@ -163,24 +325,12 @@ String resolveKokoroVoice(Map<String, NpyArray> voices, String requested) {
 const kokoroMaxPhonemeTokens = 510;
 
 String filterPhonemesForVocab(String phonemes, Set<String> vocabChars) {
-  final out = StringBuffer();
-  var lastWasSpace = true;
-  for (final rune in phonemes.runes) {
-    final ch = String.fromCharCode(rune);
-    if (!vocabChars.contains(ch)) {
-      continue;
-    }
-    if (ch.trim().isEmpty) {
-      if (!lastWasSpace && out.isNotEmpty) {
-        out.write(' ');
-      }
-      lastWasSpace = true;
-      continue;
-    }
-    out.write(ch);
-    lastWasSpace = false;
+  final codes = _KokoroCodeSet(vocabChars);
+  try {
+    return _filterKokoro(phonemes, codes.codes, codes.count);
+  } finally {
+    codes.close();
   }
-  return out.toString().trim();
 }
 
 List<String> chunkPhonemesForKokoro(
@@ -188,84 +338,229 @@ List<String> chunkPhonemesForKokoro(
   Map<String, int> vocab, {
   int maxTokens = kokoroMaxPhonemeTokens,
 }) {
+  final nativeVocab = _KokoroVocab(vocab);
+  try {
+    final plan = _planKokoro(
+      phonemes,
+      nativeVocab,
+      maxTokens: maxTokens,
+      includeText: true,
+    );
+    try {
+      return plan.chunks();
+    } finally {
+      plan.close();
+    }
+  } finally {
+    nativeVocab.close();
+  }
+}
+
+final class _KokoroCodeSet {
+  _KokoroCodeSet(Iterable<String> chars)
+    : codes = NativeTensorBuffer.int32([chars.length]) {
+    final values = codes.asInt32List();
+    var index = 0;
+    for (final char in chars) {
+      final runes = char.runes.toList(growable: false);
+      if (runes.length != 1) {
+        codes.close();
+        throw FormatException('Kokoro vocab key must be one codepoint: $char');
+      }
+      values[index] = runes.single;
+      index += 1;
+    }
+  }
+
+  final NativeTensorBuffer codes;
+
+  int get count => codes.byteLength ~/ 4;
+
+  void close() {
+    codes.close();
+  }
+}
+
+final class _KokoroVocab {
+  _KokoroVocab(Map<String, int> vocab)
+    : codes = NativeTensorBuffer.int32([vocab.length]),
+      ids = NativeTensorBuffer.int64([vocab.length]) {
+    final codeValues = codes.asInt32List();
+    final values = ids.asInt64List();
+    var index = 0;
+    for (final entry in vocab.entries) {
+      final runes = entry.key.runes.toList(growable: false);
+      if (runes.length != 1) {
+        codes.close();
+        ids.close();
+        throw FormatException(
+          'Kokoro vocab key must be one codepoint: ${entry.key}',
+        );
+      }
+      codeValues[index] = runes.single;
+      values[index] = entry.value;
+      index += 1;
+    }
+  }
+
+  _KokoroVocab._native({required this.codes, required this.ids});
+
+  final NativeTensorBuffer codes;
+  final NativeTensorBuffer ids;
+
+  int get count => codes.byteLength ~/ 4;
+
+  void close() {
+    codes.close();
+    ids.close();
+  }
+}
+
+_KokoroVocab _loadKokoroVocab(String configPath) {
+  final path = configPath.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  final out = calloc<native.KokoroVocabAbi>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.kokVocab(path, out, error);
+    if (status != 0) {
+      throw StateError(_takeNativeError(error));
+    }
+    final value = out.ref;
+    if (value.count < 0) {
+      throw const FormatException('invalid native Kokoro vocab metadata');
+    }
+    if (value.count > 0 &&
+        (value.codes == ffi.nullptr || value.ids == ffi.nullptr)) {
+      throw const FormatException('native Kokoro vocab pointers are null');
+    }
+    final codes = NativeTensorBuffer.adopt(
+      dtype: RuntimeTensorDataType.int32,
+      shape: [value.count],
+      byteLength: value.count * 4,
+      pointer: value.codes.cast<ffi.Void>(),
+    );
+    final ids = NativeTensorBuffer.adopt(
+      dtype: RuntimeTensorDataType.int64,
+      shape: [value.count],
+      byteLength: value.count * 8,
+      pointer: value.ids.cast<ffi.Void>(),
+    );
+    value
+      ..codes = ffi.nullptr
+      ..ids = ffi.nullptr;
+    return _KokoroVocab._native(codes: codes, ids: ids);
+  } catch (_) {
+    native.kokFreeVocab(out);
+    rethrow;
+  } finally {
+    calloc
+      ..free(path)
+      ..free(out)
+      ..free(error);
+  }
+}
+
+final class _KokoroPlan {
+  _KokoroPlan(this._pointer);
+
+  final ffi.Pointer<native.KokoroPlanAbi> _pointer;
+  bool _closed = false;
+
+  native.KokoroPlanAbi get _value => _pointer.ref;
+
+  ffi.Pointer<ffi.Int64> get tokens => _value.tokens;
+
+  ffi.Pointer<ffi.IntPtr> get lengths => _value.lengths;
+
+  int get tokenCount => _value.tokenCount;
+
+  int get chunkCount => _value.chunkCount;
+
+  List<String> chunks() {
+    if (chunkCount == 0) {
+      return const [];
+    }
+    final value = _value;
+    final out = <String>[];
+    for (var i = 0; i < value.chunkCount; i += 1) {
+      final start = value.starts[i];
+      final length = value.byteLengths[i];
+      out.add((value.text + start).cast<Utf8>().toDartString(length: length));
+    }
+    return List<String>.unmodifiable(out);
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    native.kokFreePlan(_pointer);
+    calloc.free(_pointer);
+  }
+}
+
+String _filterKokoro(String phonemes, NativeTensorBuffer codes, int codeCount) {
+  final text = phonemes.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  ffi.Pointer<ffi.Char> out = ffi.nullptr;
+  try {
+    out = native.kokFilter(
+      text,
+      codes.nativeData.cast<ffi.Int32>(),
+      codeCount,
+      error,
+    );
+    if (out == ffi.nullptr) {
+      throw StateError(_takeNativeError(error));
+    }
+    return out.cast<Utf8>().toDartString();
+  } finally {
+    if (out != ffi.nullptr) {
+      native.freeStr(out);
+    }
+    calloc
+      ..free(text)
+      ..free(error);
+  }
+}
+
+_KokoroPlan _planKokoro(
+  String phonemes,
+  _KokoroVocab vocab, {
+  int maxTokens = kokoroMaxPhonemeTokens,
+  bool includeText = false,
+}) {
   if (maxTokens <= 0) {
     throw ArgumentError.value(maxTokens, 'maxTokens', 'must be positive');
   }
-  final filtered = filterPhonemesForVocab(phonemes, vocab.keys.toSet());
-  if (filtered.isEmpty) {
-    return const [];
-  }
-  final chunks = <String>[];
-  final current = StringBuffer();
-  var currentTokens = 0;
-
-  void flush() {
-    final chunk = current.toString().trim();
-    if (chunk.isNotEmpty) {
-      chunks.add(chunk);
+  final text = phonemes.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  final out = calloc<native.KokoroPlanAbi>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.kokPlan(
+      text,
+      vocab.codes.nativeData.cast<ffi.Int32>(),
+      vocab.ids.nativeData.cast<ffi.Int64>(),
+      vocab.count,
+      maxTokens,
+      includeText ? 1 : 0,
+      out,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeNativeError(error));
     }
-    current.clear();
-    currentTokens = 0;
+    return _KokoroPlan(out);
+  } catch (_) {
+    native.kokFreePlan(out);
+    calloc.free(out);
+    rethrow;
+  } finally {
+    calloc
+      ..free(text)
+      ..free(error);
   }
-
-  for (final segment in _phonemeSegments(filtered)) {
-    final segmentTokens = _countVocabTokens(segment, vocab);
-    if (segmentTokens == 0) {
-      continue;
-    }
-    if (segmentTokens > maxTokens) {
-      flush();
-      final runes = segment.runes.toList(growable: false);
-      for (final rune in runes) {
-        final ch = String.fromCharCode(rune);
-        if (!vocab.containsKey(ch)) {
-          continue;
-        }
-        if (currentTokens == maxTokens) {
-          flush();
-        }
-        current.write(ch);
-        currentTokens += 1;
-      }
-      continue;
-    }
-    if (currentTokens > 0 && currentTokens + segmentTokens > maxTokens) {
-      flush();
-    }
-    current.write(segment);
-    currentTokens += segmentTokens;
-  }
-  flush();
-  return chunks;
-}
-
-List<String> _phonemeSegments(String phonemes) {
-  final segments = <String>[];
-  final current = StringBuffer();
-  for (final rune in phonemes.runes) {
-    final ch = String.fromCharCode(rune);
-    current.write(ch);
-    if (ch.trim().isEmpty || _chunkBreakChars.contains(ch)) {
-      segments.add(current.toString());
-      current.clear();
-    }
-  }
-  if (current.isNotEmpty) {
-    segments.add(current.toString());
-  }
-  return segments;
-}
-
-const _chunkBreakChars = {'.', ',', '!', '?', ':', ';', '—', '…'};
-
-int _countVocabTokens(String value, Map<String, int> vocab) {
-  var count = 0;
-  for (final rune in value.runes) {
-    if (vocab.containsKey(String.fromCharCode(rune))) {
-      count += 1;
-    }
-  }
-  return count;
 }
 
 Float32List concatFloat32(List<Float32List> chunks) {
@@ -275,127 +570,405 @@ Float32List concatFloat32(List<Float32List> chunks) {
   if (chunks.length == 1) {
     return chunks.single;
   }
-  final total = chunks.fold<int>(0, (sum, chunk) => sum + chunk.length);
-  final out = Float32List(total);
-  var offset = 0;
-  for (final chunk in chunks) {
-    out.setRange(offset, offset + chunk.length, chunk);
-    offset += chunk.length;
+  final sampleCount = calloc<ffi.IntPtr>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  ffi.Pointer<ffi.Void> out = ffi.nullptr;
+  try {
+    return _withNativeF32Chunks(chunks, (chunkPtrs, chunkLengths) {
+      out = native.audioConcatF32(
+        chunkPtrs,
+        chunkLengths,
+        chunks.length,
+        sampleCount,
+        error,
+      );
+      if (out == ffi.nullptr) {
+        if (sampleCount.value == 0 && error.value == ffi.nullptr) {
+          return Float32List(0);
+        }
+        throw StateError(_takeNativeError(error));
+      }
+      return Float32List.fromList(
+        out.cast<ffi.Float>().asTypedList(sampleCount.value),
+      );
+    });
+  } finally {
+    if (out != ffi.nullptr) {
+      native.freeBuf(out);
+    }
+    calloc
+      ..free(sampleCount)
+      ..free(error);
   }
-  return out;
+}
+
+T _withNativeF32Chunks<T>(
+  List<Float32List> chunks,
+  T Function(
+    ffi.Pointer<ffi.Pointer<ffi.Float>> chunkPtrs,
+    ffi.Pointer<ffi.IntPtr> chunkLengths,
+  )
+  call,
+) {
+  final chunkPtrs = chunks.isEmpty
+      ? ffi.nullptr
+      : calloc<ffi.Pointer<ffi.Float>>(chunks.length);
+  final chunkLengths = chunks.isEmpty
+      ? ffi.nullptr
+      : calloc<ffi.IntPtr>(chunks.length);
+  final samplePtrs = <ffi.Pointer<ffi.Float>>[];
+  try {
+    for (var i = 0; i < chunks.length; i += 1) {
+      final chunk = chunks[i];
+      chunkLengths[i] = chunk.length;
+      if (chunk.isEmpty) {
+        chunkPtrs[i] = ffi.nullptr;
+        continue;
+      }
+      final samples = calloc<ffi.Float>(chunk.length);
+      samples.asTypedList(chunk.length).setAll(0, chunk);
+      samplePtrs.add(samples);
+      chunkPtrs[i] = samples;
+    }
+    return call(chunkPtrs, chunkLengths);
+  } finally {
+    for (final samples in samplePtrs) {
+      calloc.free(samples);
+    }
+    if (chunkPtrs != ffi.nullptr) {
+      calloc.free(chunkPtrs);
+    }
+    if (chunkLengths != ffi.nullptr) {
+      calloc.free(chunkLengths);
+    }
+  }
 }
 
 Future<Map<String, NpyArray>> loadNpz(String path) async {
-  final bytes = await File(path).readAsBytes();
-  final archive = ZipDecoder().decodeBytes(bytes, verify: false);
+  final pathPtr = path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  final itemsOut = calloc<ffi.Pointer<native.NpyAbi>>();
+  final countOut = calloc<ffi.IntPtr>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
   final out = <String, NpyArray>{};
-  for (final file in archive.files) {
-    if (!file.isFile || !file.name.endsWith('.npy')) {
-      continue;
+  ffi.Pointer<native.NpyAbi> items = ffi.nullptr;
+  try {
+    final status = native.kokNpz(pathPtr, itemsOut, countOut, error);
+    if (status != 0) {
+      throw StateError(_takeNativeError(error));
     }
-    final name = file.name.replaceFirst(RegExp(r'\.npy$'), '');
-    out[name] = parseNpy(Uint8List.fromList(file.content as List<int>));
+    items = itemsOut.value;
+    for (var i = 0; i < countOut.value; i += 1) {
+      final itemPtr = items + i;
+      final item = itemPtr.ref;
+      if (item.name == ffi.nullptr) {
+        throw const FormatException('voices npz entry is missing a name');
+      }
+      final name = item.name.cast<Utf8>().toDartString();
+      final array = _npyFromAbi(item);
+      item.data = ffi.nullptr;
+      out.remove(name)?.close();
+      out[name] = array;
+    }
+    if (out.isEmpty) {
+      throw FormatException('voices npz contains no npy arrays: $path');
+    }
+    return out;
+  } catch (_) {
+    for (final value in out.values) {
+      value.close();
+    }
+    rethrow;
+  } finally {
+    if (items != ffi.nullptr) {
+      native.kokFreeNpz(items, countOut.value);
+    }
+    calloc
+      ..free(pathPtr)
+      ..free(itemsOut)
+      ..free(countOut)
+      ..free(error);
   }
-  if (out.isEmpty) {
-    throw FormatException('voices npz contains no npy arrays: $path');
-  }
-  return out;
 }
 
 final class NpyArray {
-  NpyArray({required this.shape, required this.data});
+  NpyArray({required List<int> shape, required Float32List data})
+    : shape = List<int>.unmodifiable(shape),
+      _buffer = NativeTensorBuffer.float32(shape) {
+    final expected = _shapeSize(shape);
+    if (data.length != expected) {
+      _buffer.close();
+      throw FormatException(
+        'npy shape expects $expected float32 values, got ${data.length}',
+      );
+    }
+    _buffer.copyFrom(data);
+  }
+
+  NpyArray._native({
+    required List<int> shape,
+    required NativeTensorBuffer buffer,
+  }) : shape = List<int>.unmodifiable(shape),
+       _buffer = buffer;
 
   final List<int> shape;
-  final Float32List data;
+  final NativeTensorBuffer _buffer;
+  bool _closed = false;
 
-  Float32List row(int index) {
+  Float32List get data => _buffer.asFloat32List();
+
+  int get rowLength {
     if (shape.isEmpty) {
       throw StateError('voice array has no dimensions');
     }
+    return shape.skip(1).fold<int>(1, (a, b) => a * b);
+  }
+
+  Float32List row(int index) {
     final rows = shape.first;
-    final safeIndex = index.clamp(0, rows - 1);
-    final rowSize = shape.skip(1).fold<int>(1, (a, b) => a * b);
+    final safeIndex = index.clamp(0, rows - 1).toInt();
+    final rowSize = rowLength;
     final offset = safeIndex * rowSize;
     return Float32List.sublistView(data, offset, offset + rowSize);
   }
+
+  void copyRowTo(NativeTensorBuffer target, int index) {
+    final rowSize = rowLength;
+    _copyKokoroRow(
+      target: target,
+      voiceArray: this,
+      voiceRowLength: rowSize,
+      index: index < 0 ? 0 : index,
+    );
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    _buffer.close();
+  }
+}
+
+NpyArray _npyFromAbi(native.NpyAbi value) {
+  if (value.rank < 0 || value.byteLength < 0) {
+    throw const FormatException('invalid native npy metadata');
+  }
+  if (value.byteLength > 0 && value.data == ffi.nullptr) {
+    throw const FormatException('native npy data pointer is null');
+  }
+  final shape = value.rank == 0
+      ? const <int>[]
+      : List<int>.generate(value.rank, (index) => value.shape[index]);
+  return NpyArray._native(
+    shape: shape,
+    buffer: NativeTensorBuffer.adopt(
+      dtype: RuntimeTensorDataType.float32,
+      shape: shape,
+      byteLength: value.byteLength,
+      pointer: value.data,
+    ),
+  );
+}
+
+int _shapeSize(List<int> shape) {
+  var size = 1;
+  for (final dim in shape) {
+    if (dim < 0) {
+      throw FormatException('npy shape contains a negative dimension');
+    }
+    size *= dim;
+  }
+  return size;
 }
 
 NpyArray parseNpy(Uint8List bytes) {
-  if (bytes.length < 10 ||
-      bytes[0] != 0x93 ||
-      ascii.decode(bytes.sublist(1, 6)) != 'NUMPY') {
-    throw FormatException('invalid npy header');
+  final input = bytes.isEmpty ? ffi.nullptr : calloc<ffi.Uint8>(bytes.length);
+  final out = calloc<native.NpyAbi>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    if (input != ffi.nullptr) {
+      input.asTypedList(bytes.length).setAll(0, bytes);
+    }
+    final status = native.kokNpy(input, bytes.length, out, error);
+    if (status != 0) {
+      throw StateError(_takeNativeError(error));
+    }
+    final array = _npyFromAbi(out.ref);
+    out.ref.data = ffi.nullptr;
+    return array;
+  } finally {
+    native.kokFreeNpy(out);
+    if (input != ffi.nullptr) {
+      calloc.free(input);
+    }
+    calloc
+      ..free(out)
+      ..free(error);
   }
-  final major = bytes[6];
-  final headerLen = major == 1
-      ? ByteData.sublistView(bytes, 8, 10).getUint16(0, Endian.little)
-      : ByteData.sublistView(bytes, 8, 12).getUint32(0, Endian.little);
-  final headerStart = major == 1 ? 10 : 12;
-  final header = ascii.decode(
-    bytes.sublist(headerStart, headerStart + headerLen),
-  );
-  if (!header.contains("'descr': '<f4'") &&
-      !header.contains('"descr": "<f4"')) {
-    throw FormatException(
-      'only little-endian float32 npy arrays are supported',
-    );
-  }
-  if (header.contains("'fortran_order': True") ||
-      header.contains('"fortran_order": true')) {
-    throw FormatException('fortran-order npy arrays are not supported');
-  }
-  final shapeMatch =
-      RegExp(r"'shape': \(([^)]*)\)").firstMatch(header) ??
-      RegExp(r'"shape": \[([^\]]*)\]').firstMatch(header);
-  if (shapeMatch == null) {
-    throw FormatException('npy shape missing');
-  }
-  final shape = shapeMatch
-      .group(1)!
-      .split(',')
-      .map((part) => part.trim())
-      .where((part) => part.isNotEmpty)
-      .map(int.parse)
-      .toList(growable: false);
-  final dataStart = headerStart + headerLen;
-  final dataBytes = Uint8List.sublistView(bytes, dataStart);
-  return NpyArray(
-    shape: shape,
-    data: Float32List.view(dataBytes.buffer, dataBytes.offsetInBytes),
-  );
 }
 
 Uint8List encodeWavPcm16(Float32List audio, int sampleRate) {
-  final pcm = Int16List(audio.length);
-  for (var i = 0; i < audio.length; i++) {
-    final clipped = audio[i].clamp(-1.0, 1.0);
-    pcm[i] = (clipped * 32767.0).round();
+  final samples = audio.isEmpty ? ffi.nullptr : calloc<ffi.Float>(audio.length);
+  final byteLength = calloc<ffi.IntPtr>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  ffi.Pointer<ffi.Void> wav = ffi.nullptr;
+  try {
+    if (samples != ffi.nullptr) {
+      samples.asTypedList(audio.length).setAll(0, audio);
+    }
+    wav = native.audioWavPcm16(
+      samples,
+      audio.length,
+      sampleRate,
+      byteLength,
+      error,
+    );
+    if (wav == ffi.nullptr) {
+      throw StateError(_takeNativeError(error));
+    }
+    return Uint8List.fromList(
+      wav.cast<ffi.Uint8>().asTypedList(byteLength.value),
+    );
+  } finally {
+    if (wav != ffi.nullptr) {
+      native.freeBuf(wav);
+    }
+    if (samples != ffi.nullptr) {
+      calloc.free(samples);
+    }
+    calloc
+      ..free(byteLength)
+      ..free(error);
   }
-  final dataBytes = Uint8List.view(pcm.buffer);
-  final out = BytesBuilder();
-  void writeAscii(String value) => out.add(ascii.encode(value));
-  void writeU16(int value) {
-    final b = ByteData(2)..setUint16(0, value, Endian.little);
-    out.add(Uint8List.view(b.buffer));
-  }
+}
 
-  void writeU32(int value) {
-    final b = ByteData(4)..setUint32(0, value, Endian.little);
-    out.add(Uint8List.view(b.buffer));
+Uint8List encodeWavPcm16Chunks(List<Float32List> chunks, int sampleRate) {
+  final byteLength = calloc<ffi.IntPtr>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  ffi.Pointer<ffi.Void> wav = ffi.nullptr;
+  try {
+    return _withNativeF32Chunks(chunks, (chunkPtrs, chunkLengths) {
+      wav = native.audioWavPcm16Chunks(
+        chunkPtrs,
+        chunkLengths,
+        chunks.length,
+        sampleRate,
+        byteLength,
+        error,
+      );
+      if (wav == ffi.nullptr) {
+        throw StateError(_takeNativeError(error));
+      }
+      return Uint8List.fromList(
+        wav.cast<ffi.Uint8>().asTypedList(byteLength.value),
+      );
+    });
+  } finally {
+    if (wav != ffi.nullptr) {
+      native.freeBuf(wav);
+    }
+    calloc
+      ..free(byteLength)
+      ..free(error);
   }
+}
 
-  writeAscii('RIFF');
-  writeU32(36 + dataBytes.length);
-  writeAscii('WAVEfmt ');
-  writeU32(16);
-  writeU16(1);
-  writeU16(1);
-  writeU32(sampleRate);
-  writeU32(sampleRate * 2);
-  writeU16(2);
-  writeU16(16);
-  writeAscii('data');
-  writeU32(dataBytes.length);
-  out.add(dataBytes);
-  return out.toBytes();
+Uint8List _encodeWavPcm16TensorChunks(
+  List<_KokoroAudioChunk> chunks,
+  int sampleRate,
+) {
+  final chunkPtrs = chunks.isEmpty
+      ? ffi.nullptr
+      : calloc<ffi.Pointer<ffi.Float>>(chunks.length);
+  final chunkLengths = chunks.isEmpty
+      ? ffi.nullptr
+      : calloc<ffi.IntPtr>(chunks.length);
+  final byteLength = calloc<ffi.IntPtr>();
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  ffi.Pointer<ffi.Void> wav = ffi.nullptr;
+  try {
+    for (var i = 0; i < chunks.length; i += 1) {
+      final tensor = chunks[i].tensor;
+      if (tensor == null) {
+        chunkLengths[i] = 0;
+        chunkPtrs[i] = ffi.nullptr;
+        continue;
+      }
+      if (tensor.dtype != RuntimeTensorDataType.float32) {
+        throw StateError('Kokoro audio output dtype is ${tensor.dtype.name}.');
+      }
+      final sampleCount = tensor.bytes.lengthInBytes ~/ 4;
+      final data = tensor.nativeData ?? ffi.nullptr;
+      if (sampleCount > 0 && data == ffi.nullptr) {
+        throw StateError('Kokoro audio output is not native-backed.');
+      }
+      chunkLengths[i] = sampleCount;
+      chunkPtrs[i] = sampleCount == 0 ? ffi.nullptr : data.cast<ffi.Float>();
+    }
+    wav = native.audioWavPcm16Chunks(
+      chunkPtrs,
+      chunkLengths,
+      chunks.length,
+      sampleRate,
+      byteLength,
+      error,
+    );
+    if (wav == ffi.nullptr) {
+      throw StateError(_takeNativeError(error));
+    }
+    return Uint8List.fromList(
+      wav.cast<ffi.Uint8>().asTypedList(byteLength.value),
+    );
+  } finally {
+    if (wav != ffi.nullptr) {
+      native.freeBuf(wav);
+    }
+    if (chunkPtrs != ffi.nullptr) {
+      calloc.free(chunkPtrs);
+    }
+    if (chunkLengths != ffi.nullptr) {
+      calloc.free(chunkLengths);
+    }
+    calloc
+      ..free(byteLength)
+      ..free(error);
+  }
+}
+
+void _copyKokoroRow({
+  required NativeTensorBuffer target,
+  required NpyArray voiceArray,
+  required int voiceRowLength,
+  required int index,
+}) {
+  final error = calloc<ffi.Pointer<ffi.Char>>();
+  try {
+    final status = native.kokRow(
+      target.nativeData.cast<ffi.Float>(),
+      target.byteLength ~/ 4,
+      voiceArray._buffer.nativeData.cast<ffi.Float>(),
+      voiceArray._buffer.byteLength ~/ 4,
+      voiceArray.shape.first,
+      voiceRowLength,
+      index,
+      error,
+    );
+    if (status != 0) {
+      throw StateError(_takeNativeError(error));
+    }
+  } finally {
+    calloc.free(error);
+  }
+}
+
+String _takeNativeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
+  final value = error.value;
+  if (value == ffi.nullptr) return 'Native call failed.';
+  try {
+    return value.cast<Utf8>().toDartString();
+  } finally {
+    native.freeStr(value);
+    error.value = ffi.nullptr;
+  }
 }

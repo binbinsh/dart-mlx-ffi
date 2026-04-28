@@ -19,3 +19,4 @@ export 'src/runtime/native_runtime.dart'
         NativeTensorBuffer;
 export 'src/runtime/onnx.dart';
 export 'src/runtime/runtime.dart';
+export 'src/runtime/runtime_deps.dart';

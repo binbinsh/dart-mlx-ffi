@@ -1,5 +1,21 @@
 export 'catalog.dart'
-    show TtsBackendCapability, TtsBackendCatalog, TtsBackendReadiness;
+    show
+        TtsBackendCapability,
+        TtsBackendCatalog,
+        TtsBackendOnnxTarget,
+        TtsBackendReadiness,
+        TtsBackendSourceAsset;
+export 'asset_audit.dart'
+    show TtsBackendAssetAudit, TtsBackendProviderAssetAudit;
+export 'onnx_components.dart'
+    show
+        TtsLoadedOnnxComponent,
+        TtsOnnxComponentBundle,
+        TtsOnnxComponentSmokeResult,
+        TtsOnnxComponentStatus,
+        outputSummaries,
+        smokeInputsFromOnnxMetadata,
+        smokeOnnxComponent;
 export 'loader.dart'
     show
         DartTtsRuntimeOptions,
