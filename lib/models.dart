@@ -11,6 +11,8 @@ export 'src/models/shared/embedding.dart';
 
 export 'src/models/cosyvoice2/cosyvoice2.dart';
 export 'src/models/cosyvoice2/cosyvoice2_llm_driver.dart';
+export 'src/models/cosyvoice2/cosyvoice2_mel.dart';
+export 'src/models/cosyvoice2/cosyvoice2_ras_sampler.dart';
 export 'src/models/cosyvoice2/qwen2_tokenizer.dart';
 export 'src/models/kokoro/kokoro.dart';
 export 'src/models/tts_backends/tts_backends.dart';

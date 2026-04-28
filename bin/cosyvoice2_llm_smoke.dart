@@ -21,7 +21,6 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dart_inference/models.dart';
-import 'package:dart_inference/src/models/cosyvoice2/cosyvoice2_ras_sampler.dart';
 
 void main(List<String> args) async {
   final opts = _parseArgs(args);
