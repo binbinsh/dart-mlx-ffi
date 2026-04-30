@@ -9,9 +9,8 @@ import 'bpe.dart';
 import 'config.dart';
 import 'mel.dart';
 import 'mrope.dart';
+import 'prompt.dart';
 import 'text_dec.dart';
-
-const String _asrTextTag = '<asr_text>';
 
 /// Result of an incremental streaming decode step.
 class AsrStreamDecodeResult {
@@ -169,8 +168,18 @@ final class Qwen3AsrRunner {
 
       // Build prompt token IDs with audio_pad placeholders.
       final promptIds = isFirst
-          ? _buildPromptTokens(nAudioTokens, locale: locale)
-          : _buildFollowupTokens(nAudioTokens, locale: locale);
+          ? buildQwen3AsrPromptTokens(
+              config,
+              _tokenizer,
+              nAudioTokens,
+              locale: locale,
+            )
+          : buildQwen3AsrFollowupTokens(
+              config,
+              _tokenizer,
+              nAudioTokens,
+              locale: locale,
+            );
       final promptLen = promptIds.length;
 
       // Prefill: embed, inject audio, run decoder.
@@ -207,7 +216,12 @@ final class Qwen3AsrRunner {
     final cache = _textDecoder.createCache();
     try {
       final nAudioTokens = audioFeatures.shape[1];
-      final promptIds = _buildPromptTokens(nAudioTokens, locale: locale);
+      final promptIds = buildQwen3AsrPromptTokens(
+        config,
+        _tokenizer,
+        nAudioTokens,
+        locale: locale,
+      );
       final promptLen = promptIds.length;
       final posIds = buildAsrPositionIds(0, promptLen);
       final logits = _prefill(promptIds, audioFeatures, posIds, cache);
@@ -322,7 +336,7 @@ final class Qwen3AsrRunner {
     generated.add(firstId);
 
     for (var step = 1; step <= maxNewTokens; step++) {
-      if (_detectRepetition(generated)) break;
+      if (detectQwen3AsrRepetition(generated)) break;
       final stepEmb = _textDecoder.embed([generated.last]);
       final stepPos = buildAsrPositionIds(position, 1);
       final stepOut = _textDecoder.forward(
@@ -343,92 +357,6 @@ final class Qwen3AsrRunner {
       position += 1;
     }
     return generated;
-  }
-
-  // ── Prompt building (placeholder token IDs) ──
-
-  /// First-chunk prompt: system + user turn with audio placeholders.
-  ///
-  /// Template:
-  ///   <|im_start|>system\n<|im_end|>\n
-  ///   <|im_start|>user\n<|audio_start|><|audio_pad|>*N<|audio_end|><|im_end|>\n
-  ///   <|im_start|>assistant\n[language {lang}<asr_text>]
-  List<int> _buildPromptTokens(int nAudioTokens, {required String locale}) {
-    final tokens = <int>[];
-    // System message (empty context, matching reference).
-    tokens.add(config.imStartTokenId);
-    tokens.addAll(_tokenizer.encode('system\n'));
-    tokens.add(config.imEndTokenId);
-    tokens.add(config.newlineTokenId);
-    // User message with audio placeholders.
-    tokens.add(config.imStartTokenId);
-    tokens.addAll(_tokenizer.encode('user\n'));
-    tokens.add(config.audioStartTokenId);
-    for (var i = 0; i < nAudioTokens; i++) {
-      tokens.add(config.audioPadTokenId);
-    }
-    tokens.add(config.audioEndTokenId);
-    tokens.add(config.imEndTokenId);
-    tokens.add(config.newlineTokenId);
-    // Assistant prefix.
-    tokens.add(config.imStartTokenId);
-    tokens.addAll(_tokenizer.encode('assistant\n'));
-    // Optional language forcing.
-    final langTokens = _languageForcingTokens(locale);
-    if (langTokens != null) tokens.addAll(langTokens);
-    return tokens;
-  }
-
-  /// Follow-up prompt: close previous assistant, new user turn with audio.
-  ///
-  /// Template:
-  ///   <|im_end|>\n<|im_start|>user\n
-  ///   <|audio_start|><|audio_pad|>*N<|audio_end|><|im_end|>\n
-  ///   <|im_start|>assistant\n[language {lang}<asr_text>]
-  List<int> _buildFollowupTokens(int nAudioTokens, {required String locale}) {
-    final tokens = <int>[];
-    tokens.add(config.imEndTokenId);
-    tokens.add(config.newlineTokenId);
-    tokens.add(config.imStartTokenId);
-    tokens.addAll(_tokenizer.encode('user\n'));
-    tokens.add(config.audioStartTokenId);
-    for (var i = 0; i < nAudioTokens; i++) {
-      tokens.add(config.audioPadTokenId);
-    }
-    tokens.add(config.audioEndTokenId);
-    tokens.add(config.imEndTokenId);
-    tokens.add(config.newlineTokenId);
-    tokens.add(config.imStartTokenId);
-    tokens.addAll(_tokenizer.encode('assistant\n'));
-    final langTokens = _languageForcingTokens(locale);
-    if (langTokens != null) tokens.addAll(langTokens);
-    return tokens;
-  }
-
-  /// Build language forcing suffix tokens, or null if auto-detect.
-  List<int>? _languageForcingTokens(String locale) {
-    final normalized = locale.trim().toLowerCase();
-    final langName = switch (normalized) {
-      '' || 'auto' => null,
-      'zh' || 'zh-cn' || 'zh-hans' => 'Chinese',
-      'zh-tw' || 'zh-hant' => 'Chinese',
-      'en' || 'en-us' || 'en-gb' => 'English',
-      'ja' || 'ja-jp' => 'Japanese',
-      'ko' || 'ko-kr' => 'Korean',
-      'de' || 'de-de' => 'German',
-      'fr' || 'fr-fr' => 'French',
-      'es' || 'es-es' || 'es-419' => 'Spanish',
-      'ru' || 'ru-ru' => 'Russian',
-      'ar' || 'ar-eg' => 'Arabic',
-      'hi' || 'hi-in' => 'Hindi',
-      'it' || 'it-it' => 'Italian',
-      'pt' || 'pt-br' || 'pt-pt' => 'Portuguese',
-      'tr' || 'tr-tr' => 'Turkish',
-      'nl' || 'nl-nl' => 'Dutch',
-      _ => locale.trim(),
-    };
-    if (langName == null) return null;
-    return _tokenizer.encode('language $langName$_asrTextTag');
   }
 
   // ── Sampling & EOS ──
@@ -454,41 +382,4 @@ final class Qwen3AsrRunner {
       tensor.close();
     }
   }
-}
-
-/// Detect repetitive decode patterns to halt hallucination loops.
-///
-/// Two-stage check:
-/// 1. Single token repeated > 20 consecutive times.
-/// 2. N-gram pattern (length 2–10) repeated > threshold/patternLen times.
-bool _detectRepetition(List<int> tokens) {
-  if (tokens.length < 20) return false;
-  // Stage 1: single-token run.
-  final last = tokens.last;
-  var run = 0;
-  for (var i = tokens.length - 1; i >= 0 && tokens[i] == last; i--) {
-    run++;
-  }
-  if (run > 20) return true;
-  // Stage 2: n-gram repetition.
-  for (var n = 2; n <= 10 && n * 3 <= tokens.length; n++) {
-    final pattern = tokens.sublist(tokens.length - n);
-    var repeats = 0;
-    for (var i = tokens.length - n; i >= n; i -= n) {
-      var match = true;
-      for (var j = 0; j < n; j++) {
-        if (tokens[i - n + j] != pattern[j]) {
-          match = false;
-          break;
-        }
-      }
-      if (match) {
-        repeats++;
-      } else {
-        break;
-      }
-    }
-    if (repeats >= (30 ~/ n) + 1) return true;
-  }
-  return false;
 }

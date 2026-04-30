@@ -432,8 +432,14 @@ Future<bool> _resolveMetalSupport(
 
 Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
   final dependencies = <Uri>{};
-  final runtimeOverride = _runtimeEnvOverrideFile(packageRoot.toFilePath());
-  if (runtimeOverride != null && runtimeOverride.existsSync()) {
+  final packageRootPath = packageRoot.toFilePath();
+  final defaultRuntimeOverride = File(
+    '$packageRootPath/.dart_mlx_runtime_env.json',
+  );
+  dependencies.add(defaultRuntimeOverride.uri);
+  final runtimeOverride = _runtimeEnvOverrideFile(packageRootPath);
+  if (runtimeOverride != null &&
+      runtimeOverride.path != defaultRuntimeOverride.path) {
     dependencies.add(runtimeOverride.uri);
   }
   for (final relativePath in const [

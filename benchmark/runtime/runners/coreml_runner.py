@@ -15,6 +15,7 @@ def main() -> None:
     parser.add_argument("--iters", default="5")
     parser.add_argument("--num-threads")
     parser.add_argument("--coreml-mode", choices=["decode", "prefill"])
+    parser.add_argument("--coreml-compute-units")
     args = parser.parse_args()
     _run_dart(args, "coreml")
 
@@ -30,12 +31,16 @@ def _run_dart(args, engine: str) -> None:
         engine,
         "--artifact",
         args.artifact,
+        "--task",
+        args.task or "tensor",
         "--input-json",
         args.input_json,
         "--warmup",
         args.warmup,
         "--iters",
         args.iters,
+        "--max-tokens",
+        args.max_tokens,
         "--platform",
         args.platform,
     ]
@@ -47,6 +52,8 @@ def _run_dart(args, engine: str) -> None:
         cmd.extend(["--hf-cache-root", args.hf_cache_root])
     if args.coreml_mode:
         cmd.extend(["--coreml-mode", args.coreml_mode])
+    if args.coreml_compute_units:
+        cmd.extend(["--coreml-compute-units", args.coreml_compute_units])
     subprocess.run(cmd, check=True)
 
 

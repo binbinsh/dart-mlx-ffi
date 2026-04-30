@@ -1,8 +1,8 @@
 #include "runtime_bridge.h"
 #include "options.h"
-
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -21,9 +21,12 @@
 #endif
 #endif
 
+#if DMF_ENABLE_ORT && defined(__ANDROID__)
+extern "C" OrtStatus* OrtSessionOptionsAppendExecutionProvider_Nnapi(
+    OrtSessionOptions* options, uint32_t nnapi_flags);
+#endif
 #if DMF_ENABLE_ORT
 namespace {
-
 using json = nlohmann::json;
 
 ONNXTensorElementDataType ort_dtype(int32_t dtype) {
@@ -112,8 +115,25 @@ std::vector<std::string> available_providers(
 bool contains_provider(
     const std::vector<std::string>& providers,
     const std::string& provider) {
-  return std::find(providers.begin(), providers.end(), provider) !=
-         providers.end();
+  const std::string expected = lower(provider);
+  for (const auto& item : providers) {
+    if (lower(item) == expected) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string matching_provider(
+    const std::vector<std::string>& providers,
+    const std::string& provider) {
+  const std::string expected = lower(provider);
+  for (const auto& item : providers) {
+    if (lower(item) == expected) {
+      return item;
+    }
+  }
+  return "";
 }
 
 std::vector<std::string> session_names(
@@ -169,26 +189,35 @@ std::string canonical_provider(std::string provider) {
   if (value == "qnn" || value == "npu") {
     return "QNNExecutionProvider";
   }
+  if (value == "nnapi" || value == "androidnnapi") {
+    return "NNAPIExecutionProvider";
+  }
   if (value == "xnnpack") {
     return "XnnpackExecutionProvider";
   }
   return provider;
 }
 
-std::string choose_provider(
-    const char* options_json,
-    const std::vector<std::string>& providers) {
+std::string requested_provider(const char* options_json) {
   std::string requested =
       dmf_option_string(options_json, "provider",
           dmf_option_string(options_json, "executionProvider",
               dmf_option_string(options_json, "ortProvider")));
   if (!requested.empty()) {
-    return canonical_provider(requested);
+    return requested;
   }
-  if (!dmf_options_contains_token(options_json, "gpu") &&
-      !dmf_options_contains_token(options_json, "npu")) {
-    return "CPUExecutionProvider";
+  if (dmf_options_contains_token(options_json, "npu")) {
+    return "npu";
   }
+  if (dmf_options_contains_token(options_json, "gpu")) {
+    return "gpu";
+  }
+  return "cpu";
+}
+
+std::string choose_provider(
+    const char* options_json,
+    const std::vector<std::string>& providers) {
   const std::vector<std::string> gpu_order = {
       "CUDAExecutionProvider",
       "TensorrtExecutionProvider",
@@ -200,16 +229,66 @@ std::string choose_provider(
   };
   const std::vector<std::string> npu_order = {
       "QNNExecutionProvider",
+      "NNAPIExecutionProvider",
       "OpenVINOExecutionProvider",
+      "XnnpackExecutionProvider",
   };
+  std::string requested =
+      dmf_option_string(options_json, "provider",
+          dmf_option_string(options_json, "executionProvider",
+              dmf_option_string(options_json, "ortProvider")));
+  if (!requested.empty()) {
+    const std::string requested_value = lower(requested);
+    if (requested_value == "gpu" || requested_value == "npu") {
+      const auto& requested_order =
+          requested_value == "npu" ? npu_order : gpu_order;
+      for (const auto& provider : requested_order) {
+        const std::string matched = matching_provider(providers, provider);
+        if (!matched.empty()) {
+          return matched;
+        }
+      }
+    }
+    const std::string canonical = canonical_provider(requested);
+    const std::string matched = matching_provider(providers, canonical);
+    return matched.empty() ? canonical : matched;
+  }
+  if (!dmf_options_contains_token(options_json, "gpu") &&
+      !dmf_options_contains_token(options_json, "npu")) {
+    return "CPUExecutionProvider";
+  }
   const auto& order =
       dmf_options_contains_token(options_json, "npu") ? npu_order : gpu_order;
   for (const auto& provider : order) {
-    if (contains_provider(providers, provider)) {
-      return provider;
+    const std::string matched = matching_provider(providers, provider);
+    if (!matched.empty()) {
+      return matched;
     }
   }
   return "CPUExecutionProvider";
+}
+
+std::string provider_fallback_reason(
+    const std::string& requested,
+    const std::string& selected,
+    const std::string& effective) {
+  const std::string value = lower(requested);
+  if (selected != effective) {
+    return "selected_provider_unavailable_or_append_failed";
+  }
+  const std::string selected_value = lower(selected);
+  if (value == "npu" && selected_value != "qnnexecutionprovider" &&
+      selected_value != "nnapiexecutionprovider") {
+    return "generic_npu_fallback";
+  }
+  if (value == "gpu" && selected == "XnnpackExecutionProvider") {
+    return "generic_gpu_fallback";
+  }
+  if (value != "cpu" && value != "gpu" && value != "npu" &&
+      lower(canonical_provider(requested)) != selected_value) {
+    return "requested_provider_unavailable";
+  }
+  return "";
 }
 
 bool append_provider(
@@ -219,9 +298,13 @@ bool append_provider(
     const std::vector<std::string>& providers,
     const char* options_json,
     bool* appended,
+    std::string* append_error_out,
     std::string* error) {
   if (appended != nullptr) {
     *appended = false;
+  }
+  if (append_error_out != nullptr) {
+    append_error_out->clear();
   }
   if (provider.empty() || provider == "CPUExecutionProvider") {
     return true;
@@ -234,10 +317,35 @@ bool append_provider(
     return true;
   }
   std::string append_error;
+#if defined(__ANDROID__)
+  if (lower(provider) == "nnapiexecutionprovider") {
+    const uint32_t nnapi_flags = static_cast<uint32_t>(
+        std::max(0, dmf_option_int(options_json, "nnapiFlags", 0)));
+    if (!ok(api,
+            OrtSessionOptionsAppendExecutionProvider_Nnapi(options, nnapi_flags),
+            &append_error)) {
+      if (append_error_out != nullptr) {
+        *append_error_out = append_error;
+      }
+      if (dmf_option_bool(options_json, "requireProvider", false)) {
+        *error = append_error;
+        return false;
+      }
+      return true;
+    }
+    if (appended != nullptr) {
+      *appended = true;
+    }
+    return true;
+  }
+#endif
   if (!ok(api,
           api->SessionOptionsAppendExecutionProvider(
               options, provider.c_str(), nullptr, nullptr, 0),
           &append_error)) {
+    if (append_error_out != nullptr) {
+      *append_error_out = append_error;
+    }
     if (dmf_option_bool(options_json, "requireProvider", false)) {
       *error = append_error;
       return false;
@@ -275,6 +383,10 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
       OrtAllocator* allocator,
       OrtMemoryInfo* memory_info,
       std::string provider,
+      std::string requested_provider,
+      std::string selected_provider,
+      std::string provider_fallback_reason,
+      std::string provider_append_error,
       std::vector<std::string> available_providers,
       std::vector<std::string> input_names,
       std::vector<std::string> output_names,
@@ -287,6 +399,10 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
         allocator_(allocator),
         memory_info_(memory_info),
         provider_(std::move(provider)),
+        requested_provider_(std::move(requested_provider)),
+        selected_provider_(std::move(selected_provider)),
+        provider_fallback_reason_(std::move(provider_fallback_reason)),
+        provider_append_error_(std::move(provider_append_error)),
         available_providers_(std::move(available_providers)),
         input_names_(std::move(input_names)),
         output_names_(std::move(output_names)),
@@ -447,13 +563,34 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
   }
 
   std::string DiagnosticsJson() const override {
-    return std::string("{\"engine\":\"onnx\",\"provider\":\"") +
-           dmf_json_escape(provider_) + "\",\"provider_appended\":" +
+    std::string out = std::string("{\"engine\":\"onnx\",\"provider\":\"") +
+           dmf_json_escape(provider_) + "\",\"effective_provider\":\"" +
+           dmf_json_escape(provider_) + "\",\"requested_provider\":\"" +
+           dmf_json_escape(requested_provider_) + "\",\"selected_provider\":\"" +
+           dmf_json_escape(selected_provider_) + "\",\"provider_appended\":" +
            (provider_appended_ ? "true" : "false") + ",\"num_threads\":" +
            std::to_string(num_threads_) + ",\"available_providers\":" +
            dmf_json_string_array(available_providers_) +
            ",\"input_names\":" + dmf_json_string_array(input_names_) +
-           ",\"output_names\":" + dmf_json_string_array(output_names_) + "}";
+           ",\"output_names\":" + dmf_json_string_array(output_names_);
+    if (!provider_append_error_.empty()) {
+      out += ",\"provider_append_error\":\"" +
+             dmf_json_escape(provider_append_error_) + "\"";
+    }
+    if (!provider_fallback_reason_.empty()) {
+      out += ",\"provider_fallback\":{\"requested\":\"" +
+             dmf_json_escape(requested_provider_) + "\",\"selected\":\"" +
+             dmf_json_escape(selected_provider_) + "\",\"effective\":\"" +
+             dmf_json_escape(provider_) + "\",\"reason\":\"" +
+             dmf_json_escape(provider_fallback_reason_) + "\"";
+      if (!provider_append_error_.empty()) {
+        out += ",\"append_error\":\"" +
+               dmf_json_escape(provider_append_error_) + "\"";
+      }
+      out += "}";
+    }
+    out += "}";
+    return out;
   }
 
  private:
@@ -481,6 +618,10 @@ class OrtSessionWrapper final : public DmfRuntimeSession {
   OrtAllocator* allocator_;
   OrtMemoryInfo* memory_info_;
   std::string provider_;
+  std::string requested_provider_;
+  std::string selected_provider_;
+  std::string provider_fallback_reason_;
+  std::string provider_append_error_;
   std::vector<std::string> available_providers_;
   std::vector<std::string> input_names_;
   std::vector<std::string> output_names_;
@@ -524,8 +665,10 @@ std::unique_ptr<OrtSessionWrapper> create_ort_session(
     *error = provider_error;
     return nullptr;
   }
+  const std::string requested = requested_provider(options_json);
   const std::string provider = choose_provider(options_json, providers);
   bool provider_appended = false;
+  std::string provider_append_error;
   if (!append_provider(
           api,
           options,
@@ -533,6 +676,7 @@ std::unique_ptr<OrtSessionWrapper> create_ort_session(
           providers,
           options_json,
           &provider_appended,
+          &provider_append_error,
           error)) {
     api->ReleaseSessionOptions(options);
     api->ReleaseEnv(env);
@@ -542,6 +686,8 @@ std::unique_ptr<OrtSessionWrapper> create_ort_session(
       provider == "CPUExecutionProvider" || provider_appended
       ? provider
       : "CPUExecutionProvider";
+  const std::string fallback_reason =
+      provider_fallback_reason(requested, provider, effective_provider);
 #if defined(_WIN32)
   const std::wstring wide_path = utf8_to_wide(model_path);
   const auto* ort_path = wide_path.c_str();
@@ -594,6 +740,10 @@ std::unique_ptr<OrtSessionWrapper> create_ort_session(
       allocator,
       memory_info,
       effective_provider,
+      requested,
+      provider,
+      fallback_reason,
+      provider_append_error,
       providers,
       std::move(input_names),
       std::move(output_names),

@@ -1,5 +1,5 @@
 version: 1
-source_catalog: benchmark/runtime/conversion_recipes.yaml
+source_catalog: benchmark/runtime/hf_artifacts.yaml
 defaults:
   task: text
   input_json: benchmark/runtime/fixtures/tiny_input.json
@@ -24,48 +24,866 @@ defaults:
     android:
       delegate: xnnpack
 models:
+  qwen2_5:
+    family: Qwen2.5
+    source_model: Qwen/Qwen2.5-0.5B-Instruct
+    task: text
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/Qwen2.5-0.5B-Instruct-4bit.mlmodelc
+        source_uri: hf://finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/Qwen2.5-0.5B-Instruct-4bit.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/Qwen2.5-0.5B-Instruct-4bit.mlmodelc
+        source_uri: hf://finnvoorhees/coreml-Qwen2.5-0.5B-Instruct-4bit/Qwen2.5-0.5B-Instruct-4bit.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/Qwen2.5-0.5B-Instruct/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/Qwen2.5-0.5B-Instruct/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/Qwen2.5-0.5B-Instruct/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/Qwen2.5-0.5B-Instruct/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: litert
+        artifact: hf://litert-community/Qwen2.5-0.5B-Instruct/Qwen2.5-0.5B-Instruct_seq128_q8_ekv1280.tflite
+        source_uri: hf://litert-community/Qwen2.5-0.5B-Instruct/Qwen2.5-0.5B-Instruct_seq128_q8_ekv1280.tflite
+        artifact_source: huggingface
+        delegate: xnnpack
+        baseline_engine: litert
+  qwen3_5:
+    family: Qwen3.5
+    source_model: Qwen/Qwen3.5-0.8B
+    task: text
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        source_uri: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        source_uri: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/Qwen3.5-0.8B-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        source_uri: hf://onnx-community/Qwen3.5-0.8B-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/Qwen3.5-0.8B-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        source_uri: hf://onnx-community/Qwen3.5-0.8B-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: litert
+        artifact: hf://Yoursmiling/Qwen3.5-0.8B-LiteRT/model_multimodal.litertlm
+        source_uri: hf://Yoursmiling/Qwen3.5-0.8B-LiteRT/model_multimodal.litertlm
+        artifact_source: huggingface
+        delegate: xnnpack
+        baseline_engine: litert
   paddle_ocr_vl:
+    family: PaddleOCR-VL
     source_model: PaddlePaddle/PaddleOCR-VL-1.5
     task: vlm
+    artifact_coverage: all_platform_staging
+    required_fixtures:
+    - text_prompt
+    - image
+    platforms:
+      ios:
+        engine: coreml
+        artifact: benchmark/artifacts_local/converted/paddle_ocr_vl/coreml/pipeline.json
+        artifact_source: converted
+        source_uri: converted://paddle_ocr_vl/coreml
+        converted_from: PaddlePaddle/PaddleOCR-VL-1.5
+        conversion_report: benchmark/artifacts_local/converted/paddle_ocr_vl/coreml/conversion_record.json
+        unblock_platform: true
+        task: vlm
+        artifact_health_report: benchmark/artifacts_local/converted/paddle_ocr_vl/coreml/artifact_health_ios.json
+        artifact_health_passed: true
+      macos:
+        engine: coreml
+        artifact: benchmark/artifacts_local/converted/paddle_ocr_vl/coreml/pipeline.json
+        artifact_source: converted
+        source_uri: converted://paddle_ocr_vl/coreml
+        converted_from: PaddlePaddle/PaddleOCR-VL-1.5
+        conversion_report: benchmark/artifacts_local/converted/paddle_ocr_vl/coreml/conversion_record.json
+        unblock_platform: true
+        task: vlm
+        artifact_health_report: benchmark/artifacts_local/converted/paddle_ocr_vl/coreml/artifact_health_macos.json
+        artifact_health_passed: true
+      windows:
+        engine: onnx
+        artifact: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        source_uri: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        source_uri: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: onnx
+        artifact: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        source_uri: hf://lbm364dl/PaddleOCR-VL-1.5-ONNX/onnx/decoder_model_merged.onnx
+        artifact_source: huggingface
+        fallback_from:
+        - litert
+        delegate: xnnpack
+        baseline_engine: onnx
+    blocked_engines:
+      android:
+        litert: Converter exited with code 1. See benchmark/artifacts_local/converted/paddle_ocr_vl/litert/conversion.log.
+    blocked_engine_reports:
+      android:
+        litert: benchmark/artifacts_local/converted/paddle_ocr_vl/litert/conversion_record.json
+    blocked_engine_failure_classes:
+      android:
+        litert: onnx_invalid_subgraph_constant_binding
+    blocked_engine_failure_reasons:
+      android:
+        litert: The ONNX artifact has If-subgraph Constant tensor bindings that are
+          not valid for direct onnx2tf/LiteRT conversion; use the ONNX Runtime artifact
+          as-is or re-export a LiteRT-specific graph.
+    blocked_engine_logs:
+      android:
+        litert: benchmark/artifacts_local/converted/paddle_ocr_vl/litert/conversion.log
+  qwen3_asr:
+    family: Qwen3-ASR
+    source_model: Qwen/Qwen3-ASR-1.7B
+    task: audio
+    artifact_coverage: all_platform_staging
+    required_fixtures:
+    - audio
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://UniMocha/Qwen3-ASR-1.7B-CoreML-INT8/.
+        source_uri: hf://UniMocha/Qwen3-ASR-1.7B-CoreML-INT8/.
+        artifact_source: huggingface
+        ios_device_smoke: true
+        ios_smoke_build_mode: debug
+        ios_smoke_timeout_seconds: 3600
+        ios_smoke_wait_for_artifact_seconds: 600
+        coreml_compute_units: cpuAndGPU
+        artifact_health_report: benchmark/out_local/runtime/qwen3_asr/ios/coreml_device_smoke_cpu_gpu.json
+        artifact_health_passed: true
+        ane_artifact_health_report: benchmark/out_local/runtime/qwen3_asr/ios/coreml_device_smoke_local.json
+        ane_artifact_health_passed: false
+        ane_failure_class: coreml_ane_compile_failed
+        baseline_engine: mlx
+      macos:
+        engine: coreml
+        artifact: hf://UniMocha/Qwen3-ASR-1.7B-CoreML-INT8/.
+        source_uri: hf://UniMocha/Qwen3-ASR-1.7B-CoreML-INT8/.
+        artifact_source: huggingface
+        coreml_compute_units: cpuAndGPU
+        artifact_health_report: benchmark/out_local/runtime/qwen3_asr/macos/coreml_health_cpu_gpu.json
+        artifact_health_passed: true
+        baseline_engine: mlx
+      windows:
+        engine: onnx
+        artifact: hf://andrewleech/qwen3-asr-1.7b-onnx/.
+        source_uri: hf://andrewleech/qwen3-asr-1.7b-onnx/.
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://andrewleech/qwen3-asr-1.7b-onnx/.
+        source_uri: hf://andrewleech/qwen3-asr-1.7b-onnx/.
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: onnx
+        artifact: hf://andrewleech/qwen3-asr-1.7b-onnx/.
+        source_uri: hf://andrewleech/qwen3-asr-1.7b-onnx/.
+        artifact_source: huggingface
+        android_device_smoke: true
+        android_smoke_build_mode: debug
+        android_smoke_timeout_seconds: 7200
+        artifact_health_report: benchmark/out_local/runtime/qwen3_asr/android/onnx_device_smoke_provider_npu_nnapi_append.json
+        artifact_health_passed: true
+        artifact_health_peak_memory_bytes: 3663062016
+        observed_provider: NnapiExecutionProvider
+        observed_provider_appended: true
+        fallback_from:
+        - litert
+        provider: npu
+        baseline_engine: onnx
+    blocked_engines:
+      android:
+        litert: Qwen3-ASR decoder LiteRT conversion expands ORT int4 MatMulNBits
+          weights beyond TensorFlow/TFLite single-graph protobuf limits; Android
+          remains on the ONNX component runner until a chunked decoder pipeline
+          or native MatMulNBits Android runtime passes matrix gates.
+    blocked_engine_failure_classes:
+      android:
+        litert: litert_decoder_graphdef_limit
+    blocked_engine_failure_reasons:
+      android:
+        litert: The encoder can be converted to LiteRT, but decoder_init/decoder_step
+          require ORT MatMulNBits dequantization or chunked partitioning. The current
+          full decoder expansion trips TensorFlow/TFLite protobuf size limits, so
+          Android production remains ONNX until the chunked decoder pipeline validates.
+    blocked_engine_reports:
+      android:
+        litert: benchmark/artifacts_local/converted/qwen3_asr/litert/conversion_record.json
+  kitten_tts:
+    family: KittenTTS
+    source_model: KittenML/kitten-tts-mini-0.8
+    task: tts
     artifact_coverage: partial
-    platforms: {}
-    blocked_platforms:
-      android: Converter exited with code 134. See benchmark/artifacts/converted/paddle_ocr_vl/litert/conversion.log.
-    blocked_platform_reports:
-      android: benchmark/artifacts/converted/paddle_ocr_vl/litert/conversion_record.json
-    blocked_platform_failure_classes:
-      android: exporter_runtime_crash
-    blocked_platform_failure_reasons:
-      android: Exporter crashed due to LLVM command-line option collision.
-    blocked_platform_logs:
-      android: benchmark/artifacts/converted/paddle_ocr_vl/litert/conversion.log
+    required_fixtures:
+    - text_prompt
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://alexwengg/kittentts-coreml/mini/kittentts_mini_5s.mlmodelc
+        source_uri: hf://alexwengg/kittentts-coreml/mini/kittentts_mini_5s.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: mlx
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://alexwengg/kittentts-coreml/mini/kittentts_mini_5s.mlmodelc
+        source_uri: hf://alexwengg/kittentts-coreml/mini/kittentts_mini_5s.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: mlx
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/KittenTTS-Mini-v0.8-ONNX/onnx/model.onnx
+        source_uri: hf://onnx-community/KittenTTS-Mini-v0.8-ONNX/onnx/model.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/KittenTTS-Mini-v0.8-ONNX/onnx/model.onnx
+        source_uri: hf://onnx-community/KittenTTS-Mini-v0.8-ONNX/onnx/model.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: onnx
+        artifact: hf://onnx-community/KittenTTS-Mini-v0.8-ONNX/onnx/model.onnx
+        source_uri: hf://onnx-community/KittenTTS-Mini-v0.8-ONNX/onnx/model.onnx
+        artifact_source: huggingface
+        fallback_from:
+        - litert
+        delegate: xnnpack
+        baseline_engine: onnx
+    blocked_engines:
+      android:
+        litert: Converter exited with code 1. See benchmark/artifacts_local/converted/kitten_tts/litert/conversion.log.
+    blocked_engine_reports:
+      android:
+        litert: benchmark/artifacts_local/converted/kitten_tts/litert/conversion_record.json
+    blocked_engine_failure_classes:
+      android:
+        litert: onnx2tf_attempt_timeout
+    blocked_engine_failure_reasons:
+      android:
+        litert: onnx2tf attempt exceeded per-attempt timeout.
+    blocked_engine_logs:
+      android:
+        litert: benchmark/artifacts_local/converted/kitten_tts/litert/conversion.log
   silero_vad:
+    family: Silero VAD
     source_model: snakers4/silero-vad
     task: vad
     artifact_coverage: converted
+    required_fixtures:
+    - audio
     platforms:
+      ios:
+        engine: coreml
+        artifact: hf://FluidInference/silero-vad-coreml/silero-vad-unified-v6.0.0.mlmodelc
+        source_uri: hf://FluidInference/silero-vad-coreml/silero-vad-unified-v6.0.0.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: mlx
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://FluidInference/silero-vad-coreml/silero-vad-unified-v6.0.0.mlmodelc
+        source_uri: hf://FluidInference/silero-vad-coreml/silero-vad-unified-v6.0.0.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: mlx
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/silero-vad/onnx/model.onnx
+        source_uri: hf://onnx-community/silero-vad/onnx/model.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/silero-vad/onnx/model.onnx
+        source_uri: hf://onnx-community/silero-vad/onnx/model.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
       android:
         engine: litert
-        artifact: benchmark/artifacts/converted/silero_vad/litert/model.tflite
+        artifact: benchmark/artifacts_local/converted/silero_vad/litert/model.tflite
         artifact_source: converted
         source_uri: converted://silero_vad/litert
         converted_from: snakers4/silero-vad
-        conversion_report: benchmark/artifacts/converted/silero_vad/litert/conversion_record.json
+        conversion_report: benchmark/artifacts_local/converted/silero_vad/litert/conversion_record.json
+        artifact_health_report: benchmark/out_local/runtime/silero_vad/android/litert_device_smoke_xnnpack_required_latest.json
+        artifact_health_passed: true
+        artifact_health_peak_memory_bytes: 52328448
+        observed_delegate: xnnpack
+        xnnpack_required_artifact_health_report: benchmark/out_local/runtime/silero_vad/android/litert_device_smoke_xnnpack_required_latest.json
+        xnnpack_required_artifact_health_passed: true
+        nnapi_required_artifact_health_report: benchmark/out_local/runtime/silero_vad/android/litert_device_smoke_nnapi_required.json
+        nnapi_required_artifact_health_passed: false
         unblock_platform: true
         task: vad
         delegate: xnnpack
-  kitten_tts:
-    source_model: KittenML/kitten-tts-nano-0.1
-    task: tts
+  qwen3_vl:
+    family: Qwen3-VL
+    source_model: Qwen/Qwen3-VL-2B-Instruct
+    task: vlm
     artifact_coverage: partial
-    platforms: {}
+    required_fixtures:
+    - text_prompt
+    - image
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://mlboydaisuke/qwen3-vl-2b-coreml/qwen3_vl_2b_decode_chunks
+        source_uri: hf://mlboydaisuke/qwen3-vl-2b-coreml/qwen3_vl_2b_decode_chunks
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://mlboydaisuke/qwen3-vl-2b-coreml/qwen3_vl_2b_decode_chunks
+        source_uri: hf://mlboydaisuke/qwen3-vl-2b-coreml/qwen3_vl_2b_decode_chunks
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/Qwen3-VL-2B-Instruct-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        source_uri: hf://onnx-community/Qwen3-VL-2B-Instruct-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/Qwen3-VL-2B-Instruct-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        source_uri: hf://onnx-community/Qwen3-VL-2B-Instruct-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: onnx
+        artifact: hf://onnx-community/Qwen3-VL-2B-Instruct-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        source_uri: hf://onnx-community/Qwen3-VL-2B-Instruct-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        artifact_source: huggingface
+        fallback_from:
+        - litert
+        delegate: xnnpack
+        baseline_engine: onnx
+  gemma4:
+    family: Gemma 4
+    source_model: google/gemma-4-E4B-it
+    task: text
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://mlboydaisuke/gemma-4-E4B-coreml/.
+        source_uri: hf://mlboydaisuke/gemma-4-E4B-coreml/.
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://mlboydaisuke/gemma-4-E4B-coreml/.
+        source_uri: hf://mlboydaisuke/gemma-4-E4B-coreml/.
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://huggingworld/gemma-4-E4B-it-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        source_uri: hf://huggingworld/gemma-4-E4B-it-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://huggingworld/gemma-4-E4B-it-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        source_uri: hf://huggingworld/gemma-4-E4B-it-ONNX/onnx/decoder_model_merged_q4f16.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: litert
+        artifact: hf://litert-community/gemma-4-E4B-it-litert-lm/gemma-4-E4B-it.litertlm
+        source_uri: hf://litert-community/gemma-4-E4B-it-litert-lm/gemma-4-E4B-it.litertlm
+        artifact_source: huggingface
+        delegate: xnnpack
+        baseline_engine: litert
+  function_gemma:
+    family: FunctionGemma
+    source_model: google/functiongemma-270m-it
+    task: function
+    required_fixtures:
+    - text_prompt
+    - tool_schema
+    tools_file: benchmark/runtime/fixtures/tool_schema.json
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://mlboydaisuke/functiongemma-270m-coreml/.
+        source_uri: hf://mlboydaisuke/functiongemma-270m-coreml/.
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://mlboydaisuke/functiongemma-270m-coreml/.
+        source_uri: hf://mlboydaisuke/functiongemma-270m-coreml/.
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/functiongemma-270m-it-ONNX-GQA/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/functiongemma-270m-it-ONNX-GQA/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/functiongemma-270m-it-ONNX-GQA/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/functiongemma-270m-it-ONNX-GQA/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: litert
+        artifact: hf://litert-community/functiongemma-270m-ft-mobile-actions/mobile_actions_q8_ekv1024.litertlm
+        source_uri: hf://litert-community/functiongemma-270m-ft-mobile-actions/mobile_actions_q8_ekv1024.litertlm
+        artifact_source: huggingface
+        delegate: xnnpack
+        baseline_engine: litert
+  embedding_gemma:
+    family: EmbeddingGemma
+    source_model: google/embeddinggemma-300m
+    task: embedding
+    required_fixtures:
+    - embedding_query
+    embedding_query_file: benchmark/runtime/fixtures/embedding_query.txt
+    embedding_dim: 768
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://mlboydaisuke/embeddinggemma-300m-coreml/encoder.mlmodelc
+        source_uri: hf://mlboydaisuke/embeddinggemma-300m-coreml/encoder.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://mlboydaisuke/embeddinggemma-300m-coreml/encoder.mlmodelc
+        source_uri: hf://mlboydaisuke/embeddinggemma-300m-coreml/encoder.mlmodelc
+        artifact_source: huggingface
+        baseline_engine: coreml-llm
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/embeddinggemma-300m-ONNX/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/embeddinggemma-300m-ONNX/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/embeddinggemma-300m-ONNX/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/embeddinggemma-300m-ONNX/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: litert
+        artifact: hf://litert-community/embeddinggemma-300m/embeddinggemma-300M_seq512_mixed-precision.tflite
+        source_uri: hf://litert-community/embeddinggemma-300m/embeddinggemma-300M_seq512_mixed-precision.tflite
+        artifact_source: huggingface
+        delegate: xnnpack
+        baseline_engine: litert
+  qwen3_6_27b:
+    family: Qwen3.6 27B
+    source_model: Qwen/Qwen3.6-27B
+    task: text
+    artifact_coverage: partial
+    runtime_artifact_search_report: benchmark/out_local/runtime/hf_search_blocked_latest.json
+    runtime_artifact_search_generated_at: '2026-04-26T14:19:07.061995Z'
+    runtime_artifact_search_runtime_candidate_count: 0
+    runtime_artifact_search_component_candidate_count: 0
+    platforms:
+      ios:
+        engine: mlx
+        artifact: hf://mlx-community/Qwen3.6-27B-4bit/.
+        source_uri: hf://mlx-community/Qwen3.6-27B-4bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
+      macos:
+        engine: mlx
+        artifact: hf://mlx-community/Qwen3.6-27B-4bit/.
+        source_uri: hf://mlx-community/Qwen3.6-27B-4bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
     blocked_platforms:
-      android: Converter exited with code 1. See benchmark/artifacts/converted/kitten_tts/litert/conversion.log.
-    blocked_platform_reports:
-      android: benchmark/artifacts/converted/kitten_tts/litert/conversion_record.json
+      windows: ONNX Runtime GenAI conversion is wired and the config probe passes,
+        but no validated 27B ONNX artifact has been exported yet.
+      linux: ONNX Runtime GenAI conversion is wired and the config probe passes, but
+        no validated 27B ONNX artifact has been exported yet.
+      android: LiteRT patched conversion is wired and the config probe passes, but
+        no validated 27B LiteRT artifact has been exported yet.
     blocked_platform_failure_classes:
-      android: onnx2tf_unsupported_operator_loop
+      windows: conversion_pending_weight_export
+      linux: conversion_pending_weight_export
+      android: conversion_pending_weight_export
     blocked_platform_failure_reasons:
-      android: onnx2tf does not implement Loop op conversion.
+      windows: The ONNX Runtime GenAI exporter can parse the patched Qwen3.6 config
+        through hf-mirror.com; a full weight export and artifact_health pass are still
+        required.
+      linux: The ONNX Runtime GenAI exporter can parse the patched Qwen3.6 config
+        through hf-mirror.com; a full weight export and artifact_health pass are still
+        required.
+      android: The LiteRT exporter can prepare the patched Qwen3.6 source config through
+        hf-mirror.com; a full weight export and Android artifact_health pass are still
+        required.
+  translategemma_4b_it:
+    family: TranslateGemma 4B IT
+    source_model: google/translategemma-4b-it
+    task: text
+    platforms:
+      ios:
+        engine: coreml
+        artifact: hf://Skyline23/translategemma-4b-it-coreml/StatefulTranslateGemma4BITInt4PerChannel.mlpackage
+        source_uri: hf://Skyline23/translategemma-4b-it-coreml/StatefulTranslateGemma4BITInt4PerChannel.mlpackage
+        artifact_source: huggingface
+        baseline_engine: mlx
+        coreml_mode: decode
+      macos:
+        engine: coreml
+        artifact: hf://Skyline23/translategemma-4b-it-coreml/StatefulTranslateGemma4BITInt4PerChannel.mlpackage
+        source_uri: hf://Skyline23/translategemma-4b-it-coreml/StatefulTranslateGemma4BITInt4PerChannel.mlpackage
+        artifact_source: huggingface
+        baseline_engine: mlx
+        coreml_mode: decode
+      windows:
+        engine: onnx
+        artifact: hf://onnx-community/translategemma-text-4b-it-ONNX/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/translategemma-text-4b-it-ONNX/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: dml
+        baseline_engine: onnx
+      linux:
+        engine: onnx
+        artifact: hf://onnx-community/translategemma-text-4b-it-ONNX/onnx/model_q4f16.onnx
+        source_uri: hf://onnx-community/translategemma-text-4b-it-ONNX/onnx/model_q4f16.onnx
+        artifact_source: huggingface
+        provider: cpu
+        baseline_engine: onnx
+      android:
+        engine: litert
+        artifact: hf://litert-community/TranslateGemma-4B-IT/translategemma-4b-it-int8-web.task
+        source_uri: hf://litert-community/TranslateGemma-4B-IT/translategemma-4b-it-int8-web.task
+        artifact_source: huggingface
+        delegate: xnnpack
+        baseline_engine: litert
+  minicpm_o_4_5:
+    family: MiniCPM-o 4.5
+    source_model: openbmb/MiniCPM-o-4_5
+    task: vlm
+    required_fixtures:
+    - text_prompt
+    - image
+    - audio
+    artifact_coverage: partial
+    runtime_artifact_search_report: benchmark/out_local/runtime/hf_search_blocked_latest.json
+    runtime_artifact_search_generated_at: '2026-04-26T14:19:07.061995Z'
+    runtime_artifact_search_runtime_candidate_count: 0
+    runtime_artifact_search_component_candidate_count: 12
+    platforms:
+      ios:
+        engine: mlx
+        artifact: hf://mlx-community/MiniCPM-o-4_5-4bit/.
+        source_uri: hf://mlx-community/MiniCPM-o-4_5-4bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
+      macos:
+        engine: mlx
+        artifact: hf://mlx-community/MiniCPM-o-4_5-4bit/.
+        source_uri: hf://mlx-community/MiniCPM-o-4_5-4bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
+    blocked_platforms:
+      windows: Converter exited with code 1. See benchmark/artifacts_local/converted/minicpm_o_4_5/onnx/conversion.log.
+      linux: Converter exited with code 1. See benchmark/artifacts_local/converted/minicpm_o_4_5/onnx/conversion.log.
+      android: Converter timed out after 300s. See benchmark/artifacts_local/converted/minicpm_o_4_5/litert/conversion.log.
+    blocked_platform_failure_classes:
+      windows: vlm_automodel_mapping_missing
+      linux: vlm_automodel_mapping_missing
+      android: conversion_timeout
+    blocked_platform_failure_reasons:
+      windows: Transformers/Optimum image-text AutoModel mapping has no MiniCPM-o
+        configuration support for full VLM export.
+      linux: Transformers/Optimum image-text AutoModel mapping has no MiniCPM-o configuration
+        support for full VLM export.
+      android: MiniCPM-o 4.5 LiteRT export now loads through AutoModelForCausalLM
+        with optional minicpmo video imports patched; the short probe reached source
+        model file fetch and timed out before a full artifact was produced.
+    blocked_engines:
+      ios:
+        coreml: 'Skipped by recipe preflight: MiniCPM-o 4.5 is a multimodal VLM/audio
+          bundle; no production Core ML converter is wired for the full runtime bundle
+          yet.'
+      macos:
+        coreml: 'Skipped by recipe preflight: MiniCPM-o 4.5 is a multimodal VLM/audio
+          bundle; no production Core ML converter is wired for the full runtime bundle
+          yet.'
+    blocked_engine_reports:
+      ios:
+        coreml: benchmark/artifacts_local/converted/minicpm_o_4_5/coreml/conversion_record.json
+      macos:
+        coreml: benchmark/artifacts_local/converted/minicpm_o_4_5/coreml/conversion_record.json
+    blocked_engine_failure_classes:
+      ios:
+        coreml: coreml_exporter_missing_for_vlm
+      macos:
+        coreml: coreml_exporter_missing_for_vlm
+    blocked_engine_failure_reasons:
+      ios:
+        coreml: MiniCPM-o 4.5 is a multimodal VLM/audio bundle; no production Core
+          ML converter is wired for the full runtime bundle yet.
+      macos:
+        coreml: MiniCPM-o 4.5 is a multimodal VLM/audio bundle; no production Core
+          ML converter is wired for the full runtime bundle yet.
+    blocked_platform_reports:
+      android: benchmark/artifacts_local/converted/minicpm_o_4_5/litert/conversion_record.json
+      windows: benchmark/artifacts_local/converted/minicpm_o_4_5/onnx/conversion_record.json
+      linux: benchmark/artifacts_local/converted/minicpm_o_4_5/onnx/conversion_record.json
     blocked_platform_logs:
-      android: benchmark/artifacts/converted/kitten_tts/litert/conversion.log
+      android: benchmark/artifacts_local/converted/minicpm_o_4_5/litert/conversion.log
+      windows: benchmark/artifacts_local/converted/minicpm_o_4_5/onnx/conversion.log
+      linux: benchmark/artifacts_local/converted/minicpm_o_4_5/onnx/conversion.log
+  gemma_sea_lion_v4_4b_vl:
+    family: Gemma SEA-LION v4 4B VL
+    source_model: aisingapore/Gemma-SEA-LION-v4-4B-VL
+    task: vlm
+    required_fixtures:
+    - text_prompt
+    - image
+    artifact_coverage: partial
+    runtime_artifact_search_report: benchmark/out_local/runtime/hf_search_blocked_latest.json
+    runtime_artifact_search_generated_at: '2026-04-26T14:19:07.061995Z'
+    runtime_artifact_search_runtime_candidate_count: 0
+    runtime_artifact_search_component_candidate_count: 0
+    platforms:
+      ios:
+        engine: mlx
+        artifact: hf://mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit/.
+        source_uri: hf://mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
+      macos:
+        engine: mlx
+        artifact: hf://mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit/.
+        source_uri: hf://mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
+    blocked_platforms:
+      windows: Converter exited with code 1. See benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log.
+      linux: Converter exited with code 1. See benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log.
+      android: Converter timed out after 600s. See benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/litert/conversion.log.
+    blocked_platform_failure_classes:
+      windows: vlm_onnx_exporter_missing_for_architecture
+      linux: vlm_onnx_exporter_missing_for_architecture
+      android: conversion_timeout
+    blocked_platform_failure_reasons:
+      windows: Optimum ONNX supports this Gemma3 architecture for text tasks, but
+        not full image-to-text VLM export.
+      linux: Optimum ONNX supports this Gemma3 architecture for text tasks, but not
+        full image-to-text VLM export.
+      android: Converter exceeded timeout.
+    blocked_platform_reports:
+      android: benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/litert/conversion_record.json
+      windows: benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion_record.json
+      linux: benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion_record.json
+    blocked_platform_logs:
+      android: benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/litert/conversion.log
+      windows: benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log
+      linux: benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log
+  ming_omni_tts_0_5b:
+    family: Ming-omni TTS 0.5B
+    source_model: inclusionAI/Ming-omni-tts-0.5B
+    task: tts
+    required_fixtures:
+    - text_prompt
+    artifact_coverage: partial
+    runtime_artifact_search_report: benchmark/out_local/runtime/hf_search_blocked_latest.json
+    runtime_artifact_search_generated_at: '2026-04-26T14:19:07.061995Z'
+    runtime_artifact_search_runtime_candidate_count: 0
+    runtime_artifact_search_component_candidate_count: 1
+    platforms:
+      ios:
+        engine: mlx
+        artifact: hf://mlx-community/Ming-omni-tts-0.5B-4bit/.
+        source_uri: hf://mlx-community/Ming-omni-tts-0.5B-4bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
+      macos:
+        engine: mlx
+        artifact: hf://mlx-community/Ming-omni-tts-0.5B-4bit/.
+        source_uri: hf://mlx-community/Ming-omni-tts-0.5B-4bit/.
+        artifact_source: huggingface
+        fallback_from:
+        - coreml
+        baseline_engine: mlx
+        coreml_mode: decode
+    blocked_platforms:
+      windows: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS
+        artifact found.
+      linux: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS
+        artifact found.
+      android: Ming Omni TTS LLM, flowloss_dit_step, linear_proj_audio, stop_head,
+        and audio_decode_chunk submodels now export and load as LiteRT/XNNPACK
+        on Android, but the full TTS runtime is still blocked until streaming
+        sampler/orchestration is wired.
+    blocked_platform_failure_classes:
+      windows: hf_component_only_artifact
+      linux: hf_component_only_artifact
+      android: tts_component_runtime_incomplete
+    blocked_platform_failure_reasons:
+      windows: Hugging Face search found only a component sidecar, not a complete
+        ONNX Runtime TTS bundle.
+      linux: Hugging Face search found only a component sidecar, not a complete ONNX
+        Runtime TTS bundle.
+      android: Ming Omni TTS LLM, flowloss_dit_step, linear_proj_audio, stop_head,
+        and audio_decode_chunk LiteRT exports succeeded; audio_decode_chunk also
+        passed host ONNX/LiteRT parity and Android XNNPACK native invoke. Streaming
+        sampler/orchestration is still required for a complete TTS runtime.
+    runtime_component_evidence:
+      android:
+        litert_llm_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/llm_litert/model.litertlm
+        litert_flowloss_dit_step_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/flowloss_dit_step/model.tflite
+        litert_linear_proj_audio_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/linear_proj_audio/model.tflite
+        litert_stop_head_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/stop_head/model.tflite
+        litert_audio_decode_chunk_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/audio_decode_chunk/model.tflite
+        onnx_flowloss_dit_step_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/onnx/flowloss_dit_step.onnx
+        onnx_linear_proj_audio_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/onnx/linear_proj_audio.onnx
+        onnx_stop_head_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/onnx/stop_head.onnx
+        onnx_audio_decode_chunk_artifact: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/onnx/audio_decode_chunk.onnx
+        component_export_report: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/component_export_report.json
+        native_component_export_report: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/onnx/native_component_export_report.json
+        flowloss_dit_step_litert_report: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/flowloss_dit_step/onnx_to_litert_report.json
+        linear_proj_audio_litert_report: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/linear_proj_audio/onnx_to_litert_report.json
+        stop_head_litert_report: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/stop_head/onnx_to_litert_report.json
+        audio_decode_chunk_litert_report: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/audio_decode_chunk/onnx_to_litert_report.json
+        audio_decode_chunk_host_ort_smoke_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/host/audio_decode_chunk_ort_smoke.json
+        audio_decode_chunk_host_ort_parity_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/host/audio_decode_chunk_ort_parity.json
+        audio_decode_chunk_host_litert_smoke_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/host/audio_decode_chunk_tflite_smoke.json
+        audio_decode_chunk_host_litert_parity_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/host/audio_decode_chunk_litert_onnx_parity.json
+        llm_device_smoke_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/android/litert_llm_device_smoke_xnnpack.json
+        flowloss_dit_step_device_smoke_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/android/flowloss_dit_step_litert_device_smoke_xnnpack.json
+        linear_proj_audio_device_smoke_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/android/linear_proj_audio_litert_device_smoke_xnnpack.json
+        stop_head_device_smoke_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/android/stop_head_litert_device_smoke_xnnpack.json
+        audio_decode_chunk_device_smoke_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/android/audio_decode_chunk_litert_device_smoke_xnnpack.json
+        audio_decode_chunk_native_device_report: benchmark/out_local/runtime/ming_omni_tts_0_5b/android/audio_decode_chunk_native_litert_report.json
+        delegate: xnnpack
+        litert_llm_peak_memory_bytes: 1419664384
+        flowloss_dit_step_peak_memory_bytes: 263455744
+        linear_proj_audio_peak_memory_bytes: 260816896
+        stop_head_peak_memory_bytes: 53060608
+        audio_decode_chunk_load_peak_memory_bytes: 2298078208
+        audio_decode_chunk_invoke_peak_memory_bytes: 2307913728
+        audio_decode_chunk_end_to_end_ms: 476.2753125
+        audio_decode_chunk_litert_onnx_max_abs_error: 6.149709224700928e-05
+    blocked_engines:
+      ios:
+        coreml: 'Skipped by recipe preflight: Ming-omni TTS needs a text-to-speech
+          Core ML pipeline; no production Core ML converter is wired for the full
+          runtime bundle yet.'
+      macos:
+        coreml: 'Skipped by recipe preflight: Ming-omni TTS needs a text-to-speech
+          Core ML pipeline; no production Core ML converter is wired for the full
+          runtime bundle yet.'
+    blocked_engine_reports:
+      ios:
+        coreml: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/coreml/conversion_record.json
+      macos:
+        coreml: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/coreml/conversion_record.json
+    blocked_engine_failure_classes:
+      ios:
+        coreml: coreml_exporter_missing_for_tts
+      macos:
+        coreml: coreml_exporter_missing_for_tts
+    blocked_engine_failure_reasons:
+      ios:
+        coreml: Ming-omni TTS needs a text-to-speech Core ML pipeline; no production
+          Core ML converter is wired for the full runtime bundle yet.
+      macos:
+        coreml: Ming-omni TTS needs a text-to-speech Core ML pipeline; no production
+          Core ML converter is wired for the full runtime bundle yet.
+    blocked_platform_reports:
+      android: benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/component_export_report.json
+    blocked_platform_logs:
+      android: benchmark/out_local/runtime/ming_omni_tts_0_5b/android/litert_llm_device_smoke_xnnpack.json

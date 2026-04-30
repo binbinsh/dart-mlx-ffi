@@ -18,16 +18,56 @@ Runner output must be JSON with this shape:
   "platform": "ios",
   "engine": "coreml",
   "artifact": "path/to/artifact",
+  "task": "text",
+  "run_config": {
+    "format": "dart_mlx_ffi.run_config.v1",
+    "task": "text",
+    "warmup": 1,
+    "iters": 5,
+    "max_tokens": 64,
+    "sampling_strategy": "greedy"
+  },
+  "input_signature": {
+    "format": "dart_mlx_ffi.input_signature.v1",
+    "digest": "8a4f...",
+    "tensors": [
+      {
+        "name": "input_ids",
+        "dtype": "int64",
+        "shape": [1, 16],
+        "byte_length": 128,
+        "digest": "71d0..."
+      }
+    ]
+  },
   "correctness": {
     "token_ids": [1, 2, 3],
     "top1_match_ratio": 1.0,
-    "top3_coverage_ratio": 1.0
+    "top3_coverage_ratio": 1.0,
+    "output_summaries": {
+      "logits": {
+        "dtype": "float32",
+        "shape": [1, 32000],
+        "top_k": [
+          {"index": 42, "value": 9.5},
+          {"index": 7, "value": 8.1}
+        ]
+      }
+    }
   },
   "metrics": {
     "prefill_tokens_per_second": 100.0,
     "decode_tokens_per_second": 20.0,
     "ttft_ms": 250.0,
     "end_to_end_ms": 1200.0,
+    "latency_ms": {
+      "values": [1190.0, 1210.0],
+      "mean": 1200.0,
+      "p50": 1200.0,
+      "p95": 1209.0
+    },
+    "iteration_count": 2,
+    "warmup_count": 1,
     "peak_memory_bytes": 123456789
   },
   "device_profile": {
@@ -46,7 +86,19 @@ Runner output must be JSON with this shape:
 ```
 
 `compare.py` accepts a combined report containing `baseline` and `candidate`
-objects in that runner format and emits the promotion verdict.
+objects in that runner format and emits the promotion verdict. The production
+policy in `models.yaml` requires matching `input_signature` values, task-aware
+correctness evidence, speed evidence, peak-memory evidence, and the requested
+device profile. It also requires matching `run_config` values for comparable
+benchmark settings (`task`, `warmup`, `iters`, `max_tokens`, and greedy
+sampling). When `run_config` is required, `metrics.iteration_count` must be
+present and equal to `run_config.iters`; `metrics.latency_ms.values` should
+contain the raw measured iteration samples behind `end_to_end_ms`. Missing input
+signatures, missing run configs, or missing task evidence fail promotion. Large
+logit outputs may use
+`output_summaries.*.top_k`; promotion checks top-1 match ratio and top-3
+coverage without requiring full logits in JSON. TTFT and end-to-end latency
+have separate ratio thresholds.
 
 `combine_reports.py` builds that combined input from two runner outputs:
 
@@ -67,6 +119,18 @@ uv run python benchmark/runtime/compare.py \
 uv run python benchmark/runtime/audit.py \
   --out-root benchmark/out/runtime \
   --out benchmark/out/runtime/audit.json
+```
+
+Pass the latest Hugging Face search report when auditing blocked staging
+models. Blocked platform rows then include `search_evidence` with runtime and
+component candidate counts plus the component repos that were found:
+
+```sh
+uv run python benchmark/runtime/audit.py \
+  --artifacts benchmark/runtime/artifacts.converted.yaml \
+  --out-root benchmark/out_local/runtime \
+  --search-report benchmark/out_local/runtime/hf_search_blocked_latest.json \
+  --out benchmark/out_local/runtime/audit_with_search_evidence.json
 ```
 
 `run_matrix.py` runs one model/platform matrix cell end to end:
@@ -107,10 +171,24 @@ artifacts before editing the catalog:
 uv run python benchmark/runtime/search_hf_artifacts.py
 ```
 
-The search report separates directly loadable runtime candidates from component
-sidecars. Component-only hits, such as MiniCPM token2wav/CosyVoice ONNX files
-or a vision-only Core ML bundle, are evidence for the blocked reason but do not
-count as platform runtime artifacts.
+If the primary Hugging Face API is rate limited, the search tool retries rate
+limited queries through the mirror endpoint. By default it tries
+`https://hf-mirror.com`; override this with
+`--fallback-endpoint` or force a mirror with `--endpoint`. The same endpoint
+options are also wired into artifact resolution and conversion downloads, so a
+model that must be converted, such as `qwen3_6_27b`, does not fail immediately
+when the primary HF endpoint returns 429.
+
+```sh
+uv run python benchmark/runtime/search_hf_artifacts.py \
+  --endpoint https://hf-mirror.com \
+  --request-timeout-seconds 10
+```
+
+The search report records `generated_at` and separates directly loadable
+runtime candidates from component sidecars. Component-only hits, such as MiniCPM
+token2wav/CosyVoice ONNX files or a vision-only Core ML bundle, are evidence
+for the blocked reason but do not count as platform runtime artifacts.
 
 GGUF files are useful for llama.cpp/Metal or CPU execution, but they are not
 direct Core ML conversion inputs. Core ML conversion should prefer the original
@@ -141,10 +219,13 @@ the bridge reports `state: blocked` rather than pretending a direct GGUF to
 Core ML conversion is production-safe.
 
 Some models are platform-ready only through a fallback engine. The gap report
-shows those cases explicitly:
+shows those cases explicitly. Pass the converted artifact map when you want the
+report to include successful local conversions, such as PaddleOCR-VL Core ML or
+Silero VAD LiteRT:
 
 ```sh
 uv run python benchmark/runtime/engine_gap_report.py \
+  --artifacts benchmark/runtime/artifacts.converted.yaml \
   --model-id paddle_ocr_vl
 ```
 
@@ -157,31 +238,82 @@ emit an artifact-map overlay:
 
 ```sh
 uv run python benchmark/runtime/convert_artifacts.py \
-  --model-id glm4_7_flash \
+  --model-id qwen3_6_27b \
   --engine onnx \
   --dry-run
 
 uv run python benchmark/runtime/convert_artifacts.py \
-  --model-id glm4_7_flash \
+  --model-id qwen3_6_27b \
   --engine onnx \
   --base-artifacts benchmark/runtime/artifacts.local.yaml \
   --out benchmark/runtime/artifacts.converted.yaml
 ```
 
+`qwen3_6_27b` uses ONNX Runtime GenAI rather than Optimum for ONNX export,
+because the upstream `qwen3_5` config needs a `qwen3` compatibility adapter.
+The same source-preparation patch is wired into the Android LiteRT exporter.
+Both config-only probes pass against `https://hf-mirror.com`; the remaining
+work is the full 27B weight export, native artifact health, and matrix
+validation before the Windows/Linux/Android blockers can be removed.
+
+Before upgrading a built-in model to a newer upstream release, run the latest
+model audit. It records the current source model sha, configured runtime
+artifact shas, whether each artifact path exists, and candidate replacement
+repos grouped by runtime engine:
+
+```sh
+uv run python benchmark/runtime/latest_model_audit.py \
+  --fallback-endpoint https://hf-mirror.com \
+  --out benchmark/out_local/runtime/latest_model_audit.json
+```
+
+Use `--max-candidates 0` for a fast configured-artifact audit when you only
+need current source/artifact shas and path-existence checks.
+
+Only promote an upgrade into `hf_artifacts.yaml` when the audited source model
+and all required runtime artifacts or conversion recipes can cover iOS, macOS,
+Windows, Linux, and Android.
+
 Recipes may also define `timeout_seconds` and `env` to keep long exporters
 from hanging indefinitely and to inject model-specific runtime toggles.
 Timeouts are recorded as structured `conversion_failed` reports so matrix
 planning can continue.
+For ad-hoc probes, `convert_artifacts.py` also accepts
+`--timeout-seconds-override <N>` to cap every conversion command in the run
+without editing recipe files.
+`conversion_recipes.yaml` now enables `seed_models_from_catalog`, so
+`artifacts.converted.yaml` starts from the current Hugging Face runtime matrix
+and then overlays converted artifacts/blockers. This keeps existing ONNX
+fallback cells (for example Android `onnx` fallback when `litert` fails) instead
+of replacing the whole model entry.
+`convert_artifacts.py` now also injects local default cache roots for converter
+subprocesses (`benchmark/.uv_cache`, `benchmark/.hf_home`, `benchmark/.cache`)
+when the corresponding environment variables are not already set, preventing
+host-level cache path issues from aborting long-running conversions.
+The converter also defaults `HF_HUB_DISABLE_XET=1` when unset, which avoids
+Xet-backed transfer stalls on some hosts.
+The converter also imports existing
+`benchmark/artifacts/converted/<model>/<engine>/conversion_record.json`
+reports before writing the output map, so prior successful conversions remain
+active without rerunning large exporters.
 
 The default recipes use real native exporters:
 
 - `coreml`: clones CoreML-LLM into `benchmark/artifacts/tools/coreml-llm` when
   needed, then runs its `conversion/convert.py` through `uv run
   --with-requirements`.
-- `onnx`: runs `optimum-cli export onnx` through the `onnx-convert`
-  dependency group with transient `transformers<5` and `torch>=2.11.0`
-  overrides, because the current Optimum CLI is not yet compatible with this
-  repo's main Transformers 5 runtime dependency.
+- `onnx`: runs `optimum-cli export onnx` through an isolated `uvx` tool
+  environment (`optimum[onnxruntime]==2.1.0` + pinned conversion dependencies),
+  so converter dependency resolution is decoupled from the repo's main Python
+  environment and avoids local `optimum`/`transformers` version bleed-through.
+  Recipe-level `extra_with` entries are appended as additional `uvx --with`
+  flags for model-specific requirements (for example `mamba-ssm`).
+  For model families that still publish a newer `model_type` string than the
+  exporter currently recognizes (`qwen3_5`, `glm4_moe_lite`), the
+  `onnx_text_generation_model_type_patch` preset first patches `config.json`
+  in a local snapshot through
+  `benchmark/runtime/converters/model_type_patched_onnx_export.py`, then runs
+  the same Optimum export flow.
 - `litert`: runs `litert-torch`'s Hugging Face generative exporter via
   `benchmark/runtime/converters/litert_hf_export.py` through the
   `litert-convert` dependency group.
@@ -190,7 +322,15 @@ The default recipes use real native exporters:
   `onnx2tf-convert` dependency group for models where only ONNX artifacts are
   available. The converter now applies a targeted `onnx2tf` SequenceEmpty
   hotfix, retries with auto-generated `-prf` replacement JSON when available,
-  and can try multiple ONNX source candidates in one run.
+  can try multiple ONNX source candidates in one run, and enforces
+  per-attempt timeouts (`--attempt-timeout-seconds`) so a single `onnx2tf`
+  invocation cannot stall the full conversion pipeline.
+- `litert` (ONNX component pipeline path): runs
+  `benchmark/runtime/converters/onnx_pipeline_to_litert.py` to convert each
+  ONNX component into an individual TFLite model, inspect the TFLite
+  signatures, and write a `dart_mlx_ffi.litert_pipeline.v1` spec. PaddleOCR-VL
+  uses this path for Android instead of pretending its component ONNX bundle is
+  a single LiteRT artifact.
 
 Large models should normally be converted on a workstation with enough disk and
 RAM, then validated with the same runtime matrix. Converted artifact-map cells
@@ -224,13 +364,40 @@ uv run python benchmark/runtime/convert_artifacts.py \
   --out benchmark/runtime/artifacts.converted.yaml
 ```
 
-For `silero_vad` and `kitten_tts`, Android currently resolves through ONNX
-fallback while `onnx2tf` LiteRT conversion attempts are tracked as
-engine blockers (currently `onnx2tf_if_subgraph_binding_bug` for `silero_vad`
-and `onnx2tf_unsupported_operator_loop` for `kitten_tts`) with per-model
+`silero_vad` now has a converted Android LiteRT artifact at
+`benchmark/artifacts_local/converted/silero_vad/litert/model.tflite`.
+On the connected Android device, the validated production path uses XNNPACK
+and records peak PSS in
+`benchmark/out_local/runtime/silero_vad/android/litert_device_smoke_xnnpack_required_latest.json`.
+The native backend also attempts real NNAPI through the LiteRT C API, but
+`--require-delegate nnapi` currently fails interpreter creation for this model
+instead of falling back; that evidence is stored in
+`benchmark/out_local/runtime/silero_vad/android/litert_device_smoke_nnapi_required.json`.
+`qwen3_asr` is pinned to Qwen3-ASR 1.7B across MLX, Core ML, and ONNX;
+Core ML has a stateful `MLState` bridge plus `Qwen3AsrCoreMlRunner`; the
+benchmark runner resolves `tokenizer.json` from the ONNX tokenizer repository
+when the Core ML repo does not package it. iOS/macOS Core ML load health passes
+with `cpuAndGPU`, while default ANE compilation of the public decoder currently
+fails with Core ML execution-plan error `-14`, so Qwen3-ASR remains staging.
+Windows/Linux/Android use the int4 component bundle with
+`Qwen3AsrNativeRunner` to orchestrate the ONNX encoder, decoder-init,
+decoder-step, tokenizer, mel frontend, and KV-cache state. Android ONNX device
+load smoke passes on the connected arm64 device with peak PSS recorded in
+`benchmark/out_local/runtime/qwen3_asr/android/onnx_device_smoke_provider_npu_nnapi_append.json`.
+Android ONNX runs default to `npu,gpu,cpu`; the native ORT backend maps generic
+`npu` to the first available QNN/NNAPI/OpenVINO/XNNPACK provider. On the
+connected Android device, the Qwen3-ASR encoder, decoder-init, and decoder-step
+stages now append `NnapiExecutionProvider` successfully and report it as the
+effective provider. The backend still records requested/selected/effective
+provider diagnostics plus append errors when a provider cannot be attached.
+Android still uses that ONNX path as fallback until
+`benchmark/runtime/converters/qwen3_asr_onnx_to_litert.py` converts the same
+ONNX components into a LiteRT bundle and that bundle passes artifact health and
+matrix checks. `kitten_tts` is pinned to the mini
+0.8 family and still resolves through Android ONNX fallback while `onnx2tf`
+LiteRT attempts are tracked as engine blockers (`onnx2tf_attempt_timeout`) with
 `conversion_record.json`, `onnx_to_litert_report.json`, and `conversion.log`
-evidence under
-`benchmark/artifacts/converted/<model>/litert/`.
+evidence under `benchmark/artifacts/converted/kitten_tts/litert/`.
 
 ```sh
 uv run python benchmark/runtime/run_all.py \
@@ -257,9 +424,20 @@ for both baseline and candidate when needed, pulls the reports, then feeds them
 through the same `run_matrix.py` compare/promote flow.
 For iOS Core ML cells, set `ios_device_smoke: true` in the artifact map to run
 `ios_flutter_smoke.py` as an artifact-health stage (real wireless/iOS-device
-load + peak-memory snapshot) before local compare.
+load + peak-memory snapshot) before local compare. Both `hf://` and local
+artifact paths are supported.
+Set `ios_smoke_wait_for_artifact_seconds` when local artifact copies need a
+larger in-app wait window than the default.
+Set `coreml_compute_units` to pass a Core ML compute-unit override through the
+iOS Flutter smoke path and native backend; this is useful for recording ANE
+failures separately from CPU/GPU fallback health.
 For Android ONNX/LiteRT cells, set `android_device_smoke: true` to run
 `android_flutter_smoke.py` as artifact-health before local compare.
+Set `require_provider: true` with `provider` or `require_delegate: true` with
+`delegate` when a cell must prove that the requested native backend was really
+selected. The Flutter smoke path forwards those flags to native runtime options,
+so unavailable or rejected providers/delegates fail the device report instead
+of being hidden by fallback.
 `run_all.py` now surfaces device-smoke/runtime-health failures as structured
 `failure_class` + `failure_reason` fields in execution results (for example
 `runtime_version_mismatch`, `interpreter_create_failed`,
@@ -307,6 +485,24 @@ The app emits chunked runtime-smoke markers
 (`DMF_RUNTIME_SMOKE_RESULT_BEGIN/CHUNK/END`) containing load diagnostics and
 memory snapshots from `RuntimeRegistry.loadAsync()`. Reports default to
 `benchmark/out/runtime/<model>/ios/device_smoke.json` unless `--out` is set.
+When the requested output path cannot be created (for example a broken
+`benchmark/out` symlink), the runner automatically falls back to
+`benchmark/out_local/runtime/<model>/ios/<report-name>.json`.
+Every iOS smoke report now includes structured `status`, `error`, and
+`flutter_exit_code` fields so launch/install failures are machine-readable.
+Wireless iOS release runs can suppress Flutter stdout markers even when the
+runtime load succeeds. `ios_flutter_smoke.py` retries a release-mode marker
+timeout once in debug mode by default, keeps the release attempt in
+`release_attempt`, and marks the smoke passed only if the debug retry emits a
+passing runtime marker. Pass `--no-debug-retry-on-timeout` when diagnosing the
+release log path itself.
+When `--artifact` points to a local path, the runner now defers the iOS
+container copy until app boot (`DMF_RUNTIME_SMOKE:BOOT`) and passes a stable
+`Documents/...` runtime path, so container UUID changes during reinstall do not
+break local Core ML pipeline loads. Use `--wait-for-artifact-seconds` to tune
+how long the app waits for deferred artifact copy (default: `180`).
+Use `--coreml-compute-units cpuAndGPU` or another Core ML value to force the
+same backend option from a direct smoke run.
 
 For Android devices, run the same smoke path through Flutter:
 
@@ -319,6 +515,9 @@ uv run python benchmark/runtime/android_flutter_smoke.py \
 
 Android reports default to
 `benchmark/out/runtime/<model>/android/device_smoke.json`.
+When `--artifact` points to a local file (for example a converted
+`benchmark/artifacts/converted/.../*.tflite`), the runner now pushes that file
+to app-specific external storage and passes the device path automatically.
 The Android smoke runner defaults to `--build-mode release`; pass
 `--build-mode debug` when you need full Flutter debug logs.
 
@@ -358,6 +557,20 @@ adb shell chmod +x /data/local/tmp/dart_mlx_ffi_runtime_runner
 
 Use `LD_LIBRARY_PATH=/data/local/tmp` in `device_command` when the runner and
 shared library are deployed outside the app sandbox.
+For a build-only Android ONNX Runtime backend check, use:
+
+```sh
+uv run python benchmark/runtime/ort_smoke.py \
+  --target-os android \
+  --target-arch arm64-v8a \
+  --build-dir benchmark/out_local/build/android_ort_smoke \
+  --work-dir benchmark/out_local/ort_smoke_android \
+  --keep
+```
+
+This resolves `onnxruntime-android`, configures the NDK toolchain, and verifies
+that `libdart_mlx_ffi_runtime.so` links against Android `libonnxruntime.so`
+before any adb device is required.
 
 When `input_json` contains tensor sidecars via `file` or `path`, `adb_runner.py`
 pushes those local files to the device and rewrites the device-side input JSON.
@@ -373,7 +586,10 @@ values are aggregated from `/proc/self/smaps` mappings, so promotion reports
 keep the platform raw fields alongside the normalized peak-memory gate.
 
 After a matrix run, `promote.py` converts verdicts into manifest-compatible
-validation metadata and marks only fully passing models as `production`:
+validation metadata and marks only fully passing models as `production`.
+Promotion patches now include both `validationStatus` and
+`platformArtifacts` (grouped by runtime engine), so Dart-side manifests can
+ingest converted artifacts without manual model-table edits:
 
 ```sh
 uv run python benchmark/runtime/promote.py \
@@ -492,9 +708,20 @@ Native backend notes:
 eval "$(uv run python benchmark/runtime/ort_env.py --fetch-headers --shell)"
 ```
 
+The benchmark runners also write `.dart_mlx_runtime_env.json` before invoking
+`dart run`; the build hook tracks this file so changing ORT/LiteRT library
+paths invalidates the native asset cache.
+
   The helper discovers the wheel library, downloads the matching official C API
-  header under `benchmark/artifacts/tools/onnxruntime`, and prints the build
-  environment variables consumed by the hook/CMake backend.
+  header under `benchmark/artifacts/tools/onnxruntime` when available, and
+  automatically falls back to `benchmark/artifacts_local/tools/onnxruntime`
+  when `benchmark/artifacts` is unavailable (for example broken/missing
+  symlink mounts). Set `DART_MLX_ORT_TOOLS_DIR` to force a custom cache root.
+  It then prints the build environment variables consumed by the hook/CMake
+  backend.
+  Matrix runners (`runners/ort_runner.py`) and artifact health probes now call
+  this resolver automatically before `dart run`, so local native ONNX checks no
+  longer depend on manual shell exports.
   Componentized ONNX artifacts can be wrapped in a pipeline JSON instead of a
   single `.onnx` path:
 
@@ -536,7 +763,8 @@ uv run python benchmark/runtime/ort_smoke.py
 
   This builds the native runner with ORT enabled, generates a tiny ONNX graph,
   executes both single-model and two-stage pipeline paths through the C++
-  backend, and checks the numeric outputs.
+  backend, checks the numeric outputs, and keeps provider diagnostics visible
+  for each stage.
 - LiteRT uses the TensorFlow Lite C API and loads
   `DART_MLX_LITERT_LIBRARY` / `DART_MLX_TFLITE_LIBRARY` when provided, falling
   back to a bundled adjacent `libtensorflowlite_c` / `tensorflowlite_c.dll`
@@ -549,19 +777,41 @@ uv run python benchmark/runtime/ort_smoke.py
   XNNPACK is enabled when available unless
   disabled by metadata. `--delegate gpu|nnapi|xnnpack` requests a specific
   delegate, and `--require-delegate` makes missing delegate support fail the
-  run instead of falling back.
+  run instead of falling back. The Android NNAPI bridge resolves the LiteRT
+  `TfLiteNnapiDelegate*` symbols and passes default NNAPI options explicitly;
+  models that cannot create an interpreter with NNAPI remain on a validated
+  fallback delegate until a required-delegate smoke passes.
   `benchmark/runtime/litert_env.py` mirrors `ort_env.py` for runtime setup and,
   on Android, defaults to the Google LiteRT 1.4.x track
   (`com.google.ai.edge.litert:litert`) and can auto-download fallback
   `org.tensorflow:tensorflow-lite` AARs, then extract
   `libtensorflowlite_jni.so` and `libtensorflowlite_flex_jni.so` into
-  `benchmark/artifacts/tools/litert/`. Select TF Ops/Flex side libraries are
-  optional and no longer block runtime setup when a matching AAR is unavailable.
+  `benchmark/artifacts/tools/litert/`, with automatic fallback to
+  `benchmark/artifacts_local/tools/litert` when the main artifacts root is
+  unavailable. Set `DART_MLX_LITERT_TOOLS_DIR` to force a custom cache root.
+  Select TF Ops/Flex side libraries are optional and no longer block runtime
+  setup when a matching AAR is unavailable.
   Raw `.tflite` files execute directly. `.task` and `.litertlm` containers are
   scanned for embedded `TFL3` flatbuffers; a single embedded model is extracted
   automatically, while multi-section containers require
   `--litert-section-index N` / `backendOptions.litertSectionIndex` or a
   higher-level LiteRT-LM/MediaPipe runner.
+  Componentized LiteRT artifacts can also be wrapped in
+  `dart_mlx_ffi.litert_pipeline.v1` JSON specs. Each model stage is a real
+  LiteRT/TFLite session and must declare explicit `inputs` mappings because the
+  generic pipeline runner resolves stage tensors by the pipeline tensor map
+  rather than by an engine-specific graph inspector. The same native
+  `scatter_embeddings` op is available for VLM-style embedding injection, so
+  ONNX component pipelines can be converted stage by stage into equivalent
+  LiteRT pipelines instead of collapsing everything into one flatbuffer.
+  Verify this native path with:
+
+```sh
+uv run python benchmark/runtime/litert_smoke.py
+```
+
+  Matrix runners (`runners/litert_runner.py`) and artifact health probes now
+  auto-resolve this environment before invoking the Dart runner.
 
 All native backend diagnostics include the discovered `input_names` and
 `output_names` where the runtime exposes them. These names are kept in matrix

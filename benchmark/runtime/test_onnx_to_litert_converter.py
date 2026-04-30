@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 RUNTIME_DIR = Path(__file__).resolve().parent
@@ -14,12 +15,16 @@ from onnx_to_litert import (
     _build_onnx2tf_runners,
     _find_auto_prf_path,
     _parse_source_candidate,
+    _patch_external_data_resave_source,
     _patch_sequence_lookup_source,
     _patch_slice_source,
     _patch_sequenceempty_source,
+    _patch_trilu_source,
     _patch_unsqueeze_source,
     _pick_tflite,
     _resolve_onnx_artifact,
+    _run_onnx2tf_attempt,
+    _uv_archive_onnx2tf_module_paths,
 )
 
 
@@ -38,6 +43,15 @@ class OnnxToLiteRtConverterTest(unittest.TestCase):
 
         picked = _pick_tflite(self.tmp)
         self.assertEqual(picked, drq)
+
+    def test_pick_tflite_can_prefer_float16_file(self) -> None:
+        drq = self.tmp / "model_dynamic_range_quant.tflite"
+        fp16 = self.tmp / "model_float16.tflite"
+        drq.write_bytes(b"tflite")
+        fp16.write_bytes(b"tflite")
+
+        picked = _pick_tflite(self.tmp, preference="float16")
+        self.assertEqual(picked, fp16)
 
     def test_resolve_onnx_artifact_uses_existing_local_path(self) -> None:
         artifact = self.tmp / "model.onnx"
@@ -78,7 +92,14 @@ class OnnxToLiteRtConverterTest(unittest.TestCase):
         )
 
     def test_patch_unsqueeze_source(self) -> None:
-        original = """    if input_tensor.shape != tf.TensorShape(None):
+        original = """
+
+@print_node_info
+def make_node():
+    axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \\
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+
+    if input_tensor.shape != tf.TensorShape(None):
         input_tensor_shape = list(input_tensor.shape)
         tensor_rank = len(input_tensor_shape)
     elif graph_node_output.shape is not None:
@@ -92,6 +113,8 @@ class OnnxToLiteRtConverterTest(unittest.TestCase):
 """
         patched, changed = _patch_unsqueeze_source(original)
         self.assertTrue(changed)
+        self.assertIn("def _lookup_unsqueeze_axes(", patched)
+        self.assertIn("_lookup_unsqueeze_axes(tf_layers_dict, graph_node_input_2)", patched)
         self.assertIn("else:", patched)
         self.assertIn("input_tensor_shape = [None]", patched)
 
@@ -129,6 +152,27 @@ def make_node(*, graph_node: gs.Node, tf_layers_dict: dict, **kwargs: dict):
         self.assertIn("def _lookup_tf_node(", patched)
         self.assertIn("_lookup_tf_node(tf_layers_dict, graph_node_input_1)", patched)
 
+    def test_patch_trilu_dynamic_shape_source(self) -> None:
+        original = """    if k is not None:
+        if k > tensor_shape[-1]:
+            k = tensor_shape[-1]
+        elif k < 0 - tensor_shape[-2]:
+            k = 0 - tensor_shape[-2]
+"""
+        patched, changed = _patch_trilu_source(original)
+
+        self.assertTrue(changed)
+        self.assertIn("tensor_shape[-1] is not None", patched)
+        self.assertIn("tensor_shape[-2] is not None", patched)
+
+    def test_patch_external_data_resave_source(self) -> None:
+        original = "                        onnx.save(estimated_graph, f=input_onnx_file_path)"
+        patched, changed = _patch_external_data_resave_source(original)
+
+        self.assertTrue(changed)
+        self.assertIn("onnx.save_model(", patched)
+        self.assertIn("save_as_external_data=True", patched)
+
     def test_build_onnx2tf_runners_includes_isolated_fallback(self) -> None:
         runners = _build_onnx2tf_runners(
             fallback_isolated_onnx2tf2=True,
@@ -160,6 +204,45 @@ def make_node(*, graph_node: gs.Node, tf_layers_dict: dict, **kwargs: dict):
             isolated_workdir=None,
         )
         self.assertEqual([runner.id for runner in runners], ["local"])
+
+    def test_uv_archive_paths_honor_uv_cache_dir(self) -> None:
+        module = (
+            self.tmp
+            / "uv-cache"
+            / "archive-v0"
+            / "pkg"
+            / "lib"
+            / "python3.12"
+            / "site-packages"
+            / "onnx2tf"
+            / "ops"
+            / "Unsqueeze.py"
+        )
+        module.parent.mkdir(parents=True)
+        module.write_text("# patched target", encoding="utf-8")
+
+        with mock.patch.dict(
+            "os.environ",
+            {"UV_CACHE_DIR": str(self.tmp / "uv-cache")},
+            clear=False,
+        ):
+            paths = _uv_archive_onnx2tf_module_paths("Unsqueeze.py")
+
+        self.assertIn(module, paths)
+
+    def test_run_onnx2tf_attempt_marks_timeout(self) -> None:
+        log = self.tmp / "attempt.log"
+        result = _run_onnx2tf_attempt(
+            command=[sys.executable, "-c", "import time; time.sleep(2)"],
+            output_dir=self.tmp,
+            log_path=log,
+            cwd=None,
+            attempt_timeout_seconds=1,
+        )
+        self.assertEqual(result["returncode"], 124)
+        self.assertTrue(result["timed_out"])
+        text = log.read_text(encoding="utf-8")
+        self.assertIn("onnx2tf attempt timed out", text)
 
 
 if __name__ == "__main__":

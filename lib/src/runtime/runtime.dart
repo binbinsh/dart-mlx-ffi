@@ -296,15 +296,16 @@ final class RuntimeRegistry {
   }) {
     final resolution = resolve(spec, options);
     final selected = _runtimeFor(spec, resolution, options);
+    final effectiveOptions = _effectiveOptions(options, selected.resolution);
     final bundle = _resolveCachedBundle(
       ModelBundle(
         spec: spec,
         rootPath: rootPath,
         artifact: selected.resolution.artifact,
       ),
-      options,
+      effectiveOptions,
     );
-    return selected.runtime.load(bundle, options);
+    return selected.runtime.load(bundle, effectiveOptions);
   }
 
   /// Resolve remote artifacts if needed, then load the selected backend.
@@ -315,15 +316,16 @@ final class RuntimeRegistry {
   }) async {
     final resolution = resolve(spec, options);
     final selected = _runtimeFor(spec, resolution, options);
+    final effectiveOptions = _effectiveOptions(options, selected.resolution);
     final bundle = await _resolveBundle(
       ModelBundle(
         spec: spec,
         rootPath: rootPath,
         artifact: selected.resolution.artifact,
       ),
-      options,
+      effectiveOptions,
     );
-    return selected.runtime.load(bundle, options);
+    return selected.runtime.load(bundle, effectiveOptions);
   }
 
   _SelectedRuntime _runtimeFor(
@@ -395,6 +397,24 @@ final class RuntimeRegistry {
     }
     return null;
   }
+
+  RuntimeOptions _effectiveOptions(
+    RuntimeOptions options,
+    RuntimeResolution resolution,
+  ) {
+    if (options.prefer.isNotEmpty || resolution.accelerators.isEmpty) {
+      return options;
+    }
+    return RuntimeOptions(
+      engine: options.engine,
+      prefer: resolution.accelerators,
+      allowFallback: options.allowFallback,
+      diagnostics: options.diagnostics,
+      numThreads: options.numThreads,
+      backendOptions: options.backendOptions,
+      artifactResolver: options.artifactResolver,
+    );
+  }
 }
 
 final class _SelectedRuntime {
@@ -433,7 +453,7 @@ final class RuntimeResolver {
           platform: platform,
           engine: requested,
           artifact: artifact,
-          accelerators: _acceleratorsFor(requested, options),
+          accelerators: _acceleratorsFor(requested, options, platform),
         );
       }
       if (!options.allowFallback) {
@@ -454,7 +474,7 @@ final class RuntimeResolver {
         platform: platform,
         engine: engine,
         artifact: artifact,
-        accelerators: _acceleratorsFor(engine, options),
+        accelerators: _acceleratorsFor(engine, options, platform),
         fallbackReason: fallbackReason,
       );
     }
@@ -515,6 +535,7 @@ final class RuntimeResolver {
   List<Accelerator> _acceleratorsFor(
     RuntimeEngine engine,
     RuntimeOptions options,
+    RuntimePlatform platform,
   ) {
     if (options.prefer.isNotEmpty) return options.prefer;
     return switch (engine) {
@@ -524,7 +545,10 @@ final class RuntimeResolver {
         Accelerator.gpu,
         Accelerator.cpu,
       ],
-      RuntimeEngine.onnx => const [Accelerator.gpu, Accelerator.cpu],
+      RuntimeEngine.onnx =>
+        platform == RuntimePlatform.android
+            ? const [Accelerator.npu, Accelerator.gpu, Accelerator.cpu]
+            : const [Accelerator.gpu, Accelerator.cpu],
       RuntimeEngine.litert => const [
         Accelerator.gpu,
         Accelerator.npu,

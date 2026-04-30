@@ -1,5 +1,6 @@
 #include "runtime_bridge.h"
 #include "options.h"
+#include "runtime_pipeline.h"
 
 #include <algorithm>
 #include <cstdarg>
@@ -32,6 +33,17 @@ struct TfLiteTensor;
 struct TfLiteDelegate;
 
 using TfLiteStatus = int;
+
+struct TfLiteNnapiDelegateOptions {
+  int execution_preference;
+  const char* accelerator_name;
+  const char* cache_dir;
+  const char* model_token;
+  int disallow_nnapi_cpu;
+  int allow_fp16;
+  int max_number_delegated_partitions;
+  void* nnapi_support_library_handle;
+};
 
 class SharedLibrary {
  public:
@@ -111,7 +123,8 @@ struct LiteRtApi {
   void (*XNNPackDelegateDelete)(TfLiteDelegate*);
   TfLiteDelegate* (*GpuDelegateCreate)(const void*);
   void (*GpuDelegateDelete)(TfLiteDelegate*);
-  TfLiteDelegate* (*NnApiDelegateCreate)(const void*);
+  TfLiteDelegate* (*NnApiDelegateCreate)(const TfLiteNnapiDelegateOptions*);
+  TfLiteNnapiDelegateOptions (*NnApiDelegateOptionsDefault)();
   void (*NnApiDelegateDelete)(TfLiteDelegate*);
 };
 
@@ -317,6 +330,15 @@ bool load_api(SharedLibrary& library, LiteRtApi* api, std::string* error) {
   }
   library.load("TfLiteNnApiDelegateCreate", &api->NnApiDelegateCreate);
   library.load("TfLiteNnApiDelegateDelete", &api->NnApiDelegateDelete);
+  if (api->NnApiDelegateCreate == nullptr) {
+    library.load("TfLiteNnapiDelegateCreate", &api->NnApiDelegateCreate);
+  }
+  if (api->NnApiDelegateDelete == nullptr) {
+    library.load("TfLiteNnapiDelegateDelete", &api->NnApiDelegateDelete);
+  }
+  library.load(
+      "TfLiteNnapiDelegateOptionsDefault",
+      &api->NnApiDelegateOptionsDefault);
   library.load(
       "TfLiteInterpreterOptionsSetErrorReporter",
       &api->OptionsSetErrorReporter);
@@ -648,6 +670,50 @@ bool add_symbol_delegate(
   return true;
 }
 
+bool add_nnapi_delegate(
+    const LiteRtApi& api,
+    TfLiteInterpreterOptions* options,
+    const char* options_json,
+    std::vector<DelegateHandle>* delegates,
+    std::string* error,
+    bool required) {
+  if (api.NnApiDelegateCreate == nullptr ||
+      api.NnApiDelegateOptionsDefault == nullptr ||
+      api.NnApiDelegateDelete == nullptr) {
+    if (required) {
+      *error = "LiteRT delegate symbols are not available: nnapi";
+      return false;
+    }
+    return true;
+  }
+  TfLiteNnapiDelegateOptions nnapi_options =
+      api.NnApiDelegateOptionsDefault();
+  nnapi_options.disallow_nnapi_cpu =
+      dmf_option_bool(options_json, "nnapiDisallowCpu", false) ? 1 : 0;
+  nnapi_options.allow_fp16 =
+      dmf_option_bool(options_json, "nnapiAllowFp16", false) ? 1 : 0;
+  const int max_partitions =
+      dmf_option_int(options_json, "nnapiMaxDelegatedPartitions", -1);
+  if (max_partitions > 0) {
+    nnapi_options.max_number_delegated_partitions = max_partitions;
+  }
+  const int preference = dmf_option_int(options_json, "nnapiPreference", -2);
+  if (preference >= -1 && preference <= 2) {
+    nnapi_options.execution_preference = preference;
+  }
+  TfLiteDelegate* delegate = api.NnApiDelegateCreate(&nnapi_options);
+  if (delegate == nullptr) {
+    if (required) {
+      *error = "LiteRT delegate create failed: nnapi";
+      return false;
+    }
+    return true;
+  }
+  api.OptionsAddDelegate(options, delegate);
+  delegates->push_back({delegate, api.NnApiDelegateDelete});
+  return true;
+}
+
 bool resolve_input_indices(
     const LiteRtApi& api,
     TfLiteInterpreter* interpreter,
@@ -939,6 +1005,18 @@ DmfRuntimeSession* dmf_create_litert_session(
     const char* model_path,
     const char* options_json,
     std::string* error) {
+  if (auto* pipeline = dmf_try_create_pipeline_session(
+          model_path,
+          options_json,
+          "litert",
+          "dart_mlx_ffi.litert_pipeline.v1",
+          dmf_create_litert_session,
+          error)) {
+    return pipeline;
+  }
+  if (!error->empty()) {
+    return nullptr;
+  }
   std::vector<std::string> attempted;
   for (const auto& candidate : library_candidates()) {
     attempted.push_back(candidate);
@@ -995,15 +1073,8 @@ DmfRuntimeSession* dmf_create_litert_session(
     }
     if (delegate == "nnapi" || delegate == "npu") {
       const auto before = delegates.size();
-      if (!add_symbol_delegate(
-              api.NnApiDelegateCreate,
-              api.NnApiDelegateDelete,
-              "nnapi",
-              options,
-              api,
-              &delegates,
-              error,
-              require_delegate)) {
+      if (!add_nnapi_delegate(
+              api, options, options_json, &delegates, error, require_delegate)) {
         api.OptionsDelete(options);
         api.ModelDelete(model);
         return nullptr;

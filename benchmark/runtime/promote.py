@@ -10,6 +10,7 @@ import yaml
 from matrix_config import (
     artifact_coverage,
     artifact_unblocks_platform,
+    blocked_engine_reason,
     blocked_platform_reason,
     fallback_reason,
 )
@@ -107,6 +108,10 @@ def _model_patch(
     artifact_model: dict[str, Any],
 ) -> dict[str, Any]:
     model_id = model["id"]
+    platform_artifacts = _platform_artifacts_patch(
+        model_id=model_id,
+        artifact_model=artifact_model,
+    )
     statuses: dict[str, Any] = {}
     missing: list[str] = []
     failed: list[str] = []
@@ -114,8 +119,14 @@ def _model_patch(
     for platform in required_platforms:
         blocker = None
         fallback = fallback_reason(artifact_model, platform)
+        platform_cell = ((artifact_model.get("platforms") or {}).get(platform) or {})
+        engine = platform_cell.get("engine") if isinstance(platform_cell, dict) else None
         if not artifact_unblocks_platform(artifact_model, platform):
             blocker = blocked_platform_reason(model, platform)
+        if not blocker and isinstance(engine, str):
+            blocker = blocked_engine_reason(artifact_model, platform, engine) or (
+                blocked_engine_reason(model, platform, engine)
+            )
         if fallback or blocker:
             blocked[platform] = fallback or blocker or ""
             continue
@@ -127,6 +138,7 @@ def _model_patch(
         statuses[platform] = status
         if not (
             status["promotionPassed"]
+            and status["identityPassed"]
             and status["correctnessPassed"]
             and status["speedPassed"]
             and status["peakMemoryPassed"]
@@ -154,6 +166,8 @@ def _model_patch(
         "artifactCoverage": _effective_coverage(model, artifact_model),
         "validationStatus": statuses,
     }
+    if platform_artifacts:
+        record["platformArtifacts"] = platform_artifacts
     if blocked:
         record["blockedPlatforms"] = blocked
     if notes:
@@ -174,6 +188,7 @@ def _status_from_verdict(
     status = {
         "platform": platform,
         "engine": _engine_for(candidate),
+        "identityPassed": bool((verdict.get("identity") or {}).get("passed")),
         "correctnessPassed": bool((verdict.get("correctness") or {}).get("passed")),
         "speedPassed": bool((verdict.get("speed") or {}).get("passed")),
         "peakMemoryPassed": bool((verdict.get("peak_memory") or {}).get("passed")),
@@ -197,6 +212,9 @@ def _status_from_verdict(
     ttft_ratio = _first_check_value(verdict, "speed", ["ttft_ratio"])
     if ttft_ratio is not None:
         status["ttftRatio"] = ttft_ratio
+    end_to_end_ratio = _first_check_value(verdict, "speed", ["end_to_end_ratio"])
+    if end_to_end_ratio is not None:
+        status["endToEndRatio"] = end_to_end_ratio
     peak_ratio = _first_check_value(verdict, "peak_memory", ["peak_memory_ratio"])
     if peak_ratio is not None:
         status["peakMemoryRatio"] = peak_ratio
@@ -207,6 +225,24 @@ def _status_from_verdict(
         status["peakMemoryBytes"] = int(candidate_peak)
     if baseline_peak is not None:
         status["baselinePeakMemoryBytes"] = int(baseline_peak)
+
+    candidate_metrics = candidate.get("metrics") or {}
+    baseline_metrics = baseline.get("metrics") or {}
+    if candidate_metrics.get("iteration_count") is not None:
+        status["iterationCount"] = int(candidate_metrics["iteration_count"])
+    if candidate_metrics.get("warmup_count") is not None:
+        status["warmupCount"] = int(candidate_metrics["warmup_count"])
+    latency = _latency_summary(candidate_metrics)
+    if latency:
+        status["latencyMs"] = latency
+    baseline_latency = _latency_summary(baseline_metrics)
+    if baseline_latency:
+        status["baselineLatencyMs"] = baseline_latency
+    if candidate.get("run_config") is not None:
+        status["runConfig"] = candidate["run_config"]
+    input_signature = _input_signature_for_status(candidate)
+    if input_signature is not None:
+        status["inputSignature"] = input_signature
 
     notes = _status_notes(payload, model_id, platform)
     if notes:
@@ -227,6 +263,123 @@ def _engine_for(candidate: dict[str, Any]) -> str:
     return "mlx"
 
 
+def _platform_artifacts_patch(
+    *,
+    model_id: str,
+    artifact_model: dict[str, Any],
+) -> dict[str, Any]:
+    platforms = artifact_model.get("platforms")
+    if not isinstance(platforms, dict):
+        return {}
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for platform, raw in sorted(platforms.items()):
+        if not isinstance(platform, str):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        engine = raw.get("engine")
+        artifact = raw.get("artifact")
+        if not isinstance(engine, str) or not engine:
+            continue
+        if not isinstance(artifact, str) or not artifact:
+            continue
+        source_uri = raw.get("source_uri")
+        if not isinstance(source_uri, str) or not source_uri:
+            source_uri = artifact
+
+        state = grouped.setdefault(
+            engine,
+            {
+                "path": artifact,
+                "sourceUri": source_uri,
+                "targetPlatforms": [],
+                "platformEntries": [],
+            },
+        )
+        state["targetPlatforms"].append(platform)
+        state["platformEntries"].append(
+            {
+                "platform": platform,
+                "artifact": artifact,
+                "sourceUri": source_uri,
+                "artifactSource": raw.get("artifact_source"),
+                "fallbackFrom": raw.get("fallback_from"),
+            }
+        )
+
+    patch: dict[str, Any] = {}
+    for engine, state in grouped.items():
+        target_platforms = sorted({*state["targetPlatforms"]})
+        patch[engine] = {
+            "engine": engine,
+            "path": state["path"],
+            "sourceUri": state["sourceUri"],
+            "format": _artifact_format(engine, str(state["path"])),
+            "targetPlatforms": target_platforms,
+            "accelerators": _accelerators_for_engine(engine),
+            "metadata": {
+                "source": "runtime_matrix",
+                "modelId": model_id,
+                "platformEntries": state["platformEntries"],
+            },
+        }
+    return patch
+
+
+def _artifact_format(engine: str, path: str) -> str:
+    lower = path.lower()
+    if lower.endswith(".json"):
+        payload = _read_json_if_exists(Path(path))
+        format_name = payload.get("format")
+        if isinstance(format_name, str):
+            if format_name == "dart_mlx_ffi.coreml_pipeline.v1":
+                return "coreml-pipeline"
+            if format_name == "dart_mlx_ffi.onnx_pipeline.v1":
+                return "onnx-pipeline"
+            if format_name == "dart_mlx_ffi.litert_pipeline.v1":
+                return "litert-pipeline"
+        if engine == "coreml":
+            return "coreml-pipeline"
+        if engine == "onnx":
+            return "onnx-pipeline"
+        if engine == "litert":
+            return "litert-pipeline"
+    if engine == "mlx":
+        return "mlx-safetensors"
+    if engine == "coreml":
+        return "coreml-bundle"
+    if engine == "onnx":
+        return "onnx"
+    if engine == "litert":
+        return "tflite"
+    return "unknown"
+
+
+def _accelerators_for_engine(engine: str) -> list[str]:
+    if engine == "coreml":
+        return ["ane", "gpu", "cpu"]
+    if engine == "onnx":
+        return ["gpu", "cpu"]
+    if engine == "litert":
+        return ["npu", "gpu", "cpu"]
+    if engine == "mlx":
+        return ["gpu", "cpu"]
+    return ["cpu"]
+
+
+def _read_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists() or not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
 def _first_check_value(
     verdict: dict[str, Any],
     section: str,
@@ -241,13 +394,38 @@ def _first_check_value(
     return None
 
 
+def _latency_summary(metrics: dict[str, Any]) -> dict[str, Any]:
+    latency = metrics.get("latency_ms")
+    if not isinstance(latency, dict):
+        return {}
+    summary: dict[str, Any] = {}
+    for key in ("mean", "p50", "p95"):
+        value = latency.get(key)
+        if value is not None:
+            summary[key] = float(value)
+    values = latency.get("values")
+    if isinstance(values, list):
+        summary["sampleCount"] = len(values)
+    return summary
+
+
+def _input_signature_for_status(candidate: dict[str, Any]) -> Any:
+    signature = candidate.get("input_signature")
+    if signature is not None:
+        return signature
+    digest = candidate.get("input_digest")
+    if digest is not None:
+        return {"digest": digest}
+    return None
+
+
 def _status_notes(payload: dict[str, Any], model_id: str, platform: str) -> list[str]:
     notes = []
     mismatches = payload.get("mismatches") or []
     if mismatches:
         notes.append(f"Report identity mismatch for {model_id}/{platform}")
     verdict = payload.get("verdict") or {}
-    for section in ("correctness", "speed", "peak_memory", "device_profile"):
+    for section in ("identity", "correctness", "speed", "peak_memory", "device_profile"):
         data = verdict.get(section) or {}
         if data.get("passed") is False:
             failed = [

@@ -5,13 +5,16 @@ import json
 import selectors
 import subprocess
 import time
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 
 MARKER = "DMF_RUNTIME_SMOKE_RESULT:"
 MARKER_BEGIN = "DMF_RUNTIME_SMOKE_RESULT_BEGIN"
 MARKER_CHUNK = "DMF_RUNTIME_SMOKE_RESULT_CHUNK:"
 MARKER_END = "DMF_RUNTIME_SMOKE_RESULT_END"
+ROOT = Path(__file__).resolve().parents[2]
+RUNTIME_ENV_FILE = ROOT / ".dart_mlx_runtime_env.json"
 
 
 def extract_marker_payload(line: str) -> dict[str, Any] | None:
@@ -156,11 +159,28 @@ def terminate_process(process: subprocess.Popen[str]) -> None:
         process.stderr.close()
 
 
+def write_runtime_env_file(values: dict[str, str]) -> Path:
+    payload = dict(values)
+    RUNTIME_ENV_FILE.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return RUNTIME_ENV_FILE
+
+
+def clear_runtime_env_file(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def capture_runtime_smoke(
     process: subprocess.Popen[str],
     *,
     timeout_seconds: int,
     parser: MarkerParser,
+    line_observer: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, Any] | None, bool, list[str]]:
     marker_payload: dict[str, Any] | None = None
     timed_out = False
@@ -188,6 +208,8 @@ def capture_runtime_smoke(
             line = line.rstrip("\n")
             print(line, flush=True)
             lines.append(line)
+            if line_observer is not None:
+                line_observer(line)
             marker_payload = parser.feed(line)
             if marker_payload is not None:
                 break

@@ -39,6 +39,11 @@ def main() -> None:
         ),
     )
     parser.add_argument("--model-id")
+    parser.add_argument(
+        "--search-report",
+        type=Path,
+        help="Optional Hugging Face search report used as blocker evidence.",
+    )
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
 
@@ -47,6 +52,7 @@ def main() -> None:
         out_root=args.out_root,
         artifacts_path=args.artifacts,
         model_id=args.model_id,
+        search_report_path=args.search_report,
     )
     text = json.dumps(payload, indent=2, ensure_ascii=False)
     if args.out:
@@ -61,9 +67,11 @@ def audit(
     out_root: Path,
     artifacts_path: Path | None = None,
     model_id: str | None = None,
+    search_report_path: Path | None = None,
 ) -> dict[str, Any]:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     artifacts = _read_yaml(artifacts_path) if artifacts_path else {}
+    search_report = _read_json(search_report_path) if search_report_path else {}
     required_platforms = (
         config.get("support_policy", {})
         .get("production_requires", {})
@@ -78,6 +86,8 @@ def audit(
             platforms=required_platforms,
             out_root=out_root,
             artifact_model=((artifacts.get("models") or {}).get(model.get("id")) or {}),
+            search_record=_search_record(search_report, str(model.get("id") or "")),
+            search_report_path=search_report_path,
         )
         for model in models
     ]
@@ -105,6 +115,8 @@ def _audit_model(
     platforms: list[str],
     out_root: Path,
     artifact_model: dict[str, Any],
+    search_record: dict[str, Any] | None,
+    search_report_path: Path | None,
 ) -> dict[str, Any]:
     model_id = model["id"]
     platform_records = []
@@ -141,6 +153,9 @@ def _audit_model(
         }
         if fallback or blocker:
             record["blocked_reason"] = fallback or blocker
+            evidence = _search_evidence(search_record, search_report_path)
+            if evidence:
+                record["search_evidence"] = evidence
         platform_records.append(record)
     passed_count = sum(1 for item in platform_records if item["state"] == "passed")
     failed_count = sum(1 for item in platform_records if item["state"] == "failed")
@@ -176,6 +191,55 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return decoded if isinstance(decoded, dict) else {}
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    decoded = json.loads(path.read_text(encoding="utf-8"))
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _search_record(
+    report: dict[str, Any],
+    model_id: str,
+) -> dict[str, Any] | None:
+    for record in report.get("models") or []:
+        if isinstance(record, dict) and str(record.get("id") or "") == model_id:
+            return record
+    return None
+
+
+def _search_evidence(
+    record: dict[str, Any] | None,
+    report_path: Path | None,
+) -> dict[str, Any] | None:
+    if not record:
+        return None
+    runtime_candidates = record.get("runtime_candidates") or []
+    component_candidates = record.get("component_candidates") or []
+    evidence: dict[str, Any] = {
+        "runtime_candidate_count": len(runtime_candidates),
+        "component_candidate_count": len(component_candidates),
+    }
+    if report_path is not None:
+        evidence["report"] = str(report_path)
+    if runtime_candidates:
+        evidence["runtime_repos"] = _candidate_repos(runtime_candidates)
+    if component_candidates:
+        evidence["component_repos"] = _candidate_repos(component_candidates)
+    return evidence
+
+
+def _candidate_repos(candidates: list[Any]) -> list[str]:
+    repos = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        repo = str(candidate.get("repo") or "")
+        if repo and repo not in seen:
+            repos.append(repo)
+            seen.add(repo)
+    return repos
+
+
 def _effective_coverage(
     model: dict[str, Any],
     artifact_model: dict[str, Any],
@@ -186,6 +250,7 @@ def _effective_coverage(
 
 def _gate_status(verdict: dict[str, Any]) -> dict[str, bool]:
     return {
+        "identity": bool((verdict.get("identity") or {}).get("passed")),
         "correctness": bool((verdict.get("correctness") or {}).get("passed")),
         "speed": bool((verdict.get("speed") or {}).get("passed")),
         "peak_memory": bool((verdict.get("peak_memory") or {}).get("passed")),
@@ -197,7 +262,7 @@ def _gate_status(verdict: dict[str, Any]) -> dict[str, bool]:
 
 def _failed_checks(verdict: dict[str, Any]) -> list[str]:
     failed = []
-    for section in ("correctness", "speed", "peak_memory", "device_profile"):
+    for section in ("identity", "correctness", "speed", "peak_memory", "device_profile"):
         data = verdict.get(section) or {}
         for check in data.get("checks", []):
             if isinstance(check, dict) and check.get("passed") is False:

@@ -35,24 +35,30 @@ final class NativeModelRuntime implements ModelRuntime {
   NativeModelRuntime(this.engine);
 
   @override
-  RuntimeCapabilities get capabilities => RuntimeCapabilities(
-    engine: engine,
-    platform: RuntimePlatformCurrent.current(),
-    accelerators: switch (engine) {
-      RuntimeEngine.coreml => const [
-        Accelerator.ane,
-        Accelerator.gpu,
-        Accelerator.cpu,
-      ],
-      RuntimeEngine.onnx => const [Accelerator.gpu, Accelerator.cpu],
-      RuntimeEngine.litert => const [
-        Accelerator.gpu,
-        Accelerator.npu,
-        Accelerator.cpu,
-      ],
-      RuntimeEngine.mlx => const [Accelerator.gpu, Accelerator.cpu],
-    },
-  );
+  RuntimeCapabilities get capabilities {
+    final platform = RuntimePlatformCurrent.current();
+    return RuntimeCapabilities(
+      engine: engine,
+      platform: platform,
+      accelerators: switch (engine) {
+        RuntimeEngine.coreml => const [
+          Accelerator.ane,
+          Accelerator.gpu,
+          Accelerator.cpu,
+        ],
+        RuntimeEngine.onnx =>
+          platform == RuntimePlatform.android
+              ? const [Accelerator.npu, Accelerator.gpu, Accelerator.cpu]
+              : const [Accelerator.gpu, Accelerator.cpu],
+        RuntimeEngine.litert => const [
+          Accelerator.gpu,
+          Accelerator.npu,
+          Accelerator.cpu,
+        ],
+        RuntimeEngine.mlx => const [Accelerator.gpu, Accelerator.cpu],
+      },
+    );
+  }
 
   final RuntimeEngine engine;
 

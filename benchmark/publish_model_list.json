@@ -1,27 +1,17 @@
 [
   {
-    "model_id": "unsloth/gemma-4-E2B-it-UD-MLX-4bit",
+    "model_id": "mlx-community/gemma-4-e4b-it-4bit",
     "kind": "text",
     "runner": "unsloth_mlx",
     "published_at": "2026-04-02T20:02:41+00:00"
   },
   {
-    "model_id": "mlx-community/Qwen3.5-27B-4bit-DWQ",
+    "model_id": "mlx-community/Qwen3.6-27B-4bit",
     "kind": "text",
     "published_at": "2026-04-01T00:00:00+00:00"
   },
   {
-    "model_id": "mlx-community/translategemma-27b-it-4bit",
-    "kind": "text",
-    "published_at": "2026-04-01T00:00:00+00:00"
-  },
-  {
-    "model_id": "mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit",
-    "kind": "text",
-    "published_at": "2026-04-01T00:00:00+00:00"
-  },
-  {
-    "model_id": "mlx-community/GLM-4.7-Flash-4bit",
+    "model_id": "mlx-community/translategemma-4b-it-4bit",
     "kind": "text",
     "published_at": "2026-04-01T00:00:00+00:00"
   },
@@ -47,10 +37,10 @@
     "published_at": "2026-04-01T00:00:00+00:00"
   },
   {
-    "model_id": "mlx-community/kitten-tts-nano-0.8-6bit",
+    "model_id": "mlx-community/kitten-tts-mini-0.8-8bit",
     "kind": "tts",
     "runner": "kitten",
-    "name": "kitten_tts_nano_08",
+    "name": "kitten_tts_mini_08",
     "published_at": "2026-04-01T00:00:00+00:00"
   }
 ]

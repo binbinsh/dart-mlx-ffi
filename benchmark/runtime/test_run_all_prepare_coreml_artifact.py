@@ -124,6 +124,56 @@ class RunAllPrepareCoreMlArtifactTest(unittest.TestCase):
         command = plan["cells"][0]["prepare_input_command"]
         self.assertNotIn("--coreml-artifact", command)
 
+    def test_prepare_inputs_passes_litert_artifact_for_local_paths(self) -> None:
+        artifact = self.tmp / "model.tflite"
+        artifact.write_bytes(b"tflite")
+        artifacts_path = self.tmp / "artifacts.yaml"
+        artifacts_path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "models": {
+                        "silero_vad": {
+                            "source_model": "snakers4/silero-vad",
+                            "task": "vad",
+                            "platforms": {
+                                "android": {
+                                    "engine": "litert",
+                                    "artifact": str(artifact),
+                                    "baseline_engine": "litert",
+                                }
+                            },
+                        }
+                    },
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+
+        plan = build_plan(
+            Namespace(
+                config=ROOT / "benchmark/runtime/models.yaml",
+                artifacts=artifacts_path,
+                model_id="silero_vad",
+                platform="android",
+                engine="litert",
+                out_root=self.tmp / "out",
+                plan_out=None,
+                run=True,
+                prepare_inputs=True,
+                allow_fail=True,
+                dry_run=False,
+                path_check="always",
+                execution_check="none",
+                artifact_health_check="none",
+            )
+        )
+
+        command = plan["cells"][0]["prepare_input_command"]
+        self.assertIn("--litert-artifact", command)
+        self.assertIn(str(artifact), command)
+
 
 if __name__ == "__main__":
     unittest.main()

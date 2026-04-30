@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,24 @@ RUNTIME_DIR = Path(__file__).resolve().parent
 DEFAULT_RECIPES = RUNTIME_DIR / "conversion_recipes.yaml"
 DEFAULT_OUT = RUNTIME_DIR / "artifacts.converted.yaml"
 DEFAULT_HF_CATALOG = RUNTIME_DIR / "hf_artifacts.yaml"
+
+from convert_artifacts_support import (
+    _artifact_health_command,
+    _classify_conversion_failure,
+    _converter_cache_env,
+    _existing_log_path,
+    _expand_command,
+    _expand_env,
+    _find_artifact,
+    _normalized_extra_args,
+    _normalized_with_packages,
+    _read_yaml,
+    _rel,
+    _resolve_path,
+    _run_tool_command,
+    _safe_tool_name,
+    _seed_models_from_catalog,
+)
 
 
 def main() -> None:
@@ -73,6 +90,14 @@ def main() -> None:
         default=0.0,
         help="Skip conversion when the output filesystem has less free space.",
     )
+    parser.add_argument(
+        "--timeout-seconds-override",
+        type=int,
+        help=(
+            "Override recipe timeout_seconds for every conversion in this run. "
+            "Useful for capping long-running exports during probes."
+        ),
+    )
     args = parser.parse_args()
 
     recipes = _read_yaml(args.recipes)
@@ -94,6 +119,7 @@ def main() -> None:
         allow_health_fail=args.allow_health_fail,
         allow_conversion_fail=args.allow_conversion_fail,
         min_free_gb=args.min_free_gb,
+        timeout_seconds_override=args.timeout_seconds_override,
     )
     result = converter.run()
     print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -120,6 +146,8 @@ class ArtifactConverter:
         allow_health_fail: bool,
         allow_conversion_fail: bool,
         min_free_gb: float,
+        timeout_seconds_override: int | None = None,
+        import_existing_records: bool = True,
     ) -> None:
         self.recipes = recipes
         self.recipes_path = recipes_path
@@ -144,10 +172,22 @@ class ArtifactConverter:
         self.allow_health_fail = allow_health_fail
         self.allow_conversion_fail = allow_conversion_fail
         self.min_free_gb = min_free_gb
+        self.timeout_seconds_override = timeout_seconds_override
+        self.import_existing_records = import_existing_records
+        if (
+            self.timeout_seconds_override is not None
+            and self.timeout_seconds_override <= 0
+        ):
+            raise SystemExit("--timeout-seconds-override must be a positive integer.")
 
     def run(self) -> dict[str, Any]:
         records = []
         artifact_map = self._base_artifact_map()
+        imported_records = (
+            self._merge_existing_records(artifact_map)
+            if self.import_existing_records and not self.dry_run
+            else []
+        )
         for model_id, model in self._models():
             for engine, recipe in self._recipes_for(model):
                 if self.engine_filter and engine not in self.engine_filter:
@@ -191,6 +231,7 @@ class ArtifactConverter:
             "conversion_failed_count": sum(
                 1 for item in records if item["state"] == "conversion_failed"
             ),
+            "imported_record_count": len(imported_records),
             "preflight_skipped_count": sum(
                 1 for item in records if item["state"] == "preflight_skipped"
             ),
@@ -253,12 +294,18 @@ class ArtifactConverter:
                     "timeout_seconds must be a positive integer for "
                     f"{model_id}/{engine}, got: {raw_timeout!r}"
                 )
+        if self.timeout_seconds_override is not None:
+            timeout_seconds = self.timeout_seconds_override
         output_dir = self.output_root / model_id / engine
         exporter = str(recipe.get("exporter") or "custom")
         extra_args, ignored_extra_args = _normalized_extra_args(
             exporter,
             recipe.get("extra_args") or [],
         )
+        extra_with = _normalized_with_packages(recipe.get("extra_with"))
+        with_args: list[str] = []
+        for package in extra_with:
+            with_args.extend(["--with", package])
         context = {
             "model_id": model_id,
             "engine": engine,
@@ -267,6 +314,7 @@ class ArtifactConverter:
             "export_task": str(recipe.get("export_task") or recipe.get("task") or ""),
             "opset": str(recipe.get("opset") or ""),
             "extra_args": extra_args,
+            "with_args": with_args,
         }
         for key, value in recipe.items():
             if isinstance(value, (str, int, float, bool)):
@@ -292,6 +340,10 @@ class ArtifactConverter:
             "timeout_seconds": timeout_seconds,
             "report_path": str(output_dir / "conversion_record.json"),
             "ignored_extra_args": ignored_extra_args,
+            "extra_with": extra_with,
+            "preflight_blocked": bool(recipe.get("preflight_blocked")),
+            "preflight_failure_class": recipe.get("preflight_failure_class"),
+            "preflight_failure_reason": recipe.get("preflight_failure_reason"),
             **tool,
         }
 
@@ -322,14 +374,25 @@ class ArtifactConverter:
             raise SystemExit(f"Missing converter command for {plan['model_id']}/{plan['engine']}")
         log_path = output_dir / "conversion.log"
         timeout_seconds = plan.get("timeout_seconds")
+        cache_env = _converter_cache_env()
         run_env = {
             **os.environ,
+            **cache_env,
             "PYTHONDONTWRITEBYTECODE": "1",
             **{
                 str(key): str(value)
                 for key, value in (plan.get("env") or {}).items()
             },
         }
+        for key in (
+            "VIRTUAL_ENV",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "CONDA_PREFIX",
+            "__PYVENV_LAUNCHER__",
+            "PYTHONEXECUTABLE",
+        ):
+            run_env.pop(key, None)
         with log_path.open("w", encoding="utf-8") as log:
             try:
                 completed = subprocess.run(
@@ -354,6 +417,8 @@ class ArtifactConverter:
                     extra={
                         "timeout_seconds": timeout_seconds,
                         "timed_out": True,
+                        "failure_class": "conversion_timeout",
+                        "failure_reason": "Converter exceeded timeout.",
                     },
                 )
                 if self.allow_conversion_fail:
@@ -398,6 +463,24 @@ class ArtifactConverter:
         )
 
     def _preflight(self, plan: dict[str, Any]) -> dict[str, Any] | None:
+        if plan.get("preflight_blocked"):
+            failure_class = str(
+                plan.get("preflight_failure_class") or "conversion_preflight_blocked"
+            )
+            failure_reason = str(
+                plan.get("preflight_failure_reason")
+                or "Recipe preflight blocked this conversion."
+            )
+            return self._record_failure(
+                plan,
+                state="preflight_skipped",
+                returncode=0,
+                reason=f"Skipped by recipe preflight: {failure_reason}",
+                extra={
+                    "failure_class": failure_class,
+                    "failure_reason": failure_reason,
+                },
+            )
         if self.min_free_gb <= 0:
             return None
         output_dir = Path(plan["output_dir"])
@@ -564,11 +647,23 @@ class ArtifactConverter:
                 cell["provider"] = provider
             if delegate:
                 cell["delegate"] = delegate
+            if record.get("runner"):
+                cell["runner"] = record["runner"]
             health = health_by_platform.get(platform)
             if health:
                 cell["artifact_health_report"] = health["report"]
                 cell["artifact_health_passed"] = bool(health.get("passed"))
             platforms[platform] = cell
+            self._clear_blockers_for_platform(
+                model=model,
+                platform=platform,
+                engine=record["engine"],
+            )
+
+        if model.get("blocked_platforms"):
+            model["artifact_coverage"] = "partial"
+        else:
+            model["artifact_coverage"] = "converted"
 
     def _merge_blocker(
         self,
@@ -598,6 +693,18 @@ class ArtifactConverter:
                 if isinstance(platforms, dict)
                 else None
             )
+            if (
+                isinstance(platforms, dict)
+                and isinstance(platform_cell, dict)
+                and self._is_stale_converted_cell(
+                    platform_cell=platform_cell,
+                    record=record,
+                )
+            ):
+                platforms.pop(platform, None)
+                if not platforms:
+                    model.pop("platforms", None)
+                platform_cell = None
             if isinstance(platform_cell, dict) and platform_cell.get("artifact"):
                 blocked_engines = model.setdefault("blocked_engines", {})
                 engine_blockers = blocked_engines.setdefault(platform, {})
@@ -639,6 +746,113 @@ class ArtifactConverter:
                 logs = model.setdefault("blocked_platform_logs", {})
                 logs[platform] = str(record["log_path"])
 
+    def _is_stale_converted_cell(
+        self,
+        *,
+        platform_cell: dict[str, Any],
+        record: dict[str, Any],
+    ) -> bool:
+        if str(platform_cell.get("engine") or "") != str(record.get("engine") or ""):
+            return False
+        if str(platform_cell.get("artifact_source") or "") != "converted":
+            return False
+        expected_source = f"converted://{record['model_id']}/{record['engine']}"
+        source_uri = str(platform_cell.get("source_uri") or "")
+        return source_uri == expected_source or source_uri == ""
+
+    def _clear_blockers_for_platform(
+        self,
+        *,
+        model: dict[str, Any],
+        platform: str,
+        engine: str,
+    ) -> None:
+        self._clear_platform_engine_entry(
+            model=model,
+            key="blocked_engines",
+            platform=platform,
+            engine=engine,
+        )
+        self._clear_platform_engine_entry(
+            model=model,
+            key="blocked_engine_reports",
+            platform=platform,
+            engine=engine,
+        )
+        self._clear_platform_engine_entry(
+            model=model,
+            key="blocked_engine_failure_classes",
+            platform=platform,
+            engine=engine,
+        )
+        self._clear_platform_engine_entry(
+            model=model,
+            key="blocked_engine_failure_reasons",
+            platform=platform,
+            engine=engine,
+        )
+        self._clear_platform_engine_entry(
+            model=model,
+            key="blocked_engine_logs",
+            platform=platform,
+            engine=engine,
+        )
+        self._clear_platform_entry(model=model, key="blocked_platforms", platform=platform)
+        self._clear_platform_entry(
+            model=model,
+            key="blocked_platform_reports",
+            platform=platform,
+        )
+        self._clear_platform_entry(
+            model=model,
+            key="blocked_platform_failure_classes",
+            platform=platform,
+        )
+        self._clear_platform_entry(
+            model=model,
+            key="blocked_platform_failure_reasons",
+            platform=platform,
+        )
+        self._clear_platform_entry(
+            model=model,
+            key="blocked_platform_logs",
+            platform=platform,
+        )
+
+    def _clear_platform_engine_entry(
+        self,
+        *,
+        model: dict[str, Any],
+        key: str,
+        platform: str,
+        engine: str,
+    ) -> None:
+        root = model.get(key)
+        if not isinstance(root, dict):
+            return
+        platform_map = root.get(platform)
+        if not isinstance(platform_map, dict):
+            return
+        platform_map.pop(engine, None)
+        if not platform_map:
+            root.pop(platform, None)
+        if not root:
+            model.pop(key, None)
+
+    def _clear_platform_entry(
+        self,
+        *,
+        model: dict[str, Any],
+        key: str,
+        platform: str,
+    ) -> None:
+        root = model.get(key)
+        if not isinstance(root, dict):
+            return
+        root.pop(platform, None)
+        if not root:
+            model.pop(key, None)
+
     def _base_artifact_map(self) -> dict[str, Any]:
         if self.base_artifacts:
             return _read_yaml(self.base_artifacts)
@@ -646,11 +860,14 @@ class ArtifactConverter:
             Path(str(self.recipes.get("source_artifact_catalog") or DEFAULT_HF_CATALOG))
         )
         catalog = _read_yaml(catalog_path) if catalog_path.exists() else {}
+        inherited_models = {}
+        if bool(self.recipes.get("seed_models_from_catalog")):
+            inherited_models = _seed_models_from_catalog(catalog)
         return {
             "version": 1,
-            "source_catalog": _rel(self.recipes_path),
+            "source_catalog": _rel(catalog_path),
             "defaults": catalog.get("defaults") or {},
-            "models": {},
+            "models": inherited_models,
         }
 
     def _tool_context(self, recipe: dict[str, Any]) -> dict[str, str]:
@@ -667,6 +884,129 @@ class ArtifactConverter:
         if recipe.get("tool_ref"):
             result["tool_ref"] = str(recipe["tool_ref"])
         return result
+
+    def _merge_existing_records(self, artifact_map: dict[str, Any]) -> list[dict[str, Any]]:
+        if not self.output_root.exists():
+            return []
+        imported: list[dict[str, Any]] = []
+        known_model_ids = self._known_model_ids(artifact_map)
+        for path in sorted(self.output_root.glob("**/conversion_record.json")):
+            record = self._read_existing_record(path, artifact_map)
+            if record is None:
+                continue
+            if record["model_id"] not in known_model_ids:
+                continue
+            state = str(record.get("state") or "")
+            if state in {"converted", "reused"}:
+                artifact_text = record.get("artifact")
+                if not isinstance(artifact_text, str) or not artifact_text:
+                    continue
+                artifact = Path(artifact_text)
+                if not artifact.exists():
+                    continue
+                self._merge_artifact(artifact_map, record)
+                imported.append(
+                    {
+                        "model_id": record["model_id"],
+                        "engine": record["engine"],
+                        "state": state,
+                        "report_path": _rel(path),
+                    }
+                )
+                continue
+            if state in {"conversion_failed", "health_failed"} or (
+                state == "preflight_skipped" and bool(record.get("preflight_blocked"))
+            ):
+                self._merge_blocker(artifact_map, record)
+                imported.append(
+                    {
+                        "model_id": record["model_id"],
+                        "engine": record["engine"],
+                        "state": state,
+                        "report_path": _rel(path),
+                    }
+                )
+        return imported
+
+    def _known_model_ids(self, artifact_map: dict[str, Any]) -> set[str]:
+        known = {
+            str(model_id)
+            for model_id in (artifact_map.get("models") or {}).keys()
+            if str(model_id)
+        }
+        known.update(
+            str(model_id)
+            for model_id in (self.recipes.get("models") or {}).keys()
+            if str(model_id)
+        )
+        return known
+
+    def _read_existing_record(
+        self,
+        path: Path,
+        artifact_map: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        try:
+            decoded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(decoded, dict):
+            return None
+        model_id = str(decoded.get("model_id") or "").strip()
+        engine = str(decoded.get("engine") or "").strip()
+        if not model_id or not engine:
+            return None
+        platforms = decoded.get("platforms")
+        if isinstance(platforms, list):
+            normalized_platforms = [str(item) for item in platforms if str(item)]
+        else:
+            platform = str(decoded.get("platform") or "").strip()
+            normalized_platforms = [platform] if platform else []
+        if not normalized_platforms:
+            return None
+        model_defaults = (
+            ((artifact_map.get("models") or {}).get(model_id) or {})
+            if isinstance(artifact_map.get("models"), dict)
+            else {}
+        )
+        source_model = str(
+            decoded.get("source_model") or model_defaults.get("source_model") or ""
+        )
+        task = str(decoded.get("task") or model_defaults.get("task") or "text")
+        record = dict(decoded)
+        record["model_id"] = model_id
+        record["engine"] = engine
+        record["platforms"] = normalized_platforms
+        record["source_model"] = source_model
+        record["task"] = task
+        record.setdefault("report_path", str(path))
+        if (
+            record.get("state") == "health_failed"
+            and not isinstance(record.get("reason"), str)
+        ):
+            checks = record.get("health_checks")
+            if isinstance(checks, list):
+                failed = [
+                    str(item.get("platform"))
+                    for item in checks
+                    if isinstance(item, dict) and not bool(item.get("passed"))
+                ]
+                if failed:
+                    record["reason"] = (
+                        "Artifact health check failed on "
+                        + ", ".join(sorted(set(failed)))
+                        + "."
+                    )
+        if str(record.get("state") or "") in {"conversion_failed", "preflight_skipped"}:
+            log_path = _existing_log_path(record, path)
+            if log_path is not None and log_path.exists():
+                classified = _classify_conversion_failure(
+                    log_path,
+                    int(record.get("returncode") or 1),
+                )
+                if classified.get("failure_class"):
+                    record.update(classified)
+        return record
 
     def _ensure_tool(self, plan: dict[str, Any]) -> None:
         repo = plan.get("tool_repo")
@@ -686,264 +1026,6 @@ class ArtifactConverter:
         ref = plan.get("tool_ref")
         if ref:
             _run_tool_command(["git", "checkout", str(ref)], cwd=tool_dir)
-
-
-def _expand_command(command: list[Any], context: dict[str, Any]) -> list[str]:
-    result: list[str] = []
-    for item in command:
-        text = str(item)
-        if text == "{extra_args}":
-            result.extend(str(arg) for arg in context.get("extra_args") or [])
-            continue
-        result.append(text.format(**context))
-    return result
-
-
-def _expand_env(raw_env: Any, context: dict[str, Any]) -> dict[str, str]:
-    if not isinstance(raw_env, dict):
-        return {}
-    result: dict[str, str] = {}
-    for key, value in raw_env.items():
-        key_text = str(key).strip()
-        if not key_text or value is None:
-            continue
-        result[key_text] = str(value).format(**context)
-    return result
-
-
-def _classify_conversion_failure(log_path: Path, returncode: int) -> dict[str, Any]:
-    text = ""
-    try:
-        text = log_path.read_text(encoding="utf-8")
-    except OSError:
-        text = ""
-    lowered = text.lower()
-    result: dict[str, Any] = {}
-    failure_reason: str | None = None
-    if returncode == 124:
-        result["failure_class"] = "conversion_timeout"
-        failure_reason = "Converter exceeded timeout."
-    elif "mutex lock failed" in lowered:
-        result["failure_class"] = "exporter_runtime_crash"
-        failure_reason = "Exporter crashed while acquiring a runtime mutex."
-    elif "llvm error: inconsistency in registered commandline options" in lowered:
-        result["failure_class"] = "exporter_runtime_crash"
-        failure_reason = "Exporter crashed due to LLVM command-line option collision."
-    elif "no module named 'onnx2tf.ops.loop'" in lowered:
-        result["failure_class"] = "onnx2tf_unsupported_operator_loop"
-        failure_reason = "onnx2tf does not implement Loop op conversion."
-    elif "loop op is not yet implemented." in lowered:
-        result["failure_class"] = "onnx2tf_unsupported_operator_loop"
-        failure_reason = "onnx2tf does not implement Loop op conversion."
-    elif "onnx2tf/ops/sequenceempty.py" in lowered and "dict' object is not callable" in lowered:
-        result["failure_class"] = "onnx2tf_sequenceempty_bug"
-        failure_reason = "onnx2tf SequenceEmpty dtype lookup bug (dict called like function)."
-    elif "onnx2tf/ops/unsqueeze.py" in lowered and "input_tensor_shape" in lowered and "unboundlocalerror" in lowered:
-        result["failure_class"] = "onnx2tf_unsqueeze_shape_bug"
-        failure_reason = (
-            "onnx2tf Unsqueeze shape fallback bug "
-            "(input_tensor_shape is unbound for unknown-rank tensors)."
-        )
-    elif "keyerror:" in lowered and "onnx2tf/ops/if.py" in lowered:
-        result["failure_class"] = "onnx2tf_if_subgraph_binding_bug"
-        failure_reason = (
-            "onnx2tf failed resolving If subgraph tensors (KeyError in onnx2tf/ops/If.py)."
-        )
-    elif "keyerror:" in lowered and "onnx2tf/ops/gather.py" in lowered:
-        result["failure_class"] = "onnx2tf_graph_binding_bug"
-        failure_reason = (
-            "onnx2tf failed resolving Gather input tensors (KeyError in onnx2tf/ops/Gather.py)."
-        )
-    elif "read this and deal with it. https://github.com/pinto0309/onnx2tf#parameter-replacement" in lowered:
-        result["failure_class"] = "onnx2tf_parameter_replacement_required"
-        failure_reason = "onnx2tf requested parameter-replacement JSON."
-    elif "concat input dtypes must be compatible in flatbuffer_direct" in lowered:
-        result["failure_class"] = "onnx2tf_concat_dtype_mismatch"
-        failure_reason = (
-            "onnx2tf flatbuffer_direct failed due to mixed input dtypes in Concat."
-        )
-    elif "onnx2tf/ops/slice.py" in lowered and "attributeerror: 'tuple' object has no attribute 'rank'" in lowered:
-        result["failure_class"] = "onnx2tf_slice_shape_rank_bug"
-        failure_reason = (
-            "onnx2tf Slice bug: tuple shape object does not expose .rank."
-        )
-    elif "onnx2tf/ops/slice.py" in lowered and "input 'y' of 'sub' op has type int64 that does not match type int32" in lowered:
-        result["failure_class"] = "onnx2tf_slice_dtype_mismatch"
-        failure_reason = "onnx2tf Slice lowering produced int32/int64 subtraction mismatch."
-    elif "no such file or directory: 'onnxsim'" in lowered:
-        result["failure_class"] = "converter_dependency_missing"
-        failure_reason = "onnxsim executable is missing."
-    elif "onnx_op_name:" in lowered and "onnx2tf" in lowered:
-        result["failure_class"] = "onnx2tf_conversion_failed"
-        failure_reason = "onnx2tf failed on a specific ONNX operator."
-    elif "cannot import name 'check_model_inputs'" in lowered:
-        result["failure_class"] = "transformers_api_mismatch"
-        failure_reason = "Exporter expects a Transformers API removed in current version."
-    elif "object has no attribute 'text_config'" in lowered:
-        result["failure_class"] = "transformers_config_mismatch"
-        failure_reason = "Model config is incompatible with current Transformers exporter."
-    elif "unrecognized model in" in lowered and "`model_type` key" in lowered:
-        result["failure_class"] = "model_architecture_unsupported"
-        failure_reason = "Model architecture is not recognized by the exporter."
-    elif "out of memory" in lowered or "cuda out of memory" in lowered:
-        result["failure_class"] = "conversion_oom"
-        failure_reason = "Conversion process ran out of memory."
-    elif returncode == 134:
-        result["failure_class"] = "exporter_runtime_crash"
-        failure_reason = "Exporter aborted with SIGABRT (return code 134)."
-    elif returncode != 0:
-        result["failure_class"] = "conversion_failed"
-
-    log_tail = _log_tail(text)
-    if failure_reason:
-        result["failure_reason"] = failure_reason
-    elif log_tail:
-        result["failure_reason"] = log_tail
-    return result
-
-
-def _log_tail(text: str, *, max_lines: int = 12, max_chars: int = 1200) -> str:
-    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
-    if not lines:
-        return ""
-    tail = "\n".join(lines[-max_lines:])
-    if len(tail) > max_chars:
-        return tail[-max_chars:]
-    return tail
-
-
-def _normalized_extra_args(
-    exporter: str,
-    extra_args: list[Any],
-) -> tuple[list[str], list[str]]:
-    args = [str(arg) for arg in extra_args]
-    if exporter != "coreml-llm":
-        return args, []
-    unsupported_flags = {"--trust-remote-code"}
-    kept: list[str] = []
-    ignored: list[str] = []
-    skip_next = False
-    for index, arg in enumerate(args):
-        if skip_next:
-            skip_next = False
-            continue
-        if arg in unsupported_flags:
-            ignored.append(arg)
-            continue
-        if any(arg.startswith(f"{flag}=") for flag in unsupported_flags):
-            ignored.append(arg)
-            continue
-        kept.append(arg)
-        if arg in unsupported_flags and index + 1 < len(args):
-            skip_next = True
-    return kept, ignored
-
-
-def _artifact_health_command(
-    plan: dict[str, Any],
-    artifact: Path,
-    platform: str,
-    report: Path,
-) -> list[str]:
-    engine = plan["engine"]
-    if engine == "onnx":
-        cmd = ["uv", "run", "--group", "onnx-convert", "python"]
-    else:
-        cmd = [sys.executable]
-    cmd.extend(
-        [
-            str(RUNTIME_DIR / "artifact_health.py"),
-            "--engine",
-            engine,
-            "--platform",
-            platform,
-            "--artifact",
-            str(artifact),
-            "--out",
-            str(report),
-        ]
-    )
-    provider = (plan.get("provider_by_platform") or {}).get(platform)
-    delegate = (plan.get("delegate_by_platform") or {}).get(platform)
-    if engine == "onnx" and provider:
-        cmd.extend(["--provider", str(provider)])
-    if engine == "litert" and delegate:
-        cmd.extend(["--delegate", str(delegate)])
-    return cmd
-
-
-def _find_artifact(output_dir: Path, patterns: list[str]) -> Path | None:
-    for pattern in patterns or ["*"]:
-        matches = sorted(
-            path for path in output_dir.glob(pattern) if _is_runtime_artifact(path)
-        )
-        if matches:
-            return matches[0]
-    return None
-
-
-def _is_runtime_artifact(path: Path) -> bool:
-    if path.is_file():
-        if path.suffix.lower() == ".json":
-            return _is_pipeline_artifact(path)
-        return path.suffix.lower() in {
-            ".onnx",
-            ".tflite",
-            ".task",
-            ".litertlm",
-        }
-    if path.is_dir():
-        return path.suffix.lower() in {".mlmodelc", ".mlpackage"}
-    return False
-
-
-def _is_pipeline_artifact(path: Path) -> bool:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return False
-    if not isinstance(data, dict):
-        return False
-    return data.get("format") in {
-        "dart_mlx_ffi.coreml_pipeline.v1",
-        "dart_mlx_ffi.onnx_pipeline.v1",
-    }
-
-
-def _resolve_path(path: Path) -> Path:
-    expanded = path.expanduser()
-    if expanded.is_absolute():
-        return expanded
-    return ROOT / expanded
-
-
-def _rel(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(ROOT))
-    except ValueError:
-        return str(path)
-
-
-def _read_yaml(path: Path) -> dict[str, Any]:
-    decoded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return decoded if isinstance(decoded, dict) else {}
-
-
-def _safe_tool_name(repo: str) -> str:
-    name = repo.rstrip("/").split("/")[-1]
-    if name.endswith(".git"):
-        name = name[:-4]
-    return name.lower()
-
-
-def _run_tool_command(cmd: list[str], cwd: Path | None = None) -> None:
-    completed = subprocess.run(cmd, cwd=cwd or ROOT, check=False)
-    if completed.returncode != 0:
-        raise SystemExit(
-            f"Tool setup command failed with exit code {completed.returncode}: "
-            + " ".join(cmd)
-        )
-
 
 if __name__ == "__main__":
     main()

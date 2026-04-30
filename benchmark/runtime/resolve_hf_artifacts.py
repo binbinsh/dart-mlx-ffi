@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
-from huggingface_hub import snapshot_download
+from converters.hf_download import DEFAULT_FALLBACK_ENDPOINT, snapshot_download_with_fallback
 
-from matrix_config import blocked_platform_reason, blocked_platforms
+from matrix_config import (
+    blocked_engine_reason,
+    blocked_platform_reason,
+    blocked_platforms,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +34,11 @@ def main() -> None:
     parser.add_argument("--cache-root", type=Path)
     parser.add_argument("--model-id", action="append")
     parser.add_argument("--platform", action="append")
+    parser.add_argument("--endpoint", default=os.environ.get("HF_ENDPOINT"))
+    parser.add_argument(
+        "--fallback-endpoint",
+        default=os.environ.get("HF_FALLBACK_ENDPOINT") or DEFAULT_FALLBACK_ENDPOINT,
+    )
     parser.add_argument(
         "--engine",
         action="append",
@@ -63,6 +73,8 @@ def main() -> None:
         engine_filter=set(args.engine or []),
         local_files_only=args.local_files_only,
         allow_missing=args.allow_missing,
+        endpoint=args.endpoint,
+        fallback_endpoint=args.fallback_endpoint,
     )
     if args.dry_run:
         print(json.dumps(resolver.plan(), indent=2, ensure_ascii=False))
@@ -90,6 +102,8 @@ class HuggingFaceArtifactResolver:
         engine_filter: set[str],
         local_files_only: bool,
         allow_missing: bool,
+        endpoint: str | None = None,
+        fallback_endpoint: str | None = None,
     ) -> None:
         self.catalog = catalog
         self.catalog_path = catalog_path
@@ -102,6 +116,8 @@ class HuggingFaceArtifactResolver:
         self.engine_filter = engine_filter
         self.local_files_only = local_files_only
         self.allow_missing = allow_missing
+        self.endpoint = endpoint
+        self.fallback_endpoint = fallback_endpoint
 
     def plan(self) -> dict[str, Any]:
         cells = []
@@ -280,11 +296,13 @@ class HuggingFaceArtifactResolver:
     def _download(self, artifact: dict[str, Any]) -> Path:
         repo = str(artifact["repo"])
         patterns = _allow_patterns(artifact)
-        snapshot = snapshot_download(
+        snapshot = snapshot_download_with_fallback(
             repo_id=repo,
             allow_patterns=patterns,
             cache_dir=str(self.cache_root),
             local_files_only=self.local_files_only,
+            endpoint=self.endpoint,
+            fallback_endpoint=self.fallback_endpoint,
         )
         artifact_name = str(artifact.get("artifact") or ".")
         if artifact_name == ".":
@@ -330,6 +348,9 @@ class HuggingFaceArtifactResolver:
             order = [engine for engine in order if engine in self.engine_filter]
         fallback_from: list[str] = []
         for engine in order:
+            if blocked_engine_reason(model, platform, engine):
+                fallback_from.append(engine)
+                continue
             artifact = artifacts.get(engine)
             if not isinstance(artifact, dict) or not self._artifact_supports(
                 engine,

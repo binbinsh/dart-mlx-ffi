@@ -344,21 +344,52 @@ std::filesystem::path resolve_pipeline_path(
   return spec_path.parent_path() / path;
 }
 
-bool is_pipeline_spec(const std::filesystem::path& path, json* spec) {
+bool is_pipeline_spec(
+    const std::filesystem::path& path,
+    json* spec,
+    std::string* error) {
   if (path.extension() != ".json") {
     return false;
   }
   std::ifstream file(path);
   if (!file) {
+    if (error != nullptr) {
+      *error = "Unable to open Core ML pipeline spec: " + path.string();
+    }
+    return false;
+  }
+  std::string raw(
+      (std::istreambuf_iterator<char>(file)),
+      std::istreambuf_iterator<char>());
+  if (raw.empty()) {
+    if (error != nullptr) {
+      *error = "Core ML pipeline spec is empty: " + path.string();
+    }
     return false;
   }
   json parsed;
-  file >> parsed;
+  try {
+    parsed = json::parse(raw);
+  } catch (const std::exception& exc) {
+    if (error != nullptr) {
+      *error = "Failed to parse Core ML pipeline spec '" + path.string() +
+               "': " + exc.what();
+    }
+    return false;
+  }
   if (!parsed.is_object() || !parsed.contains("stages")) {
+    if (error != nullptr) {
+      *error = "Core ML pipeline spec missing required `stages` field: " +
+               path.string();
+    }
     return false;
   }
   const std::string format = parsed.value("format", "");
   if (!format.empty() && format != "dart_mlx_ffi.coreml_pipeline.v1") {
+    if (error != nullptr) {
+      *error = "Unsupported Core ML pipeline format '" + format + "' in " +
+               path.string();
+    }
     return false;
   }
   *spec = std::move(parsed);
@@ -592,6 +623,7 @@ struct CoreMlStage {
   std::string op;
   std::string path;
   MLModel* model = nil;
+  MLState* state = nil;
   StringMap inputs;
   StringMap outputs;
 };
@@ -796,8 +828,19 @@ class CoreMlSession final : public DmfRuntimeSession {
         return 1;
       }
       NSError* ns_error = nil;
-      id<MLFeatureProvider> prediction =
-          [stage.model predictionFromFeatures:provider error:&ns_error];
+      id<MLFeatureProvider> prediction = nil;
+      if (stage.state != nil) {
+        if (@available(macOS 15.0, iOS 18.0, *)) {
+          prediction = [stage.model predictionFromFeatures:provider
+                                                usingState:stage.state
+                                                     error:&ns_error];
+        } else {
+          *error = "Core ML stateful models require macOS 15.0 or iOS 18.0.";
+          return 1;
+        }
+      } else {
+        prediction = [stage.model predictionFromFeatures:provider error:&ns_error];
+      }
       if (prediction == nil) {
         *error = ns_error.localizedDescription.UTF8String;
         return 1;
@@ -894,6 +937,8 @@ class CoreMlSession final : public DmfRuntimeSession {
         out += ",\"op\":\"" + dmf_json_escape(stages_[i].op) + "\"";
       } else {
         out += ",\"model\":\"" + dmf_json_escape(stages_[i].path) + "\"";
+        out += ",\"stateful\":";
+        out += stages_[i].state == nil ? "false" : "true";
       }
       out += "}";
     }
@@ -936,7 +981,14 @@ DmfRuntimeSession* dmf_create_coreml_session(
     std::vector<CoreMlStage> stages;
     StringMap requested_outputs;
     json pipeline;
-    const bool is_pipeline = is_pipeline_spec(model_path, &pipeline);
+    std::string pipeline_error;
+    const bool is_pipeline = is_pipeline_spec(model_path, &pipeline, &pipeline_error);
+    if (!is_pipeline && !pipeline_error.empty()) {
+      if (error != nullptr) {
+        *error = pipeline_error;
+      }
+      return nullptr;
+    }
     if (is_pipeline) {
       layout = "pipeline";
       mode = "pipeline";
@@ -1022,6 +1074,11 @@ DmfRuntimeSession* dmf_create_coreml_session(
         return nullptr;
       }
       stage.model = model;
+      if (@available(macOS 15.0, iOS 18.0, *)) {
+        if (model.modelDescription.stateDescriptionsByName.count > 0) {
+          stage.state = [model newState];
+        }
+      }
       append_feature_names(model, /*inputs=*/true, &input_names);
       append_feature_names(model, /*inputs=*/false, &output_names);
     }

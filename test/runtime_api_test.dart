@@ -111,6 +111,12 @@ void main() {
         );
         expect(
           RuntimeResolver(
+            hostPlatform: RuntimePlatform.android,
+          ).resolve(onnxOnly).accelerators,
+          [Accelerator.npu, Accelerator.gpu, Accelerator.cpu],
+        );
+        expect(
+          RuntimeResolver(
             hostPlatform: RuntimePlatform.ios,
           ).resolve(onnxOnly).engine,
           RuntimeEngine.onnx,
@@ -173,6 +179,34 @@ void main() {
       expect(outputs.diagnostics['artifactPath'], '/tmp/model.onnx');
       session.close();
     });
+
+    test('registry passes resolved default accelerators to native runtime', () {
+      const onnxAndroid = ModelSpec(
+        id: 'onnx_android',
+        family: 'ONNX Android',
+        modalities: [ModelModality.textGeneration],
+        platformArtifacts: {
+          RuntimeEngine.onnx: RuntimeArtifact(
+            engine: RuntimeEngine.onnx,
+            path: 'model.onnx',
+            targetPlatforms: ['android'],
+          ),
+        },
+      );
+      final captured = <List<Accelerator>>[];
+      final registry = RuntimeRegistry(
+        resolver: const RuntimeResolver(hostPlatform: RuntimePlatform.android),
+      )..register(_OptionsRuntime(RuntimeEngine.onnx, captured));
+
+      final session = registry.load(onnxAndroid);
+      session.close();
+
+      expect(captured.single, [
+        Accelerator.npu,
+        Accelerator.gpu,
+        Accelerator.cpu,
+      ]);
+    });
   });
 
   group('RuntimeTensor', () {
@@ -208,12 +242,19 @@ void main() {
           'ios': RuntimeValidationStatus(
             platform: 'ios',
             engine: RuntimeEngine.coreml,
+            identityPassed: true,
             correctnessPassed: true,
             speedPassed: true,
             peakMemoryPassed: true,
             deviceProfilePassed: true,
             speedRatio: 0.95,
+            endToEndRatio: 1.01,
             peakMemoryRatio: 1.02,
+            iterationCount: 5,
+            warmupCount: 1,
+            latencyMs: {'sampleCount': 5, 'mean': 10.0},
+            runConfig: {'iters': 5},
+            inputSignature: {'digest': 'same-input'},
           ),
         },
       );
@@ -237,6 +278,15 @@ void main() {
       );
       expect(restored.validationStatus['ios']?.passed, isTrue);
       expect(restored.validationStatus['ios']?.deviceProfilePassed, isTrue);
+      expect(restored.validationStatus['ios']?.identityPassed, isTrue);
+      expect(restored.validationStatus['ios']?.endToEndRatio, 1.01);
+      expect(restored.validationStatus['ios']?.iterationCount, 5);
+      expect(restored.validationStatus['ios']?.latencyMs['sampleCount'], 5);
+      expect(restored.validationStatus['ios']?.runConfig['iters'], 5);
+      expect(
+        restored.validationStatus['ios']?.inputSignature['digest'],
+        'same-input',
+      );
       expect(manifest.productionModels, hasLength(1));
     });
   });
@@ -476,6 +526,23 @@ final class _PathSession implements ModelSession {
   @override
   Stream<ModelOutputs> stream(ModelInputs inputs) async* {
     yield run(inputs);
+  }
+}
+
+final class _OptionsRuntime implements ModelRuntime {
+  const _OptionsRuntime(this.engine, this.captured);
+
+  final RuntimeEngine engine;
+  final List<List<Accelerator>> captured;
+
+  @override
+  RuntimeCapabilities get capabilities =>
+      RuntimeCapabilities(engine: engine, platform: RuntimePlatform.android);
+
+  @override
+  ModelSession load(ModelBundle bundle, RuntimeOptions options) {
+    captured.add(options.prefer);
+    return const _PathSession('captured');
   }
 }
 

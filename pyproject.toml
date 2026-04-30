@@ -36,10 +36,12 @@ coreml-convert = [
     "torchvision>=0.24.1",
 ]
 litert-convert = [
+    "librosa>=0.11.0",
     "litert-torch>=0.8.0",
     "sentencepiece>=0.2.1",
     "torch>=2.11.0",
     "torchvision>=0.26.0",
+    "x-transformers==2.9.2",
 ]
 onnx2tf-convert = [
     "onnx2tf>=1.28.3",

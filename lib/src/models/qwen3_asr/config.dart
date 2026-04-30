@@ -42,16 +42,18 @@ final class Qwen3AsrConfig {
     final root =
         jsonDecode(File('$path/config.json').readAsStringSync())
             as Map<String, Object?>;
-    final thinker = root['thinker_config'] as Map<String, Object?>? ?? {};
+    final thinker = _objectMap(root['thinker_config']);
     final audio =
-        thinker['audio_config'] as Map<String, Object?>? ??
-        root['audio_config'] as Map<String, Object?>? ??
-        {};
+        _objectMapOrNull(thinker['audio_config']) ??
+        _objectMap(root['audio_config']);
     final text =
-        thinker['text_config'] as Map<String, Object?>? ??
-        root['text_config'] as Map<String, Object?>? ??
-        {};
-    final quant = root['quantization'] as Map<String, Object?>? ?? {};
+        _objectMapOrNull(thinker['text_config']) ??
+        _objectMapOrNull(root['text_config']) ??
+        root;
+    final quant = _objectMap(root['quantization']);
+    final quantMode = root['quantization'] is String
+        ? root['quantization'] as String
+        : quant['mode'] as String? ?? 'affine';
 
     // Audio encoder params.
     final dModel = (audio['d_model'] as num?)?.toInt() ?? 896;
@@ -61,7 +63,11 @@ final class Qwen3AsrConfig {
     final melBins = (audio['num_mel_bins'] as num?)?.toInt() ?? 128;
     final downsampleHidden =
         (audio['downsample_hidden'] as num?)?.toInt() ?? 480;
-    final outputDim = (audio['output_dim'] as num?)?.toInt() ?? 1024;
+    final outputDim =
+        (audio['output_dim'] as num?)?.toInt() ??
+        (root['audio_output_dim'] as num?)?.toInt() ??
+        (root['hidden_size'] as num?)?.toInt() ??
+        1024;
     final nWindow = (audio['n_window'] as num?)?.toInt() ?? 50;
     final nWindowInfer = (audio['n_window_infer'] as num?)?.toInt() ?? 800;
     final maxSourcePositions =
@@ -71,9 +77,18 @@ final class Qwen3AsrConfig {
     final hiddenSize = (text['hidden_size'] as num?)?.toInt() ?? 1024;
     final intermediateSize =
         (text['intermediate_size'] as num?)?.toInt() ?? 3072;
-    final textLayers = (text['num_hidden_layers'] as num?)?.toInt() ?? 28;
-    final textHeads = (text['num_attention_heads'] as num?)?.toInt() ?? 16;
-    final textKvHeads = (text['num_key_value_heads'] as num?)?.toInt() ?? 8;
+    final textLayers =
+        (text['num_hidden_layers'] as num?)?.toInt() ??
+        (text['num_layers'] as num?)?.toInt() ??
+        28;
+    final textHeads =
+        (text['num_attention_heads'] as num?)?.toInt() ??
+        (text['num_heads'] as num?)?.toInt() ??
+        16;
+    final textKvHeads =
+        (text['num_key_value_heads'] as num?)?.toInt() ??
+        (text['num_kv_heads'] as num?)?.toInt() ??
+        8;
     final headDim =
         (text['head_dim'] as num?)?.toInt() ?? (hiddenSize ~/ textHeads);
     final vocabSize = (text['vocab_size'] as num?)?.toInt() ?? 151936;
@@ -90,7 +105,7 @@ final class Qwen3AsrConfig {
     // Quantization params.
     final groupSize = (quant['group_size'] as num?)?.toInt() ?? 64;
     final bits = (quant['bits'] as num?)?.toInt() ?? 8;
-    final mode = quant['mode'] as String? ?? 'affine';
+    final mode = quantMode;
 
     return Qwen3AsrConfig(
       audioEncoderDModel: dModel,
@@ -178,4 +193,14 @@ final class Qwen3AsrConfig {
 
   /// GQA repeat factor for the text decoder.
   int get textGqaRepeat => textNumHeads ~/ textNumKvHeads;
+}
+
+Map<String, Object?> _objectMap(Object? value) {
+  if (value is Map) return Map<String, Object?>.from(value);
+  return const <String, Object?>{};
+}
+
+Map<String, Object?>? _objectMapOrNull(Object? value) {
+  if (value is Map) return Map<String, Object?>.from(value);
+  return null;
 }

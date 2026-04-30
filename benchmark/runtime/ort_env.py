@@ -15,6 +15,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = Path(__file__).resolve().parent
 TOOLS_DIR = ROOT / "benchmark" / "artifacts" / "tools" / "onnxruntime"
+TOOLS_DIR_FALLBACK = ROOT / "benchmark" / "artifacts_local" / "tools" / "onnxruntime"
+TOOLS_DIR_ENV = "DART_MLX_ORT_TOOLS_DIR"
 REQUIRED_HEADERS = ["onnxruntime_c_api.h", "onnxruntime_ep_c_api.h"]
 DEFAULT_ORT_VERSION = "1.25.0"
 MAVEN_ANDROID_AAR_URLS = (
@@ -244,7 +246,7 @@ def _fetch_c_header(version: str) -> Path:
 
 
 def _download_include_dir(version: str) -> Path:
-    return TOOLS_DIR / f"v{version}" / "include"
+    return _tools_dir() / f"v{version}" / "include"
 
 
 def _resolve_android_library(
@@ -260,7 +262,7 @@ def _resolve_android_library(
     if version == "unknown":
         return None
     abi = _normalize_android_abi(target_arch)
-    lib_path = TOOLS_DIR / f"v{version}" / "android" / abi / "libonnxruntime.so"
+    lib_path = _tools_dir() / f"v{version}" / "android" / abi / "libonnxruntime.so"
     if lib_path.exists():
         return lib_path.resolve()
     if not fetch_headers:
@@ -286,7 +288,7 @@ def _normalize_android_abi(target_arch: str | None) -> str:
 
 
 def _download_android_aar(version: str) -> Path:
-    aar_dir = TOOLS_DIR / f"v{version}" / "android"
+    aar_dir = _tools_dir(ensure_exists=True) / f"v{version}" / "android"
     aar_dir.mkdir(parents=True, exist_ok=True)
     aar_path = aar_dir / f"onnxruntime-android-{version}.aar"
     if aar_path.exists() and aar_path.stat().st_size > 0:
@@ -311,10 +313,11 @@ def _download_android_aar(version: str) -> Path:
 
 
 def _extract_android_library(version: str, abi: str) -> Path:
-    aar_path = TOOLS_DIR / f"v{version}" / "android" / f"onnxruntime-android-{version}.aar"
+    tools_dir = _tools_dir()
+    aar_path = tools_dir / f"v{version}" / "android" / f"onnxruntime-android-{version}.aar"
     if not aar_path.exists():
         raise RuntimeError(f"Missing downloaded AAR: {aar_path}")
-    target = TOOLS_DIR / f"v{version}" / "android" / abi / "libonnxruntime.so"
+    target = tools_dir / f"v{version}" / "android" / abi / "libonnxruntime.so"
     if target.exists() and target.stat().st_size > 0:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -331,6 +334,39 @@ def _path(value: str | None) -> Path | None:
     if value is None or value == "":
         return None
     return Path(value).expanduser()
+
+
+def _tools_dir(*, ensure_exists: bool = False) -> Path:
+    for candidate in _tools_dir_candidates():
+        if _has_broken_symlink_ancestor(candidate):
+            continue
+        if ensure_exists:
+            try:
+                candidate.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+        return candidate
+    fallback = _tools_dir_candidates()[-1]
+    if ensure_exists:
+        fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def _tools_dir_candidates() -> list[Path]:
+    override = os.environ.get(TOOLS_DIR_ENV)
+    if override:
+        return [Path(override).expanduser()]
+    return [TOOLS_DIR, TOOLS_DIR_FALLBACK]
+
+
+def _has_broken_symlink_ancestor(path: Path) -> bool:
+    current = path
+    while True:
+        if current.is_symlink() and not current.exists():
+            return True
+        if current.parent == current:
+            return False
+        current = current.parent
 
 
 def _shell_quote(value: str) -> str:

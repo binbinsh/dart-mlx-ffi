@@ -97,9 +97,9 @@ That wrapper produces MLX snapshots that can be used directly by:
 - publish-time parity scripts under [`benchmark/`](benchmark/)
 
 For `Gemma 4`, the current publish-time text coverage uses the official
-Unsloth MLX snapshot `unsloth/gemma-4-E2B-it-UD-MLX-4bit` directly instead of
-re-quantizing locally, because Unsloth currently ships `gemma4` model patches
-for `mlx-lm` as a separate install step.
+MLX snapshot `mlx-community/gemma-4-e4b-it-4bit` directly instead of
+re-quantizing locally, because it already ships the current Gemma 4 E4B MLX
+layout and tokenizer sidecars needed by the runtime matrix.
 
 ## Exporting Text Model Bundles
 
@@ -161,21 +161,19 @@ Current runtime migration status:
 | --- | --- |
 | `qwen2_5` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android |
 | `qwen3_5` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android |
-| `paddle_ocr_vl` | staging, iOS/macOS resolve through converted Core ML pipeline (ANE compute-plan audited), Windows/Linux/Android resolve through ONNX pipeline fallback, and Android LiteRT remains an engine-level blocker (`exporter_runtime_crash`, conversion report/log tracked) |
-| `qwen3_asr` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android |
-| `kitten_tts` | staging, iOS/macOS/Windows/Linux artifacts are ready; Android currently resolves through ONNX fallback while ONNX→LiteRT conversion is tracked as an engine blocker (`onnx2tf_unsupported_operator_loop`) |
-| `silero_vad` | staging, iOS/macOS/Windows/Linux artifacts are ready; Android currently resolves through ONNX fallback while ONNX→LiteRT conversion is tracked as an engine blocker (`onnx2tf_if_subgraph_binding_bug`) |
+| `paddle_ocr_vl` | staging, iOS/macOS resolve through converted Core ML pipeline (ANE compute-plan audited), Windows/Linux resolve through the same-model ONNX pipeline, Android uses ONNX fallback, and Android LiteRT remains an engine-level blocker (`onnx_invalid_subgraph_constant_binding`, conversion report/log tracked) |
+| `qwen3_asr` | staging, upgraded to Qwen3-ASR 1.7B; iOS/macOS now resolve the same-model Core ML component bundle through `Qwen3AsrCoreMlRunner` with tokenizer sidecars pulled from the ONNX tokenizer repo, Windows/Linux use the same-model ONNX int4 component bundle through `Qwen3AsrNativeRunner`, Android uses that ONNX bundle with `NnapiExecutionProvider` appended on-device, iOS and Android device load smoke have passing evidence with peak memory, Apple Core ML still fails default ANE compilation, and Android LiteRT is blocked on decoder chunking because expanding ORT int4 `MatMulNBits` exceeds TensorFlow/TFLite single-graph protobuf limits |
+| `kitten_tts` | staging, upgraded to KittenTTS mini 0.8; iOS/macOS use same-model MLX/Core ML, Windows/Linux use same-model ONNX, and Android currently resolves through ONNX fallback while ONNX→LiteRT conversion is tracked as an engine blocker (`onnx2tf_attempt_timeout`) |
+| `silero_vad` | staging, iOS/macOS/Windows/Linux artifacts are ready; Android now resolves through converted LiteRT (`benchmark/artifacts_local/converted/silero_vad/litert/model.tflite`) with XNNPACK; required NNAPI load is recorded as failing, so Android production stays on the validated XNNPACK path |
 | `qwen3_vl` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android |
 | `gemma4` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android |
 | `function_gemma` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android |
 | `embedding_gemma` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android |
-| `qwen3_5_27b_dwq` | staging, Apple MLX artifact only; Windows/Linux ONNX and Android LiteRT artifacts not found on Hugging Face |
-| `translategemma_27b_it` | staging, Apple MLX plus Android LiteRT artifact; Windows/Linux ONNX artifacts not found on Hugging Face |
-| `nemotron3_nano_30b` | staging, Apple MLX artifact only; Windows/Linux ONNX and Android LiteRT artifacts not found on Hugging Face |
-| `glm4_7_flash` | staging, Apple MLX artifact only; Windows/Linux ONNX and Android LiteRT artifacts not found on Hugging Face |
-| `minicpm_o_4_5` | staging, Apple MLX artifact only; only token2wav/CosyVoice ONNX components and a Core ML vision sidecar were found for non-Apple targets |
-| `gemma_sea_lion_v4_4b_vl` | staging, Apple MLX artifact only; Windows/Linux ONNX conversion was attempted and currently fails because Optimum cannot load Gemma3 VLM through `AutoModelForVision2Seq` (`benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/onnx/conversion.log`), Android LiteRT conversion was also attempted and currently fails with upstream config serialization (`benchmark/artifacts/converted/gemma_sea_lion_v4_4b_vl/litert/conversion.log`) |
-| `ming_omni_tts_0_5b` | staging, Apple MLX artifact only; Windows/Linux ONNX conversion was attempted and currently fails because the HF repo is missing `configuration_bailingmm.py` referenced by `auto_map` (`benchmark/artifacts/converted/ming_omni_tts_0_5b/onnx/conversion.log`), Android LiteRT conversion fails for the same missing dynamic-module file (`benchmark/artifacts/converted/ming_omni_tts_0_5b/litert/conversion.log`) |
+| `qwen3_6_27b` | staging, Apple MLX artifact only; Windows/Linux ONNX Runtime GenAI and Android LiteRT patched conversion paths are implemented and config probes pass through `https://hf-mirror.com`, but no validated 27B weight artifact has been exported yet |
+| `translategemma_4b_it` | staging, artifact coverage for iOS/macOS/Windows/Linux/Android; 4B is the supported TranslateGemma runtime target, not 27B |
+| `minicpm_o_4_5` | staging, Apple MLX artifact only; the 2026-04-26 HF scan found only token2wav/CosyVoice ONNX components plus a GGUF repo vision-only Core ML sidecar, not a full ONNX/LiteRT runtime artifact |
+| `gemma_sea_lion_v4_4b_vl` | staging, Apple MLX artifact only; Windows/Linux ONNX conversion is blocked by Optimum task support (`export_task_unsupported`), and Android LiteRT conversion now records a real `conversion_timeout` blocker at `benchmark/artifacts_local/converted/gemma_sea_lion_v4_4b_vl/litert/conversion.log` |
+| `ming_omni_tts_0_5b` | staging, Apple MLX artifact only; the 2026-04-26 HF scan still finds only `campplus.onnx`, and the patched-source exporter remains blocked on full TTS architecture support (`BailingMMConfig`) |
 
 The runtime artifact catalog is checked with:
 
@@ -183,47 +181,85 @@ The runtime artifact catalog is checked with:
 uv run python benchmark/runtime/resolve_hf_artifacts.py --dry-run
 ```
 
-As of `2026-04-24`, that resolver reports `65` ready Hugging Face artifact
-cells, `0` missing cells, and `20` explicitly blocked cells. Blocked cells stay
-in `staging` until a directly loadable Core ML, ONNX Runtime, or LiteRT artifact
-is found and the full runtime matrix passes.
+As of `2026-04-26`, the merged runtime map
+(`benchmark/runtime/artifacts.converted.yaml`) plans `75` platform cells:
+`47` preferred-engine cells, `13` fallback-engine cells, `0` missing cells, and
+`12` explicitly blocked cells. Blocked cells stay in `staging` until a directly
+loadable Core ML, ONNX Runtime, or LiteRT artifact is found or a converted
+artifact passes the full runtime matrix.
 
 As of `2026-04-25`, `paddle_ocr_vl` also has a local merged runtime map at
 `benchmark/runtime/artifacts.paddle_ocr_vl.full.yaml`:
-iOS/macOS use converted Core ML (`benchmark/artifacts/converted/paddle_ocr_vl/coreml/pipeline.json`),
+iOS/macOS use converted Core ML (`benchmark/artifacts_local/converted/paddle_ocr_vl/coreml/pipeline.json`),
 Windows/Linux/Android use the Hugging Face ONNX pipeline, and the Android
-LiteRT conversion crash is recorded as an engine blocker with report/log paths
-instead of blocking ONNX fallback execution.
+LiteRT conversion failure is recorded as an `onnx_invalid_subgraph_constant_binding`
+engine blocker with report/log paths instead of blocking ONNX fallback execution.
 
-As of `2026-04-25`, `benchmark/runtime/artifacts.converted.yaml` also records
+As of `2026-04-26`, Qwen3.6 27B now has two real conversion entry points:
+Windows/Linux use the ONNX Runtime GenAI builder with a `qwen3_5` -> `qwen3`
+config adapter, and Android LiteRT uses the same patched HF source preparation.
+Both config-only probes pass through `https://hf-mirror.com`; the remaining
+work is the full 27B weight export plus `artifact_health.py` and runtime-matrix
+validation.
+
+As of `2026-04-26`, `benchmark/runtime/artifacts.converted.yaml` also records
 conversion-attempt blocker evidence for:
-`paddle_ocr_vl` (LiteRT exporter runtime crash),
-`silero_vad` (ONNX→LiteRT `onnx2tf` If-subgraph tensor binding failure),
-`kitten_tts` (ONNX→LiteRT `onnx2tf` Loop-op unsupported), `gemma_sea_lion_v4_4b_vl` (ONNX VLM export class mismatch + LiteRT
-config serialization failure), and `ming_omni_tts_0_5b` (HF dynamic-module
-file missing for both ONNX and LiteRT exporters).
+`paddle_ocr_vl` (LiteRT ONNX subgraph constant binding blocker),
+`kitten_tts` (ONNX→LiteRT `onnx2tf` attempt timeout),
+`qwen3_asr` (ONNX model-level ASR runner is wired; Core ML stateful runner is
+wired and now resolves tokenizer sidecars from the ONNX tokenizer repo; iOS and
+macOS Core ML health pass with `cpuAndGPU` but default ANE compilation is still
+a promotion blocker; same-model ONNX to LiteRT component conversion is wired and
+still needs the decoder graph-size blocker resolved plus artifact_health and
+Android matrix evidence),
+`qwen3_6_27b` (ONNX Runtime GenAI/LiteRT conversion pending full weight export),
+`gemma_sea_lion_v4_4b_vl` (ONNX task unsupported + LiteRT conversion timeout),
+and `ming_omni_tts_0_5b` (LiteRT conversion timeout; ONNX remains component-only
+until a full TTS export path is available).
+
+`convert_artifacts.py` also imports existing
+`benchmark/artifacts_local/converted/<model>/<engine>/conversion_record.json`
+entries before writing `artifacts.converted.yaml`, so successful local
+conversions (for example `paddle_ocr_vl/coreml` and `silero_vad/litert`) are
+persisted without re-running the exporter.
+
+As of `2026-04-25`, `silero_vad` runtime-smoke also passed on both connected
+iPhone and Android devices:
+`benchmark/out/runtime/silero_vad/ios/device_smoke_runtime_coreml_latest.json`
+and
+`benchmark/out/runtime/silero_vad/android/device_smoke_litert_localpush.json`.
 
 For a broader current Hugging Face search over blocked models, run:
 
 ```sh
-uv run python benchmark/runtime/search_hf_artifacts.py
+uv run python benchmark/runtime/search_hf_artifacts.py \
+  --fallback-endpoint https://hf-mirror.com \
+  --model-id qwen3_6_27b \
+  --model-id minicpm_o_4_5 \
+  --model-id gemma_sea_lion_v4_4b_vl \
+  --model-id ming_omni_tts_0_5b \
+  --out benchmark/out_local/runtime/hf_search_blocked_latest.json
 ```
 
-The current scan reports one already-cataloged runtime candidate
-(`translategemma_27b_it` LiteRT) and component-only hits for MiniCPM-o 4.5 and
-Ming-omni TTS; component sidecars are intentionally not exposed as platform
-runtime artifacts.
+The latest local scan is recorded at
+`benchmark/out_local/runtime/hf_search_blocked_latest.json`: at
+`2026-04-26T14:19:07Z` it found `0` complete runtime candidates and `13`
+component-only candidates for the four remaining blocked model families.
+The 2026-04-26 scan uses
+`translategemma_4b_it` as the TranslateGemma target, not 27B. 4B has complete
+Core ML, ONNX, LiteRT, and MLX artifact coverage; the remaining blocked cells
+are for other model families. Component sidecars for MiniCPM-o 4.5 and
+Ming-omni TTS are intentionally not exposed as platform runtime artifacts.
 
 Current publish-time validation under [`benchmark/`](benchmark/) is organized
 as a release matrix instead of a grab bag of local experiments.
 
 Recommended prepublish text coverage:
 
-- `unsloth/gemma-4-E2B-it-UD-MLX-4bit`
-- `mlx-community/Qwen3.5-27B-4bit-DWQ`
-- `mlx-community/translategemma-27b-it-4bit`
-- `mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit`
-- `mlx-community/GLM-4.7-Flash-4bit`
+- `mlx-community/gemma-4-e4b-it-4bit`
+- `mlx-community/Qwen3-ASR-1.7B-8bit`
+- `mlx-community/Qwen3.6-27B-4bit`
+- `mlx-community/translategemma-4b-it-4bit`
 
 Recommended prepublish multimodal / audio coverage:
 
@@ -231,7 +267,7 @@ Recommended prepublish multimodal / audio coverage:
 - `mlx-community/Gemma-SEA-LION-v4-4B-VL-mlx-3bit`
 - `mlx-community/PaddleOCR-VL-1.5-8bit`
 - `mlx-community/Ming-omni-tts-0.5B-4bit`
-- `mlx-community/kitten-tts-nano-0.8-6bit`
+- `mlx-community/kitten-tts-mini-0.8-8bit`
 
 ### PaddleOCR-VL Reference Workflow
 
@@ -284,11 +320,8 @@ Text models:
 
 | Model | Python MLX ms | Dart MLX ms | Max abs diff |
 | --- | ---: | ---: | ---: |
-| `gemma-4-E2B-it-UD-MLX-4bit` | `30.28` | `31.02` | `0` |
-| `Qwen3.5-27B-4bit-DWQ` | `206.76` | `188.46` | `0` |
-| `translategemma-27b-it-4bit` | `206.58` | `181.81` | `0` |
-| `NVIDIA-Nemotron-3-Nano-30B-A3B-4bit` | `39.73` | `38.01` | `0` |
-| `GLM-4.7-Flash-4bit` | `48.91` | `51.36` | `0` |
+| `gemma-4-e4b-it-4bit` | pending refresh | pending refresh | pending refresh |
+| `Qwen3.6-27B-4bit` | pending refresh | pending refresh | pending refresh |
 
 Non-text models:
 
@@ -298,7 +331,7 @@ Non-text models:
 | `Gemma-SEA-LION-v4-4B-VL-mlx-3bit` | `vlm` | `1151.80` | `1187.94` | `0` | synthetic image + prompt |
 | `PaddleOCR-VL-1.5-8bit` | `vlm` | `1056.92` | `1019.21` | `0.08848` | `benchmark/assets/paddle_ocr_vl_test.jpg` + prompt, processor-default resize bounds `(1316x728, min/max_pixels=112896/1003520)`, direct runner `warmup=3/iters=3` |
 | `Ming-omni-tts-0.5B-4bit` | `tts` | `4.98` | `4.78` | `0` | deterministic `forward_with_cfg` |
-| `kitten-tts-nano-0.8-6bit` | `tts` | `70.69` | `75.57` | `1.19e-07` | full waveform |
+| `kitten-tts-mini-0.8-8bit` | `tts` | pending refresh | pending refresh | pending refresh | full waveform |
 
 ### What `Max abs diff` Means
 
@@ -312,7 +345,7 @@ Examples:
 - for text and VLM rows, the compared tensor is the final-token `logits[:16]`
 - for `Ming-omni-tts-0.5B-4bit`, the compared tensor is the deterministic
   `forward_with_cfg` subgraph output
-- for `kitten-tts-nano-0.8-6bit`, the compared tensor is the full waveform
+- for `kitten-tts-mini-0.8-8bit`, the compared tensor is the full waveform
 
 ### Reproduce The Release Matrix Report
 
@@ -375,5 +408,8 @@ uv sync
 
 ## Notes
 
-- This package targets Apple platforms only.
+- The MLX tensor/FFI layer targets Apple platforms only.
+- The model-level runtime API (`RuntimeEngine.coreml/onnx/litert`) is
+  cross-platform and intended for iOS, macOS, Windows, Linux, and Android
+  staging/production matrix workflows.
 - The raw layer remains the escape hatch for the full MLX C surface.

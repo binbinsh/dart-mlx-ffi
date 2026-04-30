@@ -11,7 +11,7 @@ void main() {
   group('ModelManifest', () {
     test('builtIn contains all runtime model families', () {
       final manifest = ModelManifest.builtIn();
-      expect(manifest.models.length, 17);
+      expect(manifest.models.length, 15);
 
       final ids = manifest.models.map((m) => m.id).toSet();
       expect(
@@ -27,10 +27,8 @@ void main() {
           'gemma4',
           'function_gemma',
           'embedding_gemma',
-          'qwen3_5_27b_dwq',
-          'translategemma_27b_it',
-          'nemotron3_nano_30b',
-          'glm4_7_flash',
+          'qwen3_6_27b',
+          'translategemma_4b_it',
           'minicpm_o_4_5',
           'gemma_sea_lion_v4_4b_vl',
           'ming_omni_tts_0_5b',
@@ -103,7 +101,7 @@ void main() {
 
     test('builtIn models default to staging until full matrix passes', () {
       final manifest = ModelManifest.builtIn();
-      expect(manifest.bySupportLevel(SupportLevel.staging), hasLength(17));
+      expect(manifest.bySupportLevel(SupportLevel.staging), hasLength(15));
       expect(manifest.productionModels, isEmpty);
     });
 
@@ -120,6 +118,71 @@ void main() {
           expect(artifact.path, isNot(contains('/models/')));
         }
       }
+    });
+
+    test('builtIn artifacts pin upgraded same-model runtime sources', () {
+      final manifest = ModelManifest.builtIn();
+
+      final qwenAsr = manifest['qwen3_asr']!;
+      expect(
+        qwenAsr.platformArtifacts[RuntimeEngine.mlx]!.metadata['sourceModel'],
+        'Qwen/Qwen3-ASR-1.7B',
+      );
+      expect(
+        qwenAsr.platformArtifacts[RuntimeEngine.coreml]!.path,
+        contains('Qwen3-ASR-1.7B-CoreML-INT8'),
+      );
+      expect(
+        qwenAsr.platformArtifacts[RuntimeEngine.coreml]!.targetPlatforms,
+        isEmpty,
+      );
+      expect(
+        qwenAsr
+            .platformArtifacts[RuntimeEngine.coreml]!
+            .metadata['runtimeScope'],
+        'model-level-coreml-stateful',
+      );
+      expect(
+        qwenAsr.platformArtifacts[RuntimeEngine.onnx]!.path,
+        contains('qwen3-asr-1.7b-onnx'),
+      );
+      expect(
+        qwenAsr.platformArtifacts[RuntimeEngine.onnx]!.targetPlatforms,
+        containsAll(['windows', 'linux', 'android']),
+      );
+      expect(qwenAsr.platformArtifacts[RuntimeEngine.onnx]!.accelerators, [
+        Accelerator.npu,
+        Accelerator.gpu,
+        Accelerator.cpu,
+      ]);
+      expect(
+        qwenAsr.platformArtifacts[RuntimeEngine.onnx]!.metadata['runtimeScope'],
+        'model-level-asr-components',
+      );
+      expect(
+        qwenAsr.platformArtifacts.containsKey(RuntimeEngine.litert),
+        isFalse,
+      );
+
+      final kitten = manifest['kitten_tts']!;
+      expect(
+        kitten.platformArtifacts[RuntimeEngine.mlx]!.metadata['sourceModel'],
+        'KittenML/kitten-tts-mini-0.8',
+      );
+      expect(
+        kitten.platformArtifacts[RuntimeEngine.onnx]!.path,
+        contains('KittenTTS-Mini-v0.8-ONNX'),
+      );
+
+      final gemma = manifest['gemma4']!;
+      expect(
+        gemma.platformArtifacts[RuntimeEngine.mlx]!.metadata['sourceModel'],
+        'google/gemma-4-E4B-it',
+      );
+      expect(
+        gemma.platformArtifacts[RuntimeEngine.onnx]!.path,
+        contains('huggingworld/gemma-4-E4B-it-ONNX'),
+      );
     });
 
     test(
@@ -182,11 +245,18 @@ void main() {
               'macos': {
                 'platform': 'macos',
                 'engine': 'coreml',
+                'identityPassed': true,
                 'correctnessPassed': true,
                 'speedPassed': true,
                 'peakMemoryPassed': true,
                 'deviceProfilePassed': true,
+                'endToEndRatio': 1.01,
                 'peakMemoryRatio': 1.05,
+                'iterationCount': 5,
+                'warmupCount': 1,
+                'latencyMs': {'sampleCount': 5, 'mean': 10.0},
+                'runConfig': {'iters': 5},
+                'inputSignature': {'digest': 'abc'},
               },
             },
           },
@@ -197,7 +267,47 @@ void main() {
       expect(promoted.supportLevel, SupportLevel.production);
       expect(promoted.validationStatus['macos']?.engine, RuntimeEngine.coreml);
       expect(promoted.validationStatus['macos']?.passed, isTrue);
+      expect(promoted.validationStatus['macos']?.identityPassed, isTrue);
+      expect(promoted.validationStatus['macos']?.endToEndRatio, 1.01);
+      expect(promoted.validationStatus['macos']?.iterationCount, 5);
+      expect(promoted.validationStatus['macos']?.latencyMs['sampleCount'], 5);
+      expect(promoted.validationStatus['macos']?.runConfig['iters'], 5);
+      expect(
+        promoted.validationStatus['macos']?.inputSignature['digest'],
+        'abc',
+      );
       expect(manifest.productionModels.map((model) => model.id), ['qwen3_5']);
+    });
+
+    test('applies platform artifact patch', () {
+      final manifest = ModelManifest.builtIn().withRuntimeValidation({
+        'version': 1,
+        'models': [
+          {
+            'id': 'paddle_ocr_vl',
+            'platformArtifacts': {
+              'coreml': {
+                'engine': 'coreml',
+                'path':
+                    'benchmark/artifacts/converted/paddle_ocr_vl/coreml/pipeline.json',
+                'sourceUri': 'converted://paddle_ocr_vl/coreml',
+                'format': 'coreml-pipeline',
+                'targetPlatforms': ['ios', 'macos'],
+                'accelerators': ['ane', 'gpu', 'cpu'],
+                'metadata': {'source': 'runtime_matrix'},
+              },
+            },
+          },
+        ],
+      });
+
+      final spec = manifest['paddle_ocr_vl']!;
+      final coreml = spec.platformArtifacts[RuntimeEngine.coreml];
+      expect(coreml, isNotNull);
+      expect(coreml?.path, contains('paddle_ocr_vl/coreml/pipeline.json'));
+      expect(coreml?.format, 'coreml-pipeline');
+      expect(coreml?.targetPlatforms, containsAll(['ios', 'macos']));
+      expect(coreml?.metadata['source'], 'runtime_matrix');
     });
   });
 }

@@ -24,6 +24,28 @@ def blocked_platform_reason(model: dict[str, Any], platform: str) -> str | None:
     return blocked_platforms(model).get(platform)
 
 
+def blocked_engines(model: dict[str, Any], platform: str) -> dict[str, str]:
+    raw = model.get("blocked_engines") or model.get("blockedEngines") or {}
+    if not isinstance(raw, dict):
+        return {}
+    platform_value = raw.get(platform) or {}
+    if isinstance(platform_value, dict):
+        return {
+            str(engine): str(reason)
+            for engine, reason in platform_value.items()
+            if engine is not None
+        }
+    return {}
+
+
+def blocked_engine_reason(
+    model: dict[str, Any],
+    platform: str,
+    engine: str,
+) -> str | None:
+    return blocked_engines(model, platform).get(engine)
+
+
 def artifact_unblocks_platform(model: dict[str, Any], platform: str) -> bool:
     cell = platform_artifact(model, platform)
     if not cell:

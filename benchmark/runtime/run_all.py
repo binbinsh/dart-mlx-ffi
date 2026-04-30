@@ -15,9 +15,10 @@ import yaml
 from matrix_config import (
     artifact_coverage,
     artifact_unblocks_platform,
+    blocked_engine_reason,
     blocked_platform_reason,
 )
-
+from run_matrix import _prepare_out_root
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = Path(__file__).resolve().parent
@@ -28,8 +29,6 @@ ENGINE_BY_PLATFORM = {
     "linux": "onnx",
     "android": "litert",
 }
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run or plan the full runtime validation matrix."
@@ -105,11 +104,10 @@ def main() -> None:
             raise SystemExit(1)
     elif not args.allow_fail and plan["blocked_count"]:
         raise SystemExit(1)
-
-
 def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     config = _read_yaml(args.config)
     artifacts = _read_yaml(args.artifacts)
+    resolved_out_root, _ = _prepare_out_root(args.out_root)
     required_platforms = (
         (config.get("support_policy") or {})
         .get("production_requires", {})
@@ -140,7 +138,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
                 platform=platform,
                 artifacts=artifacts,
                 artifacts_path=args.artifacts,
-                out_root=args.out_root,
+                out_root=resolved_out_root,
                 config=args.config,
                 check_paths=check_paths,
                 check_execution=check_execution,
@@ -156,7 +154,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "version": 1,
         "config": str(args.config),
         "artifacts": str(args.artifacts),
-        "out_root": str(args.out_root),
+        "out_root": str(resolved_out_root),
         "path_check": args.path_check,
         "execution_check": args.execution_check,
         "artifact_health_check": artifact_health_check,
@@ -167,7 +165,6 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "blocked_count": len(blocked),
         "cells": cells,
     }
-
 
 def run_plan(
     plan: dict[str, Any],
@@ -207,6 +204,19 @@ def run_plan(
                 if not allow_fail:
                     break
                 continue
+        if cell.get("device_smoke_only"):
+            results.append(
+                {
+                    "model_id": cell["model_id"],
+                    "platform": cell["platform"],
+                    "engine": cell["engine"],
+                    "passed": True,
+                    "returncode": 0,
+                    "stage": "device_smoke_only",
+                    "report": _command_option(health_cmd, "--out"),
+                }
+            )
+            continue
         if prepare_cmd and not dry_run:
             completed = _run(prepare_cmd, check=False)
             if completed.returncode != 0:
@@ -250,7 +260,6 @@ def run_plan(
         "results": results,
     }
 
-
 def _cell_for(
     *,
     model_id: str,
@@ -291,6 +300,11 @@ def _cell_for(
             blocked_platform_reason(model, platform)
             or blocked_platform_reason(model_config, platform)
         )
+    if not blocker and engine:
+        blocker = (
+            blocked_engine_reason(model, platform, str(engine))
+            or blocked_engine_reason(model_config, platform, str(engine))
+        )
     baseline_engine = merged.get("baseline_engine")
     if baseline_engine == "coreml-llm" and merged.get("coreml_llm_baseline") is False:
         baseline_engine = None
@@ -321,11 +335,16 @@ def _cell_for(
     has_mlx_publish_baseline = (
         baseline_engine == "mlx" and merged.get("baseline_publish_report")
     )
+    has_coreml_llm_baseline_artifact = (
+        baseline_engine == "coreml-llm"
+        and (merged.get("baseline_artifact") or merged.get("artifact"))
+    )
     if (
         not merged.get("baseline_report")
         and not merged.get("baseline_artifact")
         and not merged.get("raw_baseline_report")
         and not has_mlx_publish_baseline
+        and not has_coreml_llm_baseline_artifact
     ):
         if baseline_engine == "coreml-llm":
             reasons.append("Missing CoreML-LLM baseline artifact or raw report")
@@ -363,6 +382,17 @@ def _cell_for(
         enabled=check_artifact_health,
         out_root=out_root,
     )
+    host = _host_platform()
+    device_smoke_only = bool(artifact_health_command) and str(
+        merged.get("executor") or "local"
+    ) == "local" and host != platform and (
+        (platform == "ios" and engine == "coreml" and bool(merged.get("ios_device_smoke")))
+        or (
+            platform == "android"
+            and engine in {"onnx", "litert"}
+            and bool(merged.get("android_device_smoke"))
+        )
+    )
     return {
         "model_id": model_id,
         "platform": platform,
@@ -376,11 +406,11 @@ def _cell_for(
         "executor": merged.get("executor", "local"),
         "state": "blocked" if reasons else "ready",
         "reasons": reasons,
+        "device_smoke_only": device_smoke_only,
         "artifact_health_command": artifact_health_command,
         "prepare_input_command": prepare_command,
         "command": command,
     }
-
 
 def _cell_command(
     *,
@@ -411,7 +441,6 @@ def _cell_command(
         config=config,
         baseline_engine=baseline_engine,
     )
-
 
 def _run_matrix_command(
     *,
@@ -474,6 +503,7 @@ def _run_matrix_command(
     _add_optional(cmd, "--provider", merged.get("provider"))
     _add_optional(cmd, "--delegate", merged.get("delegate"))
     _add_optional(cmd, "--coreml-mode", merged.get("coreml_mode"))
+    _add_optional(cmd, "--coreml-compute-units", merged.get("coreml_compute_units"))
     _add_optional(cmd, "--litert-section-index", merged.get("litert_section_index"))
     _add_optional(cmd, "--hf-cache-root", merged.get("hf_cache_root"))
     if merged.get("require_provider"):
@@ -481,8 +511,6 @@ def _run_matrix_command(
     if merged.get("require_delegate"):
         cmd.append("--require-delegate")
     return cmd
-
-
 def _adb_command(
     *,
     model_id: str,
@@ -553,6 +581,7 @@ def _adb_command(
     _add_optional(cmd, "--provider", merged.get("provider"))
     _add_optional(cmd, "--delegate", merged.get("delegate"))
     _add_optional(cmd, "--coreml-mode", merged.get("coreml_mode"))
+    _add_optional(cmd, "--coreml-compute-units", merged.get("coreml_compute_units"))
     _add_optional(cmd, "--litert-section-index", merged.get("litert_section_index"))
     _add_optional(cmd, "--hf-cache-root", merged.get("hf_cache_root"))
     if merged.get("require_provider"):
@@ -560,8 +589,6 @@ def _adb_command(
     if merged.get("require_delegate"):
         cmd.append("--require-delegate")
     return cmd
-
-
 def _prepare_input_command(
     *,
     model_id: str,
@@ -600,6 +627,7 @@ def _prepare_input_command(
     _add_optional(cmd, "--embedding-query-file", merged.get("embedding_query_file"))
     _add_optional(cmd, "--image-file", merged.get("image_file"))
     _add_optional(cmd, "--audio-file", merged.get("audio_file"))
+    _add_optional(cmd, "--hf-cache-root", merged.get("hf_cache_root"))
     max_length = (
         merged.get("prepare_max_length")
         or merged.get("input_max_length")
@@ -617,8 +645,11 @@ def _prepare_input_command(
         path = _local_path(artifact)
         if path.exists():
             cmd.extend(["--coreml-artifact", str(path)])
+    if engine == "litert" and artifact and not _is_hf_uri(artifact):
+        path = _local_path(artifact)
+        if path.exists():
+            cmd.extend(["--litert-artifact", str(path)])
     return cmd
-
 
 def _should_prepare_inputs(merged: dict[str, Any], requested: bool) -> bool:
     if requested:
@@ -630,7 +661,6 @@ def _should_prepare_inputs(merged: dict[str, Any], requested: bool) -> bool:
     if not input_json:
         return True
     return Path(input_json).name == "tiny_input.json"
-
 
 def _artifact_health_command(
     *,
@@ -650,8 +680,6 @@ def _artifact_health_command(
         and bool(merged.get("ios_device_smoke"))
     ):
         artifact = merged.get("artifact")
-        if artifact and not _is_hf_uri(artifact):
-            return []
         cmd = [
             sys.executable,
             str(RUNTIME_DIR / "ios_flutter_smoke.py"),
@@ -669,10 +697,13 @@ def _artifact_health_command(
         if artifact:
             cmd.extend(["--artifact", str(artifact)])
         _add_optional(cmd, "--device-id", merged.get("device_id"))
+        _add_optional(cmd, "--build-mode", merged.get("ios_smoke_build_mode"))
+        _add_optional(cmd, "--timeout-seconds", merged.get("ios_smoke_timeout_seconds"))
+        _add_optional(cmd, "--coreml-compute-units", merged.get("coreml_compute_units"))
         _add_optional(
             cmd,
-            "--timeout-seconds",
-            merged.get("ios_smoke_timeout_seconds"),
+            "--wait-for-artifact-seconds",
+            merged.get("ios_smoke_wait_for_artifact_seconds"),
         )
         if merged.get("allow_ios_smoke_fail"):
             cmd.append("--allow-fail")
@@ -684,8 +715,6 @@ def _artifact_health_command(
         and bool(merged.get("android_device_smoke"))
     ):
         artifact = merged.get("artifact")
-        if artifact and not _is_hf_uri(artifact):
-            return []
         cmd = [
             sys.executable,
             str(RUNTIME_DIR / "android_flutter_smoke.py"),
@@ -713,6 +742,13 @@ def _artifact_health_command(
             "--timeout-seconds",
             merged.get("android_smoke_timeout_seconds"),
         )
+        _add_optional(cmd, "--provider", merged.get("provider"))
+        _add_optional(cmd, "--delegate", merged.get("delegate"))
+        _add_optional(cmd, "--litert-section-index", merged.get("litert_section_index"))
+        if engine == "onnx" and merged.get("require_provider"):
+            cmd.append("--require-provider")
+        if engine == "litert" and merged.get("require_delegate"):
+            cmd.append("--require-delegate")
         if merged.get("allow_android_smoke_fail"):
             cmd.append("--allow-fail")
         return cmd
@@ -751,6 +787,8 @@ def _artifact_health_command(
     )
     if engine == "onnx" and merged.get("provider"):
         cmd.extend(["--provider", str(merged["provider"])])
+    if engine == "onnx" and merged.get("require_provider"):
+        cmd.append("--require-provider")
     if engine == "litert" and merged.get("delegate"):
         cmd.extend(["--delegate", str(merged["delegate"])])
     if engine == "litert" and merged.get("litert_section_index"):
@@ -759,12 +797,11 @@ def _artifact_health_command(
         cmd.append("--require-delegate")
     if engine == "coreml" and merged.get("coreml_mode"):
         cmd.extend(["--coreml-mode", str(merged["coreml_mode"])])
+    if engine == "coreml" and merged.get("coreml_compute_units"):
+        cmd.extend(["--coreml-compute-units", str(merged["coreml_compute_units"])])
     return cmd
-
-
 def _global_defaults(defaults: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in defaults.items() if key != "platforms"}
-
 
 def _string_list(value: Any) -> list[str]:
     if isinstance(value, list):
@@ -773,10 +810,8 @@ def _string_list(value: Any) -> list[str]:
         return []
     return [str(value)]
 
-
 def _safe_name(value: str) -> str:
     return "".join(c if c.isalnum() or c in "._-" else "_" for c in value)
-
 
 def _artifact_health_failure(report: str | None) -> dict[str, str] | None:
     if not report:
@@ -820,7 +855,6 @@ def _artifact_health_failure(report: str | None) -> dict[str, str] | None:
         result["failure_reason"] = reason
     return result or None
 
-
 def _tail_message(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -828,7 +862,6 @@ def _tail_message(value: Any) -> str | None:
     if not lines:
         return None
     return lines[-1][:400]
-
 
 def _classify_runtime_smoke_error(engine: str, error: str) -> str:
     text = error.lower()
@@ -844,6 +877,8 @@ def _classify_runtime_smoke_error(engine: str, error: str) -> str:
         if "builtin_code out of range" in text:
             return "runtime_version_mismatch"
         if "tfliteinterpretercreate failed" in text:
+            if "with delegates" in text:
+                return "delegate_interpreter_create_failed"
             if "no optional support libraries loaded" in text:
                 return "missing_optional_support_libraries"
             return "interpreter_create_failed"
@@ -902,6 +937,10 @@ def _execution_reasons(merged: dict[str, Any], platform: str) -> list[str]:
         ]
     host = _host_platform()
     if platform == host:
+        return []
+    if host == "macos" and platform == "ios" and bool(merged.get("ios_device_smoke")):
+        return []
+    if host == "macos" and platform == "android" and bool(merged.get("android_device_smoke")):
         return []
     return [
         "Platform "
@@ -1154,7 +1193,5 @@ def _host_platform() -> str:
 def _read_yaml(path: Path) -> dict[str, Any]:
     decoded = yaml.safe_load(path.read_text(encoding="utf-8"))
     return decoded if isinstance(decoded, dict) else {}
-
-
 if __name__ == "__main__":
     main()

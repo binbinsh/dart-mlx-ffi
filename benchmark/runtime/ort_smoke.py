@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -22,6 +23,9 @@ def main() -> None:
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--no-fetch-headers", action="store_true")
+    parser.add_argument("--target-os", choices=["host", "android"], default="host")
+    parser.add_argument("--target-arch", default=None)
+    parser.add_argument("--android-ndk-home", type=Path)
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
 
@@ -32,6 +36,9 @@ def main() -> None:
             build_dir=build_dir,
             work_dir=work_dir,
             fetch_headers=not args.no_fetch_headers,
+            target_os=args.target_os,
+            target_arch=args.target_arch,
+            android_ndk_home=args.android_ndk_home,
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
     finally:
@@ -44,8 +51,15 @@ def run_smoke(
     build_dir: Path,
     work_dir: Path,
     fetch_headers: bool,
+    target_os: str = "host",
+    target_arch: str | None = None,
+    android_ndk_home: Path | None = None,
 ) -> dict[str, Any]:
-    env = resolve_ort_environment(fetch_headers=fetch_headers)
+    env = resolve_ort_environment(
+        fetch_headers=fetch_headers,
+        target_os=target_os,
+        target_arch=target_arch,
+    )
     if not env.ready or env.include_dir is None or env.library is None:
         raise RuntimeError(f"ONNX Runtime C API environment is incomplete: {env}")
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -66,12 +80,12 @@ def run_smoke(
                 "stages": [
                     {
                         "name": "first",
-                        "model": str(model_path),
+                        "model": str(model_path.resolve()),
                         "outputs": {"output": "middle"},
                     },
                     {
                         "name": "second",
-                        "model": str(model_path),
+                        "model": str(model_path.resolve()),
                         "inputs": {"input": "middle"},
                         "outputs": {"output": "output"},
                     },
@@ -146,17 +160,13 @@ def run_smoke(
     )
 
     _run(
-        [
-            "cmake",
-            "-S",
-            str(ROOT / "native" / "runtime"),
-            "-B",
-            str(build_dir),
-            "-DDMF_BUILD_CLI=ON",
-            "-DDMF_ENABLE_ORT=ON",
-            f"-DDMF_ORT_INCLUDE_DIR={env.include_dir}",
-            f"-DDMF_ORT_LIBRARY={env.library}",
-        ]
+        _cmake_configure_command(
+            env=env,
+            build_dir=build_dir,
+            target_os=target_os,
+            target_arch=target_arch,
+            android_ndk_home=android_ndk_home,
+        )
     )
     _run(
         [
@@ -172,6 +182,17 @@ def run_smoke(
         shutil.copy2(env.runtime_library, build_dir / env.runtime_library.name)
 
     runner = build_dir / "dart_mlx_ffi_runtime_runner"
+    if target_os == "android":
+        return {
+            "passed": True,
+            "target_os": "android",
+            "target_arch": target_arch or "arm64-v8a",
+            "build_only": True,
+            "build_dir": str(build_dir),
+            "runner": str(runner),
+            "library": str(build_dir / "libdart_mlx_ffi_runtime.so"),
+            "ort": env.to_json(),
+        }
     _run(
         [
             str(runner),
@@ -269,6 +290,61 @@ def run_smoke(
         "output_names": diagnostics.get("output_names"),
         "ort": env.to_json(),
     }
+
+
+def _cmake_configure_command(
+    *,
+    env: Any,
+    build_dir: Path,
+    target_os: str,
+    target_arch: str | None,
+    android_ndk_home: Path | None,
+) -> list[str]:
+    command = [
+        "cmake",
+        "-S",
+        str(ROOT / "native" / "runtime"),
+        "-B",
+        str(build_dir),
+        "-DDMF_BUILD_CLI=ON",
+        "-DDMF_ENABLE_ORT=ON",
+        f"-DDMF_ORT_INCLUDE_DIR={env.include_dir}",
+        f"-DDMF_ORT_LIBRARY={env.library}",
+    ]
+    if target_os == "android":
+        toolchain = _android_toolchain_file(android_ndk_home)
+        command.extend(
+            [
+                f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
+                f"-DANDROID_ABI={target_arch or 'arm64-v8a'}",
+                "-DANDROID_PLATFORM=android-26",
+            ]
+        )
+    return command
+
+
+def _android_toolchain_file(android_ndk_home: Path | None) -> Path:
+    candidates: list[Path] = []
+    if android_ndk_home is not None:
+        candidates.append(android_ndk_home)
+    for env_name in ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT"):
+        value = os.environ.get(env_name)
+        if value:
+            candidates.append(Path(value))
+    for sdk_env in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        sdk = os.environ.get(sdk_env)
+        if sdk:
+            candidates.extend(sorted((Path(sdk) / "ndk").glob("*"), reverse=True))
+    candidates.extend(
+        sorted((Path.home() / "Library" / "Android" / "sdk" / "ndk").glob("*"), reverse=True)
+    )
+    for candidate in candidates:
+        toolchain = candidate / "build" / "cmake" / "android.toolchain.cmake"
+        if toolchain.exists():
+            return toolchain
+    raise RuntimeError(
+        "Android NDK toolchain not found. Set --android-ndk-home or ANDROID_NDK_HOME."
+    )
 
 
 def _write_add_one_model(path: Path) -> None:

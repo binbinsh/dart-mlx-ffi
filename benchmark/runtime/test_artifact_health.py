@@ -13,7 +13,12 @@ from unittest import mock
 RUNTIME_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(RUNTIME_DIR))
 
-from artifact_health import _classify_dart_runtime_failure, validate_artifact
+from artifact_health import (
+    _canonical_provider,
+    _classify_dart_runtime_failure,
+    _select_onnx_provider,
+    validate_artifact,
+)
 
 
 class ArtifactHealthTest(unittest.TestCase):
@@ -57,6 +62,135 @@ class ArtifactHealthTest(unittest.TestCase):
         self.assertFalse(result["passed"])
         self.assertEqual(result["checks"][0]["state"], "invalid")
 
+    def test_canonical_provider_handles_android_ep_aliases(self) -> None:
+        self.assertEqual(_canonical_provider("nnapi"), "NNAPIExecutionProvider")
+        self.assertEqual(
+            _canonical_provider("androidnnapi"),
+            "NNAPIExecutionProvider",
+        )
+        self.assertEqual(_canonical_provider("xnnpack"), "XnnpackExecutionProvider")
+        self.assertEqual(_canonical_provider("npu"), "QNNExecutionProvider")
+
+    def test_select_onnx_provider_expands_generic_npu_order(self) -> None:
+        selected = _select_onnx_provider(
+            "npu",
+            ["CPUExecutionProvider", "NNAPIExecutionProvider"],
+        )
+
+        self.assertEqual(selected["provider"], "NNAPIExecutionProvider")
+
+    def test_select_onnx_provider_falls_back_to_cpu_with_diagnostics(self) -> None:
+        selected = _select_onnx_provider("qnn", ["CPUExecutionProvider"])
+
+        self.assertEqual(selected["provider"], "CPUExecutionProvider")
+        self.assertEqual(
+            selected["fallback"],
+            {
+                "requested": "QNNExecutionProvider",
+                "reason": "requested_provider_unavailable",
+            },
+        )
+
+    def test_onnx_probe_receives_require_provider(self) -> None:
+        model = self.tmp / "model.onnx"
+        model.write_bytes(b"onnx")
+        payload = {"passed": True, "selected_provider": "NNAPIExecutionProvider"}
+        with (
+            mock.patch(
+                "artifact_health._onnx_checks",
+                return_value=[
+                    {"name": "model", "kind": "model", "path": str(model)}
+                ],
+            ),
+            mock.patch("artifact_health.subprocess.run") as run,
+        ):
+            run.return_value = subprocess.CompletedProcess(
+                args=["python"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+
+            result = validate_artifact(
+                engine="onnx",
+                artifact=model,
+                provider="npu",
+                require_provider=True,
+            )
+
+        command = run.call_args.args[0]
+        self.assertTrue(result["passed"])
+        self.assertIn("--require-provider", command)
+
+    def test_litert_pipeline_validates_with_dart_runtime_probe(self) -> None:
+        pipeline = self.tmp / "pipeline.json"
+        pipeline.write_text(
+            json.dumps(
+                {
+                    "format": "dart_mlx_ffi.litert_pipeline.v1",
+                    "stages": [{"name": "merge", "op": "scatter_embeddings"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        payload = {
+            "passed": True,
+            "device_profile": {
+                "runtime_diagnostics": {"engine": "litert", "pipeline": True},
+            },
+        }
+        with (
+            mock.patch(
+                "artifact_health.prepare_runtime_environment",
+                return_value=(
+                    {"TEST_LITERT_ENV": "1"},
+                    {"litert_env": {"ready": True}},
+                ),
+            ),
+            mock.patch("artifact_health.subprocess.run") as run,
+        ):
+            run.return_value = subprocess.CompletedProcess(
+                args=["dart"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+
+            result = validate_artifact(
+                engine="litert",
+                artifact=pipeline,
+                platform="android",
+            )
+
+        command = run.call_args.args[0]
+        self.assertTrue(result["passed"])
+        self.assertTrue(result["pipeline"])
+        self.assertEqual(result["stages"][0]["op"], "scatter_embeddings")
+        self.assertIn("--engine", command)
+        self.assertIn("litert", command)
+
+    def test_litert_pipeline_model_stage_requires_explicit_inputs(self) -> None:
+        pipeline = self.tmp / "pipeline.json"
+        pipeline.write_text(
+            json.dumps(
+                {
+                    "format": "dart_mlx_ffi.litert_pipeline.v1",
+                    "stages": [{"name": "decoder", "model": "decoder.tflite"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = validate_artifact(
+            engine="litert",
+            artifact=pipeline,
+            platform="android",
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["checks"][0]["state"], "invalid")
+        self.assertIn("declare inputs", result["checks"][0]["reason"])
+
     def test_coreml_health_uses_dart_runtime_load_probe(self) -> None:
         artifact = self.tmp / "model.mlmodelc"
         payload = {
@@ -65,7 +199,16 @@ class ArtifactHealthTest(unittest.TestCase):
                 "runtime_diagnostics": {"engine": "coreml"},
             },
         }
-        with mock.patch("artifact_health.subprocess.run") as run:
+        with (
+            mock.patch(
+                "artifact_health.prepare_runtime_environment",
+                return_value=(
+                    {"TEST_RUNTIME_ENV": "1"},
+                    {"coreml_env": {"ready": True}},
+                ),
+            ) as prepare,
+            mock.patch("artifact_health.subprocess.run") as run,
+        ):
             run.return_value = subprocess.CompletedProcess(
                 args=["dart"],
                 returncode=0,
@@ -80,11 +223,18 @@ class ArtifactHealthTest(unittest.TestCase):
             )
 
         command = run.call_args.args[0]
+        call_env = run.call_args.kwargs["env"]
         self.assertTrue(result["passed"])
         self.assertEqual(result["checks"][0]["state"], "loaded")
+        self.assertEqual(
+            result["checks"][0]["runtime_env"],
+            {"coreml_env": {"ready": True}},
+        )
         self.assertIn("--health-check", command)
         self.assertIn("--engine", command)
         self.assertIn("coreml", command)
+        self.assertEqual(call_env["TEST_RUNTIME_ENV"], "1")
+        prepare.assert_called_once()
 
     def test_classify_litert_missing_optional_support_libraries(self) -> None:
         failure = _classify_dart_runtime_failure(
