@@ -6,11 +6,8 @@
 /// Inspired by osaurus `EmbeddingService.swift` / `MetalSafeEmbedder.swift`.
 library;
 
-import 'dart:ffi' as ffi;
+import 'dart:math' as math;
 
-import 'package:ffi/ffi.dart';
-
-import '../../runtime/native_bindings.dart' as native;
 import 'metal_gate.dart';
 
 // ---------------------------------------------------------------------------
@@ -124,7 +121,6 @@ final class VectorStore {
   VectorStore();
 
   final Map<String, VectorEntry> _entries = {};
-  _NativeVectorIndex? _index;
   int? _dimension;
 
   /// Number of entries.
@@ -132,7 +128,7 @@ final class VectorStore {
 
   /// Add an entry (replaces any existing entry with the same ID).
   void add(VectorEntry entry) {
-    _ensureIndex(entry.embedding.length).put(entry.id, entry.embedding);
+    _ensureDimension(entry.embedding.length);
     _entries[entry.id] = entry;
   }
 
@@ -151,7 +147,7 @@ final class VectorStore {
         );
       }
     }
-    _ensureIndex(dimension).putMany(items, dimension);
+    _ensureDimension(dimension);
     for (final entry in items) {
       _entries[entry.id] = entry;
     }
@@ -159,14 +155,11 @@ final class VectorStore {
 
   /// Remove an entry by ID.
   void remove(String id) {
-    _index?.remove(id);
     _entries.remove(id);
   }
 
   /// Clear all entries.
   void clear() {
-    _index?.close();
-    _index = null;
     _dimension = null;
     _entries.clear();
   }
@@ -195,12 +188,18 @@ final class VectorStore {
         'Vector dimensions must match: ${queryEmbedding.length} vs $dimension',
       );
     }
-    final hits = _index!.search(queryEmbedding, topK: topK, minScore: minScore);
-    return [
-      for (final hit in hits)
-        if (_entries[hit.id] case final entry?)
-          SearchResult(entry: entry, score: hit.score),
-    ];
+    final results = <SearchResult>[];
+    for (final entry in _entries.values) {
+      final score = _cosineSimilarity(queryEmbedding, entry.embedding);
+      if (score >= minScore) {
+        results.add(SearchResult(entry: entry, score: score));
+      }
+    }
+    results.sort((a, b) {
+      final byScore = b.score.compareTo(a.score);
+      return byScore != 0 ? byScore : a.entry.id.compareTo(b.entry.id);
+    });
+    return results.take(topK).toList(growable: false);
   }
 
   /// Bulk index: embed all [texts] via [embedder] and store.
@@ -242,7 +241,7 @@ final class VectorStore {
     clear();
   }
 
-  _NativeVectorIndex _ensureIndex(int dimension) {
+  void _ensureDimension(int dimension) {
     final current = _dimension;
     if (current != null) {
       if (dimension != current) {
@@ -250,199 +249,9 @@ final class VectorStore {
           'Vector dimensions must match: $dimension vs $current',
         );
       }
-      return _index!;
-    }
-    final index = _NativeVectorIndex(dimension);
-    _index = index;
-    _dimension = dimension;
-    return index;
-  }
-}
-
-final _vectorFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((handle) {
-  if (handle != ffi.nullptr) {
-    native.vecFree(handle);
-  }
-});
-
-final class _VectorHit {
-  const _VectorHit(this.id, this.score);
-
-  final String id;
-  final double score;
-}
-
-final class _NativeVectorIndex {
-  _NativeVectorIndex(int dimension) : _handle = native.vecNew(dimension) {
-    if (_handle == ffi.nullptr) {
-      throw StateError('Failed to create native vector index.');
-    }
-    _vectorFinalizer.attach(this, _handle, detach: this);
-  }
-
-  ffi.Pointer<ffi.Void> _handle;
-
-  void put(String id, List<double> values) {
-    _checkOpen();
-    final idPtr = id.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final valuesPtr = _doubleList(values);
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      final status = native.vecPut(
-        _handle,
-        idPtr,
-        valuesPtr,
-        values.length,
-        error,
-      );
-      if (status != 0) {
-        throw StateError(_takeVectorError(error));
-      }
-    } finally {
-      calloc
-        ..free(idPtr)
-        ..free(valuesPtr)
-        ..free(error);
-    }
-  }
-
-  void putMany(List<VectorEntry> entries, int dimension) {
-    _checkOpen();
-    final ids = calloc<ffi.Pointer<ffi.Char>>(entries.length);
-    final strings = <ffi.Pointer<ffi.Char>>[];
-    final valueCount = entries.length * dimension;
-    final valuesPtr = valueCount == 0
-        ? ffi.nullptr
-        : calloc<ffi.Double>(valueCount);
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      for (var i = 0; i < entries.length; i += 1) {
-        final id = entries[i].id
-            .toNativeUtf8(allocator: calloc)
-            .cast<ffi.Char>();
-        strings.add(id);
-        ids[i] = id;
-      }
-      if (valueCount > 0) {
-        final values = valuesPtr.asTypedList(valueCount);
-        var offset = 0;
-        for (final entry in entries) {
-          values.setAll(offset, entry.embedding);
-          offset += dimension;
-        }
-      }
-      final status = native.vecPutMany(
-        _handle,
-        ids,
-        valuesPtr,
-        entries.length,
-        dimension,
-        error,
-      );
-      if (status != 0) {
-        throw StateError(_takeVectorError(error));
-      }
-    } finally {
-      for (final string in strings) {
-        calloc.free(string);
-      }
-      calloc.free(ids);
-      if (valuesPtr != ffi.nullptr) {
-        calloc.free(valuesPtr);
-      }
-      calloc.free(error);
-    }
-  }
-
-  void remove(String id) {
-    _checkOpen();
-    final idPtr = id.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    try {
-      native.vecRemove(_handle, idPtr);
-    } finally {
-      calloc.free(idPtr);
-    }
-  }
-
-  List<_VectorHit> search(
-    List<double> query, {
-    required int topK,
-    required double minScore,
-  }) {
-    _checkOpen();
-    final queryPtr = _doubleList(query);
-    final results = calloc<ffi.Pointer<native.VecResultAbi>>();
-    final count = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      final status = native.vecSearch(
-        _handle,
-        queryPtr,
-        query.length,
-        topK,
-        minScore,
-        results,
-        count,
-        error,
-      );
-      if (status != 0) {
-        throw StateError(_takeVectorError(error));
-      }
-      final resultPtr = results.value;
-      final length = count.value;
-      if (resultPtr == ffi.nullptr || length <= 0) {
-        return const [];
-      }
-      return [
-        for (var i = 0; i < length; i += 1)
-          _VectorHit(
-            resultPtr[i].id.cast<Utf8>().toDartString(),
-            resultPtr[i].score,
-          ),
-      ];
-    } finally {
-      if (results.value != ffi.nullptr) {
-        native.vecFreeResults(results.value, count.value);
-      }
-      calloc
-        ..free(queryPtr)
-        ..free(results)
-        ..free(count)
-        ..free(error);
-    }
-  }
-
-  void close() {
-    final handle = _handle;
-    if (handle == ffi.nullptr) {
       return;
     }
-    _handle = ffi.nullptr;
-    _vectorFinalizer.detach(this);
-    native.vecFree(handle);
-  }
-
-  void _checkOpen() {
-    if (_handle == ffi.nullptr) {
-      throw StateError('Native vector index is closed.');
-    }
-  }
-}
-
-ffi.Pointer<ffi.Double> _doubleList(List<double> values) {
-  final pointer = calloc<ffi.Double>(values.length);
-  pointer.asTypedList(values.length).setAll(0, values);
-  return pointer;
-}
-
-String _takeVectorError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
-  final value = error.value;
-  if (value == ffi.nullptr) return 'Native vector index call failed.';
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
+    _dimension = dimension;
   }
 }
 
@@ -456,15 +265,39 @@ List<double> l2Normalise(List<double> vec) {
   if (vec.isEmpty) {
     return vec;
   }
-  final valuesPtr = _doubleList(vec);
-  try {
-    final status = native.vecL2Norm(valuesPtr, vec.length);
-    if (status != 0) {
-      throw StateError('Native vector normalization failed.');
-    }
-    vec.setAll(0, valuesPtr.asTypedList(vec.length));
-  } finally {
-    calloc.free(valuesPtr);
+  var norm2 = 0.0;
+  for (final value in vec) {
+    norm2 += value * value;
+  }
+  if (norm2 == 0.0) {
+    return vec;
+  }
+  final invNorm = 1.0 / math.sqrt(norm2);
+  for (var i = 0; i < vec.length; i += 1) {
+    vec[i] *= invNorm;
   }
   return vec;
+}
+
+double _cosineSimilarity(List<double> a, List<double> b) {
+  if (a.length != b.length) {
+    throw ArgumentError(
+      'Vector dimensions must match: ${a.length} vs ${b.length}',
+    );
+  }
+  if (a.isEmpty) {
+    return 0.0;
+  }
+  var dot = 0.0;
+  var aNorm = 0.0;
+  var bNorm = 0.0;
+  for (var i = 0; i < a.length; i += 1) {
+    dot += a[i] * b[i];
+    aNorm += a[i] * a[i];
+    bNorm += b[i] * b[i];
+  }
+  if (aNorm == 0.0 || bNorm == 0.0) {
+    return 0.0;
+  }
+  return dot / (math.sqrt(aNorm) * math.sqrt(bNorm));
 }

@@ -24,6 +24,10 @@ final class CosyVoice2Paths {
   String get speechTokenizerOnnx => '$modelDir/speech_tokenizer_v2.onnx';
   String get flowDecoderEstimatorOnnx =>
       '$modelDir/flow.decoder.estimator.fp32.onnx';
+  String get flowDecoderStepOnnx => '$modelDir/flow.decoder.step.fp32.onnx';
+  String get flowDecoderStepFp16Onnx => '$modelDir/flow.decoder.step.fp16.onnx';
+  String get flowDecoderStepFinalOnnx => flowDecoderStepOnnx;
+  String get flowDecoderLoopOnnx => '$modelDir/flow.decoder.loop.fp32.onnx';
   String get flowEncoderFp32Onnx => '$modelDir/flow.encoder.fp32.onnx';
   String get flowEncoderFp16Onnx => '$modelDir/flow.encoder.fp16.onnx';
   String get llmOnnx => '$modelDir/llm.onnx';
@@ -47,13 +51,16 @@ final class CosyVoice2Paths {
   // a separate decoder-head + embedding-table file.
   String get llmPrefillOnnx => '$modelDir/llm_prefill.onnx';
   String get llmDecodeOnnx => '$modelDir/llm_decode.onnx';
+  String get llmDecodeHeadOnnx => '$modelDir/llm_decode_head.onnx';
   String get llmDecoderHeadOnnx => '$modelDir/llm_decoder_head.onnx';
   String get llmEmbeddingsNpz => '$modelDir/llm_embeddings.npz';
+  String get flowSupportNpz => '$modelDir/flow_support.npz';
   String get hiftStreamingOnnx => '$modelDir/hift_streaming.onnx';
 
   /// Directory holding the Qwen2 tokenizer (`vocab.json`, `merges.txt`,
   /// `tokenizer_config.json`) consumed by [Qwen2BpeTokenizer.load].
   String get qwen2TokenizerDir => '$modelDir/CosyVoice-BlankEN';
+  String get qwen2TokenizerSidecar => '$qwen2TokenizerDir/tokenizer.qwen2bpe';
 
   List<CosyVoice2ComponentFile> componentFiles() => [
     CosyVoice2ComponentFile.onnx(
@@ -73,6 +80,30 @@ final class CosyVoice2Paths {
       role: 'diffusion_flow_decoder_estimator',
       path: flowDecoderEstimatorOnnx,
       requiredForSynthesis: true,
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'flow_decoder_step_fp32',
+      role: 'diffusion_flow_decoder_guidance_step',
+      path: flowDecoderStepOnnx,
+      requiredForSynthesis: false,
+      sourcePath: flowDecoderEstimatorOnnx,
+      sourceFormat: 'onnx_graph_fusion',
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'flow_decoder_step_final_fp32',
+      role: 'diffusion_flow_decoder_guidance_final_step',
+      path: flowDecoderStepFinalOnnx,
+      requiredForSynthesis: false,
+      sourcePath: flowDecoderEstimatorOnnx,
+      sourceFormat: 'onnx_graph_fusion',
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'flow_decoder_loop_fp32',
+      role: 'diffusion_flow_decoder_guidance_loop',
+      path: flowDecoderLoopOnnx,
+      requiredForSynthesis: false,
+      sourcePath: flowDecoderStepOnnx,
+      sourceFormat: 'onnx_loop_fusion',
     ),
     CosyVoice2ComponentFile.onnx(
       name: 'flow_encoder_fp32',
@@ -113,6 +144,14 @@ final class CosyVoice2Paths {
       requiredForSynthesis: true,
       sourcePath: llmCheckpoint,
       sourceFormat: 'torch_checkpoint',
+    ),
+    CosyVoice2ComponentFile.onnx(
+      name: 'llm_decode_head',
+      role: 'semantic_speech_token_generator_decode_head',
+      path: llmDecodeHeadOnnx,
+      requiredForSynthesis: false,
+      sourcePath: llmDecodeOnnx,
+      sourceFormat: 'onnx_graph_fusion',
     ),
     CosyVoice2ComponentFile.onnx(
       name: 'llm_decoder_head',
@@ -163,6 +202,83 @@ final class CosyVoice2Paths {
       sourceFormat: 'safetensors',
     ),
   ];
+
+  List<CosyVoice2SupportAsset> supportAssets() => [
+    CosyVoice2SupportAsset(
+      name: 'llm_embeddings',
+      role: 'llm_embedding_tables',
+      path: llmEmbeddingsNpz,
+      format: 'npz',
+      requiredForSynthesis: true,
+    ),
+    CosyVoice2SupportAsset(
+      name: 'flow_support',
+      role: 'flow_embedding_projection_noise_tables',
+      path: flowSupportNpz,
+      format: 'npz',
+      requiredForSynthesis: true,
+      sourcePath: flowCheckpoint,
+      sourceFormat: 'torch_checkpoint',
+    ),
+    CosyVoice2SupportAsset(
+      name: 'tokenizer_sidecar',
+      role: 'qwen2_bpe_tokenizer_sidecar',
+      path: qwen2TokenizerSidecar,
+      format: 'qwen2bpe',
+      requiredForSynthesis: false,
+      sourcePath: '$qwen2TokenizerDir/vocab.json',
+      sourceFormat: 'huggingface_qwen2_vocab_merges',
+    ),
+  ];
+}
+
+final class CosyVoice2SupportAsset {
+  const CosyVoice2SupportAsset({
+    required this.name,
+    required this.role,
+    required this.path,
+    required this.format,
+    required this.requiredForSynthesis,
+    this.sourcePath,
+    this.sourceFormat,
+  });
+
+  final String name;
+  final String role;
+  final String path;
+  final String format;
+  final bool requiredForSynthesis;
+  final String? sourcePath;
+  final String? sourceFormat;
+
+  File get file => File(path);
+
+  bool get exists => file.existsSync();
+
+  int? get sizeBytes => exists ? file.lengthSync() : null;
+
+  File? get sourceFile => sourcePath == null ? null : File(sourcePath!);
+
+  bool get sourceExists => sourceFile?.existsSync() ?? false;
+
+  int? get sourceSizeBytes => sourceExists ? sourceFile!.lengthSync() : null;
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'role': role,
+    'format': format,
+    'path': path,
+    'exists': exists,
+    'sizeBytes': sizeBytes,
+    'requiredForSynthesis': requiredForSynthesis,
+    if (sourcePath != null)
+      'source': {
+        'path': sourcePath,
+        'format': sourceFormat,
+        'exists': sourceExists,
+        if (sourceSizeBytes != null) 'sizeBytes': sourceSizeBytes,
+      },
+  };
 }
 
 final class CosyVoice2ComponentFile {
@@ -207,6 +323,19 @@ final class CosyVoice2ComponentFile {
   bool get sourceExists => sourceFile?.existsSync() ?? false;
 
   int? get sourceSizeBytes => sourceExists ? sourceFile!.lengthSync() : null;
+
+  CosyVoice2ComponentFile withPath(String nextPath) {
+    return CosyVoice2ComponentFile(
+      name: name,
+      role: role,
+      path: nextPath,
+      format: format,
+      requiredForSynthesis: requiredForSynthesis,
+      loadableByDartOnnx: loadableByDartOnnx,
+      sourcePath: sourcePath,
+      sourceFormat: sourceFormat,
+    );
+  }
 }
 
 final class CosyVoice2ComponentStatus {
@@ -380,6 +509,9 @@ final class CosyVoice2PartialOnnxBundle {
     required bool requireProvider,
     required int numThreads,
     Map<String, Object?> backendOptions = const {},
+    Map<String, Map<String, Object?>> componentBackendOptions = const {},
+    Map<String, String> componentProviders = const {},
+    Map<String, String> componentPathOverrides = const {},
     Iterable<String>? componentNames,
     bool smoke = false,
     int smokeWarmupIterations = 1,
@@ -389,7 +521,11 @@ final class CosyVoice2PartialOnnxBundle {
     final statuses = <CosyVoice2ComponentStatus>[];
     final loaded = <CosyVoice2LoadedComponent>[];
 
-    for (final file in paths.componentFiles()) {
+    for (final baseFile in paths.componentFiles()) {
+      final overridePath = componentPathOverrides[baseFile.name];
+      final file = overridePath == null
+          ? baseFile
+          : baseFile.withPath(overridePath);
       if (requested != null && !requested.contains(file.name)) {
         statuses.add(
           CosyVoice2ComponentStatus(
@@ -412,16 +548,20 @@ final class CosyVoice2PartialOnnxBundle {
       }
       final stopwatch = Stopwatch()..start();
       try {
+        final componentOptions = componentBackendOptions[file.name];
+        final componentProvider = componentProviders[file.name] ?? provider;
         final session = DartOnnxSession.load(
           DartOnnxConfig(
             modelPath: file.path,
             id: 'cosyvoice2_${file.name}',
             family: 'cosyvoice2',
-            provider: provider,
+            provider: componentProvider,
             deviceId: deviceId,
             requireProvider: requireProvider,
             numThreads: numThreads,
-            backendOptions: backendOptions,
+            backendOptions: componentOptions == null
+                ? backendOptions
+                : {...backendOptions, ...componentOptions},
           ),
         );
         stopwatch.stop();
@@ -476,14 +616,18 @@ final class CosyVoice2PartialOnnxBundle {
     );
   }
 
-  bool get hasRequiredBlockedComponents => statuses.any(
-    (status) =>
-        status.file.requiredForSynthesis &&
-        (!status.exists ||
-            !status.file.loadableByDartOnnx ||
-            status.error != null ||
-            (status.smokeRan && status.smokeError != null)),
-  );
+  bool get hasRequiredBlockedComponents =>
+      statuses.any(
+        (status) =>
+            status.file.requiredForSynthesis &&
+            (!status.exists ||
+                !status.file.loadableByDartOnnx ||
+                status.error != null ||
+                (status.smokeRan && status.smokeError != null)),
+      ) ||
+      paths.supportAssets().any(
+        (asset) => asset.requiredForSynthesis && !asset.exists,
+      );
 
   List<String> get blockers {
     final blockers = <String>[];
@@ -516,6 +660,19 @@ final class CosyVoice2PartialOnnxBundle {
         );
       }
     }
+    for (final asset in paths.supportAssets()) {
+      if (!asset.requiredForSynthesis || asset.exists) {
+        continue;
+      }
+      if (asset.sourcePath != null && asset.sourceExists) {
+        blockers.add(
+          '${asset.name} support asset is missing at ${asset.path}; '
+          'generate it from ${asset.sourceFormat} at ${asset.sourcePath}.',
+        );
+      } else {
+        blockers.add('${asset.name} support asset is missing at ${asset.path}');
+      }
+    }
     return blockers;
   }
 
@@ -527,6 +684,9 @@ final class CosyVoice2PartialOnnxBundle {
     'readyForSynthesis': !hasRequiredBlockedComponents,
     'loadedOnnxComponents': loadedComponentNames,
     'blockers': blockers,
+    'supportAssets': [
+      for (final asset in paths.supportAssets()) asset.toJson(),
+    ],
     'components': [for (final status in statuses) status.toJson()],
   };
 
@@ -634,9 +794,25 @@ Map<String, Object?> _smokeInputs(
         'spks': _float32Tensor([2, 80], buffers),
         'cond': _float32Tensor([2, 80, 16], buffers),
       };
+    case 'llm_decode':
+      return _llmDecodeSmokeInputs(buffers);
     default:
       return _smokeInputsFromMetadata(diagnostics, buffers);
   }
+}
+
+Map<String, Object?> _llmDecodeSmokeInputs(List<NativeTensorBuffer> buffers) {
+  const pastSeq = 16;
+  const totalSeq = pastSeq + 1;
+  final inputs = <String, Object?>{
+    'inputs_embeds': _float32Tensor([1, 1, 896], buffers),
+    'attention_mask': _int64Tensor([1, totalSeq], buffers, value: 1),
+  };
+  for (var layer = 0; layer < 24; layer += 1) {
+    inputs['past_key_$layer'] = _float32Tensor([1, 2, pastSeq, 64], buffers);
+    inputs['past_value_$layer'] = _float32Tensor([1, 2, pastSeq, 64], buffers);
+  }
+  return inputs;
 }
 
 Map<String, Object?> _smokeInputsFromMetadata(
@@ -891,6 +1067,17 @@ RuntimeTensor _int32Tensor(
   return buffer.tensor;
 }
 
+RuntimeTensor _int64Tensor(
+  List<int> shape,
+  List<NativeTensorBuffer> buffers, {
+  required int value,
+}) {
+  final buffer = NativeTensorBuffer.int64(shape);
+  buffer.asInt64List().fillRange(0, buffer.byteLength ~/ 8, value);
+  buffers.add(buffer);
+  return buffer.tensor;
+}
+
 List<Map<String, Object?>> _outputSummaries(Map<String, Object?> outputs) => [
   for (final entry in outputs.entries) _outputSummary(entry.key, entry.value),
 ];
@@ -901,7 +1088,8 @@ Map<String, Object?> _outputSummary(String name, Object? value) {
       'name': name,
       'dtype': value.dtype.name,
       'shape': value.shape,
-      'byteLength': value.bytes.lengthInBytes,
+      'byteLength': value.byteLength,
+      'memoryKind': value.memoryKind.name,
     };
   }
   if (value is TypedData) {

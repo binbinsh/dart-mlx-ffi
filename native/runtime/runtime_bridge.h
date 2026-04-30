@@ -28,12 +28,29 @@ enum DinfTensorDType {
   DINF_DTYPE_BOOL = 7,
 };
 
+enum DinfTensorMemoryKind {
+  DINF_TENSOR_MEMORY_CPU = 0,
+  DINF_TENSOR_MEMORY_HANDLE = 1,
+  DINF_TENSOR_MEMORY_CPU_VIEW = 2,
+};
+
+using DinfTensorHandleRelease = void (*)(void* value, void* context);
+
+struct DinfTensorHandle {
+  void* value;
+  void* context;
+  DinfTensorHandleRelease release;
+};
+
 struct DinfTensor {
   int32_t dtype;
   int32_t rank;
   int64_t* shape;
   intptr_t byte_length;
   void* data;
+  DinfTensorHandle* handle;
+  int32_t memory_kind;
+  int32_t reserved;
 };
 
 struct DinfNamedTensor {
@@ -60,6 +77,18 @@ struct DinfMemoryInfo {
   uint64_t android_java_heap_private_dirty;
 };
 
+struct DinfInfo {
+  const char* native_backend;
+  const char* runtime_version;
+  const char* async_model;
+  const char* abi;
+  const char* mlx_owner;
+  const char* mlx_api;
+  int32_t mlx_linked;
+  int32_t mlx_enabled;
+  const char* mlx_artifacts;
+};
+
 enum DinfOptionKind {
   DINF_OPTION_STRING = 1,
   DINF_OPTION_INT = 2,
@@ -82,6 +111,19 @@ struct DinfOptionEntry {
 struct DinfOptions {
   const DinfOptionEntry* entries;
   intptr_t count;
+};
+
+struct DinfResolveArtifact {
+  int32_t engine;
+  const char* path;
+  const char* format;
+  const char* target_platforms;
+};
+
+struct DinfResolveResult {
+  int32_t engine;
+  int32_t accel_mask;
+  int32_t fallback_engine;
 };
 
 class DinfDiagBuilder {
@@ -167,6 +209,13 @@ DinfNamedTensor dinf_make_tensor(
     const std::vector<int64_t>& shape,
     const void* data,
     size_t byte_length);
+
+DinfTensorHandle* dinf_make_tensor_handle(
+    void* value,
+    void* context,
+    DinfTensorHandleRelease release);
+
+void dinf_release_tensor_handle(DinfTensorHandle* handle);
 
 size_t dinf_dtype_size(int32_t dtype);
 

@@ -16,7 +16,7 @@ Future<void> main(List<String> args) async {
   final warmupIters = int.tryParse(parsed.option('warmup-iters') ?? '5') ?? 5;
   final iters = int.tryParse(parsed.option('iters') ?? '30') ?? 30;
   final trtCacheDir = parsed.option('trt-cache-dir');
-  final preloadLibraries = _preloadLibrariesFromArgs(parsed);
+  final preloadLibraries = _preloadLibrariesFromArgs(parsed, provider);
   if (requireProvider) {
     final audit = RuntimeDependencyAudit.inspect(
       root: _runtimeSearchRoot(parsed),
@@ -270,13 +270,14 @@ double _percentile(List<double> sortedValues, double ratio) {
   return sortedValues[index];
 }
 
-List<String> _preloadLibrariesFromArgs(_Args parsed) {
+List<String> _preloadLibrariesFromArgs(_Args parsed, String provider) {
   return discoverDefaultOnnxRuntimePreloadLibraries(
     explicitLibraries: parsed.values('preload-library'),
     libraryDirectories: [
       ...parsed.values('cuda-library-dir'),
       ...parsed.values('native-library-dir'),
     ],
+    libraryNames: onnxRuntimePreloadLibraryNamesForProvider(provider),
   );
 }
 

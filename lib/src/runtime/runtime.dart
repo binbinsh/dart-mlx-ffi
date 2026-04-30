@@ -4,13 +4,16 @@ library;
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
+import 'native_ffi.dart' as dz;
 import 'package:ffi/ffi.dart';
 
 import '../models/shared/model_spec.dart';
 import '../models/shared/runtime_metadata.dart';
 import 'artifact_resolver.dart';
 import 'native_bindings.dart' as native;
+import 'native_byte_buffer.dart';
 import 'native_runtime.dart';
+import 'native_tensor_buffers.dart';
 
 /// Host platforms used by runtime resolution.
 enum RuntimePlatform { ios, macos, windows, linux, android, unknown }
@@ -119,11 +122,11 @@ final class ModelBundle {
 
   /// Resolve the artifact path relative to [rootPath] when needed.
   String get artifactPath {
-    final root = rootPath.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final path = artifact.path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    final root = dz.NativeUtf8CString.utf8(rootPath);
+    final path = dz.NativeUtf8CString.utf8(artifact.path);
     ffi.Pointer<ffi.Char> result = ffi.nullptr;
     try {
-      result = native.artifactPath(root, path);
+      result = native.artifactPath(root.pointer, path.pointer);
       if (result == ffi.nullptr) {
         return artifact.path;
       }
@@ -133,9 +136,8 @@ final class ModelBundle {
       if (result != ffi.nullptr) {
         native.freeStr(result);
       }
-      calloc
-        ..free(root)
-        ..free(path);
+      root.close();
+      path.close();
     }
   }
 }
@@ -178,59 +180,58 @@ enum RuntimeTensorDataType {
   boolean,
 }
 
+enum RuntimeTensorMemoryKind { cpu, nativeHandle }
+
 /// Named-tensor value passed to model-level runtimes.
 final class RuntimeTensor {
-  const RuntimeTensor({
+  RuntimeTensor({
     required this.dtype,
     required this.shape,
     required this.bytes,
+    int? byteLength,
     this.nativeData,
+    this.nativeHandle,
+    this.memoryKind = RuntimeTensorMemoryKind.cpu,
     Object? owner,
-  }) : _owner = owner;
+  }) : byteLength = byteLength ?? bytes.lengthInBytes,
+       _owner = owner;
 
   factory RuntimeTensor.float32(List<int> shape, Float32List data) {
-    final buffer = NativeTensorBuffer.float32(shape);
-    buffer.copyFrom(data);
-    return buffer.tensor;
+    return nativeFloat32Buffer(data, shape: shape).tensor;
   }
 
   factory RuntimeTensor.int32(List<int> shape, Int32List data) {
-    final buffer = NativeTensorBuffer.int32(shape);
-    buffer.copyFrom(data);
-    return buffer.tensor;
+    return nativeInt32Buffer(data, shape: shape).tensor;
   }
 
   factory RuntimeTensor.int64(List<int> shape, Int64List data) {
-    final buffer = NativeTensorBuffer.int64(shape);
-    buffer.copyFrom(data);
-    return buffer.tensor;
+    return nativeInt64Buffer(data, shape: shape).tensor;
   }
 
   factory RuntimeTensor.uint8(List<int> shape, Uint8List data) {
-    final buffer = NativeTensorBuffer.uint8(shape);
-    buffer.copyFrom(data);
-    return buffer.tensor;
+    return nativeUint8Buffer(data, shape: shape).tensor;
   }
 
   factory RuntimeTensor.boolean(List<int> shape, Uint8List data) {
-    final buffer = NativeTensorBuffer.boolean(shape);
-    buffer.copyFrom(data);
-    return buffer.tensor;
+    return nativeBooleanBuffer(data, shape: shape).tensor;
   }
 
   factory RuntimeTensor.float64(List<int> shape, Float64List data) {
-    final buffer = NativeTensorBuffer.float64(shape);
-    buffer.copyFrom(data);
-    return buffer.tensor;
+    return nativeFloat64Buffer(data, shape: shape).tensor;
   }
 
   final RuntimeTensorDataType dtype;
   final List<int> shape;
   final Uint8List bytes;
+  final int byteLength;
   final ffi.Pointer<ffi.Void>? nativeData;
+  final ffi.Pointer<ffi.Void>? nativeHandle;
+  final RuntimeTensorMemoryKind memoryKind;
   // Keeps native output owners alive for external typed-data backed tensors.
   // ignore: unused_field
   final Object? _owner;
+
+  bool get isNativeHandle => memoryKind == RuntimeTensorMemoryKind.nativeHandle;
 
   Float32List asFloat32List() => _view<Float32List>(
     () => bytes.buffer.asFloat32List(
@@ -256,9 +257,19 @@ final class RuntimeTensor {
     ),
   );
 
-  Uint8List asUint8List() => bytes;
+  Uint8List asUint8List() {
+    if (isNativeHandle) {
+      throw StateError('Runtime tensor is backed by a native runtime handle.');
+    }
+    return bytes;
+  }
 
-  T _view<T extends TypedData>(T Function() create) => create();
+  T _view<T extends TypedData>(T Function() create) {
+    if (isNativeHandle) {
+      throw StateError('Runtime tensor is backed by a native runtime handle.');
+    }
+    return create();
+  }
 }
 
 /// Runtime implementation contract.
@@ -456,11 +467,14 @@ final class RuntimeResolver {
     final requested = options.engine;
     final artifacts = _ArtifactArena(spec);
     final result = calloc<native.ResolveResultAbi>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    final modelId = _nativeText(spec.id);
+    final error = dz.NativeUtf8ErrorSlot(
+      free: native.freeStr,
+      fallbackMessage: 'Native runtime resolver failed for ${spec.id}.',
+    );
+    final modelId = dz.NativeUtf8CString.utf8(spec.id);
     try {
       final status = native.resolve(
-        modelId,
+        modelId.pointer,
         _platformId(platform),
         requested == null ? -1 : _engineId(requested),
         options.allowFallback ? 1 : 0,
@@ -468,12 +482,10 @@ final class RuntimeResolver {
         artifacts.pointer,
         artifacts.count,
         result,
-        error,
+        error.pointer,
       );
       if (status != 0) {
-        throw StateError(
-          _takeError(error, 'Native runtime resolver failed for ${spec.id}.'),
-        );
+        throw StateError(error.take());
       }
       final resolved = result.ref;
       final engine = _engineById(resolved.engine);
@@ -499,10 +511,9 @@ final class RuntimeResolver {
       );
     } finally {
       artifacts.close();
-      calloc
-        ..free(modelId)
-        ..free(result)
-        ..free(error);
+      modelId.close();
+      error.close();
+      calloc.free(result);
     }
   }
 }
@@ -551,29 +562,12 @@ List<Accelerator> _accelerators(int mask) => [
   if ((mask & 1) != 0) Accelerator.cpu,
 ];
 
-ffi.Pointer<ffi.Char> _nativeText(String value) {
-  return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-}
-
-String _takeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error, String fallback) {
-  final value = error.value;
-  if (value == ffi.nullptr) {
-    return fallback;
-  }
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
-  }
-}
-
 final class _ArtifactArena {
-  _ArtifactArena(ModelSpec spec)
-    : count = spec.platformArtifacts.length,
-      pointer = spec.platformArtifacts.isEmpty
-          ? ffi.nullptr
-          : calloc<native.ResolveArtifactAbi>(spec.platformArtifacts.length) {
+  _ArtifactArena(ModelSpec spec) : count = spec.platformArtifacts.length {
+    _buffer = NativeByteBuffer.allocate(
+      ffi.sizeOf<native.ResolveArtifactAbi>() * count,
+    );
+    pointer = _buffer.pointer.cast<native.ResolveArtifactAbi>();
     var index = 0;
     for (final entry in spec.platformArtifacts.entries) {
       final artifact = entry.value;
@@ -586,24 +580,23 @@ final class _ArtifactArena {
     }
   }
 
-  final ffi.Pointer<native.ResolveArtifactAbi> pointer;
+  late final ffi.Pointer<native.ResolveArtifactAbi> pointer;
   final int count;
-  final List<ffi.Pointer<ffi.Char>> _strings = [];
+  late final NativeByteBuffer _buffer;
+  final List<dz.NativeUtf8CString> _strings = [];
 
   ffi.Pointer<ffi.Char> _add(String value) {
-    final pointer = _nativeText(value);
-    _strings.add(pointer);
-    return pointer;
+    final string = dz.NativeUtf8CString.utf8(value);
+    _strings.add(string);
+    return string.pointer;
   }
 
   void close() {
     for (final value in _strings) {
-      calloc.free(value);
+      value.close();
     }
     _strings.clear();
-    if (pointer != ffi.nullptr) {
-      calloc.free(pointer);
-    }
+    _buffer.close();
   }
 }
 
@@ -611,7 +604,8 @@ final class _IntArena {
   _IntArena(Iterable<int> values) {
     final list = values.toList(growable: false);
     count = list.length;
-    pointer = count == 0 ? ffi.nullptr : calloc<ffi.Int32>(count);
+    _buffer = NativeByteBuffer.allocate(ffi.sizeOf<ffi.Int32>() * count);
+    pointer = _buffer.pointer.cast<ffi.Int32>();
     if (count > 0) {
       pointer.asTypedList(count).setAll(0, list);
     }
@@ -619,10 +613,9 @@ final class _IntArena {
 
   late final ffi.Pointer<ffi.Int32> pointer;
   late final int count;
+  late final NativeByteBuffer _buffer;
 
   void close() {
-    if (pointer != ffi.nullptr) {
-      calloc.free(pointer);
-    }
+    _buffer.close();
   }
 }

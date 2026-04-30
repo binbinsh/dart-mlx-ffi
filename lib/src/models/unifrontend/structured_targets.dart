@@ -35,12 +35,6 @@ final class PronunciationItem {
   };
 }
 
-final _targetFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((handle) {
-  if (handle != ffi.nullptr) {
-    native.targetFree(handle);
-  }
-});
-
 final class PronunciationTargetResolver {
   factory PronunciationTargetResolver({
     required List<String> homographPronunciations,
@@ -88,31 +82,29 @@ final class PronunciationTargetResolver {
         );
       }
     }
-    final handle = _createTargetMatcher(
-      homographSurfaces: homographSurfaces,
-      homographCandidateIds: homographCandidateIds,
-      polyphoneSurfaces: polyphoneSurfaces,
-      polyphoneCandidateIds: polyphoneCandidateIds,
-    );
-    final resolver = PronunciationTargetResolver._(
+    return PronunciationTargetResolver._(
       homographPronunciations: homographPronunciations,
       polyphonePronunciations: polyphonePronunciations,
       homographSurfaceCandidates: homographSurfaceCandidates,
       polyphoneSurfaceCandidates: polyphoneSurfaceCandidates,
       homographByLowerSurface: homographByLowerSurface,
+      homographSurfaces: List<String>.unmodifiable(homographSurfaces),
       homographNativeCandidates: List<List<String>>.unmodifiable(
         homographCandidates,
+      ),
+      homographNativeCandidateIds: List<List<int>>.unmodifiable(
+        homographCandidateIds,
       ),
       polyphoneSurfaces: List<String>.unmodifiable(polyphoneSurfaces),
       polyphoneNativeCandidates: List<List<String>>.unmodifiable(
         polyphoneCandidates,
       ),
+      polyphoneNativeCandidateIds: List<List<int>>.unmodifiable(
+        polyphoneCandidateIds,
+      ),
       homographPronToId: homographPronToId,
       polyphonePronToId: polyphonePronToId,
-      handle: handle,
     );
-    _targetFinalizer.attach(resolver, handle, detach: resolver);
-    return resolver;
   }
 
   PronunciationTargetResolver._({
@@ -121,17 +113,21 @@ final class PronunciationTargetResolver {
     required this.homographSurfaceCandidates,
     required this.polyphoneSurfaceCandidates,
     required Map<String, List<String>> homographByLowerSurface,
+    required List<String> homographSurfaces,
     required List<List<String>> homographNativeCandidates,
+    required List<List<int>> homographNativeCandidateIds,
     required List<String> polyphoneSurfaces,
     required List<List<String>> polyphoneNativeCandidates,
+    required List<List<int>> polyphoneNativeCandidateIds,
     required Map<String, int> homographPronToId,
     required Map<String, int> polyphonePronToId,
-    required ffi.Pointer<ffi.Void> handle,
   }) : _homographByLowerSurface = homographByLowerSurface,
+       _homographSurfaces = homographSurfaces,
        _homographNativeCandidates = homographNativeCandidates,
+       _homographNativeCandidateIds = homographNativeCandidateIds,
        _polyphoneSurfaces = polyphoneSurfaces,
        _polyphoneNativeCandidates = polyphoneNativeCandidates,
-       _handle = handle,
+       _polyphoneNativeCandidateIds = polyphoneNativeCandidateIds,
        _homographPronToId = homographPronToId,
        _polyphonePronToId = polyphonePronToId;
 
@@ -140,10 +136,12 @@ final class PronunciationTargetResolver {
   final Map<String, List<String>> homographSurfaceCandidates;
   final Map<String, List<String>> polyphoneSurfaceCandidates;
   final Map<String, List<String>> _homographByLowerSurface;
+  final List<String> _homographSurfaces;
   final List<List<String>> _homographNativeCandidates;
+  final List<List<int>> _homographNativeCandidateIds;
   final List<String> _polyphoneSurfaces;
   final List<List<String>> _polyphoneNativeCandidates;
-  final ffi.Pointer<ffi.Void> _handle;
+  final List<List<int>> _polyphoneNativeCandidateIds;
   final Map<String, int> _homographPronToId;
   final Map<String, int> _polyphonePronToId;
   bool _closed = false;
@@ -194,9 +192,7 @@ final class PronunciationTargetResolver {
           surface: text.substring(matches.items[i].start, matches.items[i].end),
           pronunciation: '',
           candidates: _homographNativeCandidates[matches.items[i].index],
-          candidateIds: includeCandidateIds
-              ? _matchIds(matches.items[i])
-              : const [],
+          candidateIds: includeCandidateIds ? matches.items[i].ids : const [],
         ),
     ];
   }
@@ -214,9 +210,7 @@ final class PronunciationTargetResolver {
           surface: _polyphoneSurfaces[matches.items[i].index],
           pronunciation: '',
           candidates: _polyphoneNativeCandidates[matches.items[i].index],
-          candidateIds: includeCandidateIds
-              ? _matchIds(matches.items[i])
-              : const [],
+          candidateIds: includeCandidateIds ? matches.items[i].ids : const [],
         ),
     ];
   }
@@ -264,25 +258,54 @@ final class PronunciationTargetResolver {
     if (_closed) {
       throw StateError('pronunciation target resolver is closed.');
     }
-    final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final matches = calloc<ffi.Pointer<native.TargetMatchAbi>>();
-    final count = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      final status = homographs
-          ? native.targetHomographs(_handle, input, matches, count, error)
-          : native.targetPolyphones(_handle, input, matches, count, error);
-      if (status != 0) {
-        throw StateError(_takeFillError(error));
+    final matches = <_TargetMatch>[];
+    if (homographs) {
+      final lower = text.toLowerCase();
+      for (var index = 0; index < _homographSurfaces.length; index += 1) {
+        final surface = _homographSurfaces[index];
+        var start = 0;
+        while (true) {
+          final found = lower.indexOf(surface, start);
+          if (found < 0) break;
+          final end = found + surface.length;
+          if (_isBoundary(lower, found - 1) && _isBoundary(lower, end)) {
+            matches.add(
+              _TargetMatch(
+                start: found,
+                end: end,
+                index: index,
+                ids: _homographNativeCandidateIds[index],
+              ),
+            );
+          }
+          start = math.max(end, found + 1);
+        }
       }
-      return _NativeTargetMatches(matches.value, count.value);
-    } finally {
-      calloc
-        ..free(input)
-        ..free(matches)
-        ..free(count)
-        ..free(error);
+    } else {
+      for (var index = 0; index < _polyphoneSurfaces.length; index += 1) {
+        final surface = _polyphoneSurfaces[index];
+        var start = 0;
+        while (true) {
+          final found = text.indexOf(surface, start);
+          if (found < 0) break;
+          matches.add(
+            _TargetMatch(
+              start: found,
+              end: found + surface.length,
+              index: index,
+              ids: _polyphoneNativeCandidateIds[index],
+            ),
+          );
+          start = found + surface.length;
+        }
+      }
     }
+    matches.sort(
+      (a, b) => a.start == b.start
+          ? a.end.compareTo(b.end)
+          : a.start.compareTo(b.start),
+    );
+    return _NativeTargetMatches(List<_TargetMatch>.unmodifiable(matches));
   }
 
   void close() {
@@ -290,33 +313,30 @@ final class PronunciationTargetResolver {
       return;
     }
     _closed = true;
-    _targetFinalizer.detach(this);
-    native.targetFree(_handle);
   }
 }
 
 final class _NativeTargetMatches {
-  _NativeTargetMatches(this.items, this.count);
+  _NativeTargetMatches(this.items);
 
-  final ffi.Pointer<native.TargetMatchAbi> items;
-  final int count;
+  final List<_TargetMatch> items;
+  int get count => items.length;
 
-  void close() {
-    if (items != ffi.nullptr) {
-      native.targetFreeMatches(items, count);
-    }
-  }
+  void close() {}
 }
 
-List<int> _matchIds(native.TargetMatchAbi match) {
-  if (match.idCount <= 0 || match.ids == ffi.nullptr) {
-    return const [];
-  }
-  return List<int>.generate(
-    match.idCount,
-    (index) => match.ids[index],
-    growable: false,
-  );
+final class _TargetMatch {
+  const _TargetMatch({
+    required this.start,
+    required this.end,
+    required this.index,
+    required this.ids,
+  });
+
+  final int start;
+  final int end;
+  final int index;
+  final List<int> ids;
 }
 
 Map<String, List<String>> _candidateMap(Object? raw) {
@@ -346,87 +366,15 @@ List<int> _candidateIds(Iterable<String> labels, Map<String, int> idsByLabel) {
   return List<int>.unmodifiable(ids);
 }
 
-final class _Int32Rows {
-  _Int32Rows(List<List<int>> rows)
-    : rowCount = rows.length,
-      offsets = rows.isEmpty
-          ? ffi.nullptr
-          : calloc<ffi.IntPtr>(rows.length + 1) {
-    try {
-      var total = 0;
-      for (var i = 0; i < rows.length; i += 1) {
-        offsets[i] = total;
-        total += rows[i].length;
-      }
-      if (rows.isNotEmpty) {
-        offsets[rows.length] = total;
-      }
-      valueCount = total;
-      values = total == 0 ? ffi.nullptr : calloc<ffi.Int32>(total);
-      var cursor = 0;
-      for (final row in rows) {
-        for (final value in row) {
-          values[cursor] = value;
-          cursor += 1;
-        }
-      }
-    } catch (_) {
-      close();
-      rethrow;
-    }
+bool _isBoundary(String text, int index) {
+  if (index < 0 || index >= text.length) {
+    return true;
   }
-
-  final int rowCount;
-  final ffi.Pointer<ffi.IntPtr> offsets;
-  int valueCount = 0;
-  ffi.Pointer<ffi.Int32> values = ffi.nullptr;
-
-  void close() {
-    if (offsets != ffi.nullptr) {
-      calloc.free(offsets);
-    }
-    if (values != ffi.nullptr) {
-      calloc.free(values);
-    }
-  }
-}
-
-ffi.Pointer<ffi.Void> _createTargetMatcher({
-  required List<String> homographSurfaces,
-  required List<List<int>> homographCandidateIds,
-  required List<String> polyphoneSurfaces,
-  required List<List<int>> polyphoneCandidateIds,
-}) {
-  final homographs = _CStringArray(homographSurfaces);
-  final homographIds = _Int32Rows(homographCandidateIds);
-  final polyphones = _CStringArray(polyphoneSurfaces);
-  final polyphoneIds = _Int32Rows(polyphoneCandidateIds);
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final handle = native.targetNew(
-      homographs.pointer,
-      homographs.length,
-      homographIds.offsets,
-      homographIds.values,
-      homographIds.valueCount,
-      polyphones.pointer,
-      polyphones.length,
-      polyphoneIds.offsets,
-      polyphoneIds.values,
-      polyphoneIds.valueCount,
-      error,
-    );
-    if (handle == ffi.nullptr) {
-      throw StateError(_takeFillError(error));
-    }
-    return handle;
-  } finally {
-    homographs.close();
-    homographIds.close();
-    polyphones.close();
-    polyphoneIds.close();
-    calloc.free(error);
-  }
+  final code = text.codeUnitAt(index);
+  return !((code >= 0x30 && code <= 0x39) ||
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      code == 0x5f);
 }
 
 List<PronunciationItem> _decodePronunciationItems({

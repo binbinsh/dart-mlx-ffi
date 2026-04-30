@@ -24,7 +24,11 @@ Future<void> main(List<String> args) async {
       return;
     }
   }
-  final preloadLibraries = _preloadLibrariesFromArgs(parsed, root: root);
+  final preloadLibraries = _preloadLibrariesFromArgs(
+    parsed,
+    root: root,
+    provider: provider,
+  );
   final backendOptions = <String, Object?>{
     if (parsed.flag('trt-fp16')) 'trtFp16': true,
     if (trtCacheDir != null && trtCacheDir.isNotEmpty)
@@ -39,10 +43,18 @@ Future<void> main(List<String> args) async {
       ),
   };
   final defaultPaths = DartUniFrontendTtsPaths.fromUniFrontendRoot(root);
+  final sarashina2ModelDir = parsed.option('sarashina2-model-dir');
+  final neuttsAirProviderDir = parsed.option('neutts-air-provider-dir');
   final paths = defaultPaths.copyWith(
     kokoroModelPath: parsed.option('kokoro-model'),
     kokoroVoicesPath: parsed.option('kokoro-voices'),
     kokoroConfigPath: parsed.option('kokoro-config'),
+    sarashina2Paths: sarashina2ModelDir == null || sarashina2ModelDir.isEmpty
+        ? null
+        : Sarashina2TtsPaths(modelDir: sarashina2ModelDir),
+    neuttsAirPaths: neuttsAirProviderDir == null || neuttsAirProviderDir.isEmpty
+        ? null
+        : NeuttsAirPaths(providerDir: neuttsAirProviderDir),
     structuredModelPath: parsed.option('structured-model'),
     structuredExportConfigPath: parsed.option('structured-export-config'),
     structuredConfigPath: parsed.option('structured-config'),
@@ -53,7 +65,25 @@ Future<void> main(List<String> args) async {
     ),
     structuredTokenizerPath: parsed.option('structured-tokenizer'),
   );
-  final registry = await loadUniFrontendKokoroTtsRegistry(
+  final includeCosyVoice2 =
+      parsed.flag('enable-cosyvoice2') ||
+      _envFlag('DART_TTS_ENABLE_COSYVOICE2');
+  final cosyVoice2Only =
+      parsed.flag('cosyvoice2-only') || _envFlag('DART_TTS_COSYVOICE2_ONLY');
+  final includeSarashina2 =
+      parsed.flag('enable-sarashina2') ||
+      _envFlag('DART_TTS_ENABLE_SARASHINA2');
+  final sarashina2Only =
+      parsed.flag('sarashina2-only') || _envFlag('DART_TTS_SARASHINA2_ONLY');
+  final includeNeuttsAir =
+      parsed.flag('enable-neutts-air') ||
+      _envFlag('DART_TTS_ENABLE_NEUTTS_AIR');
+  final neuttsAirOnly =
+      parsed.flag('neutts-air-only') || _envFlag('DART_TTS_NEUTTS_AIR_ONLY');
+  final loadSarashina2Llm =
+      parsed.flag('enable-sarashina2-llm') ||
+      _envFlag('DART_TTS_ENABLE_SARASHINA2_LLM');
+  final registry = await loadUniFrontendTtsRegistry(
     paths: paths,
     options: DartTtsRuntimeOptions(
       provider: provider,
@@ -64,18 +94,25 @@ Future<void> main(List<String> args) async {
       preloadLibraries: preloadLibraries,
       backendOptions: backendOptions,
     ),
+    includeKokoro: !cosyVoice2Only && !neuttsAirOnly && !sarashina2Only,
+    includeCosyVoice2: includeCosyVoice2 || cosyVoice2Only,
+    includeNeuttsAir: includeNeuttsAir || neuttsAirOnly,
+    includeSarashina2: includeSarashina2 || sarashina2Only,
+    loadSarashina2Llm: loadSarashina2Llm,
+    loadCosyVoice2StreamingHift: !parsed.flag('no-cosyvoice2-streaming-hift'),
   );
 
   HttpServer? server;
   try {
     server = await HttpServer.bind(host, port);
-    final kokoroHealth =
-        (registry.runtimeHealth()['backends'] as Map<String, Object?>)['kokoro']
-            as Map<String, Object?>;
+    final health = registry.runtimeHealth();
+    final backends = health['backends'] as Map<String, Object?>;
+    final kokoroHealth = backends['kokoro'] as Map<String, Object?>?;
     stderr.writeln(
       'dart_tts_server listening on http://$host:$port '
-      'structured=${kokoroHealth['structuredOnnxProvider']} '
-      'kokoro=${kokoroHealth['kokoroOnnxProvider']}',
+      'providers=${registry.providerNames.join(',')} '
+      'structured=${kokoroHealth?['structuredOnnxProvider']} '
+      'kokoro=${kokoroHealth?['kokoroOnnxProvider']}',
     );
     await for (final req in server) {
       await _handleRequest(req, registry);
@@ -138,9 +175,10 @@ Future<void> _handleRequest(
       final payload = decoded.map((k, v) => MapEntry(k.toString(), v));
       final provider = (payload['provider'] ?? 'kokoro').toString();
       if (registry.byProvider(provider) == null) {
+        final catalog = TtsBackendCatalog.byProvider(provider);
         await _json(req, {
           'error': 'unsupported_provider',
-          'detail': TtsBackendCatalog.byProvider(provider)?.blockers.join(' '),
+          'detail': catalog?.blockers.join(' '),
           'providers': registry.providerCards(),
         }, statusCode: 400);
         return;
@@ -149,6 +187,9 @@ Future<void> _handleRequest(
       final text = (payload['text'] ?? '').toString().trim();
       final voice = (payload['voice'] ?? 'zf_xiaoni').toString();
       final speed = double.tryParse('${payload['speed'] ?? '1.0'}') ?? 1.0;
+      final extra = payload['extra'] is Map
+          ? (payload['extra'] as Map).map((k, v) => MapEntry('$k', v))
+          : const <String, Object?>{};
       final result = await registry.synthesize(
         DartTtsSynthesisRequest(
           provider: provider,
@@ -156,11 +197,57 @@ Future<void> _handleRequest(
           phonemes: phonemes,
           voice: voice,
           speed: speed,
+          promptAudioBytes: decodeAudioDataUrl(payload['promptAudioBase64']),
+          promptText: (payload['promptText'] ?? extra['promptText'] ?? '')
+              .toString(),
+          maxGeneratedTokens: _intValue(
+            payload['maxGeneratedTokens'] ?? extra['maxGeneratedTokens'],
+          ),
+          rasSeed: _intValue(payload['rasSeed'] ?? extra['rasSeed']) ?? 0,
+          useStreamingHift: _boolValue(
+            payload['useStreamingHift'] ?? extra['useStreamingHift'],
+          ),
+          semanticTokenText:
+              (payload['semanticTokenText'] ?? extra['semanticTokenText'] ?? '')
+                  .toString(),
+          semanticTokens: _intListValue(
+            payload['semanticTokens'] ?? extra['semanticTokens'],
+          ),
+          codecTokenText:
+              (payload['codecTokenText'] ?? extra['codecTokenText'] ?? '')
+                  .toString(),
+          codecTokens: _intListValue(
+            payload['codecTokens'] ?? extra['codecTokens'],
+          ),
+          referencePhones:
+              (payload['referencePhones'] ?? extra['referencePhones'] ?? '')
+                  .toString(),
+          inputPhones: (payload['inputPhones'] ?? extra['inputPhones'] ?? '')
+              .toString(),
+          referenceCodes: _intListValue(
+            payload['referenceCodes'] ?? extra['referenceCodes'],
+          ),
+          promptTokenIds: _intListValue(
+            payload['promptTokenIds'] ?? extra['promptTokenIds'],
+          ),
+          latencyTokens:
+              _intValue(payload['latencyTokens'] ?? extra['latencyTokens']) ??
+              1,
+          temperature:
+              _doubleValue(payload['temperature'] ?? extra['temperature']) ??
+              0.9,
+          topP: _doubleValue(payload['topP'] ?? extra['topP']) ?? 0.95,
+          frequencyPenalty:
+              _doubleValue(
+                payload['frequencyPenalty'] ?? extra['frequencyPenalty'],
+              ) ??
+              1.0,
         ),
       );
       await _json(req, {
         'text': text,
         'frontendText': result.frontendText,
+        'frontendSsml': result.frontendSsml,
         'frontendElapsedMs': result.frontendElapsedMicroseconds / 1000.0,
         'frontendProvider': result.frontendProvider,
         'phonemes': result.phonemes,
@@ -175,11 +262,24 @@ Future<void> _handleRequest(
         'audioFormat': result.audioFormat,
         'audioBase64': base64Encode(result.audioBytes),
         'warnings': result.warnings,
+        if (result.metadata.isNotEmpty) 'metadata': result.metadata,
         'ttsElapsedMs': result.ttsElapsedMicroseconds / 1000.0,
       });
       return;
     }
     await _json(req, {'error': 'not_found'}, statusCode: 404);
+  } on FormatException catch (error, stack) {
+    await _json(req, {
+      'error': 'bad_request',
+      'detail': '$error',
+      'stack': '$stack',
+    }, statusCode: 400);
+  } on ArgumentError catch (error, stack) {
+    await _json(req, {
+      'error': 'bad_request',
+      'detail': '$error',
+      'stack': '$stack',
+    }, statusCode: 400);
   } catch (error, stack) {
     await _json(req, {'error': '$error', 'stack': '$stack'}, statusCode: 500);
   }
@@ -260,13 +360,18 @@ bool _looksLikeUniFrontendRoot(Directory directory) {
       Directory('${directory.path}/src/unifrontend').existsSync();
 }
 
-List<String> _preloadLibrariesFromArgs(_Args parsed, {required String root}) {
+List<String> _preloadLibrariesFromArgs(
+  _Args parsed, {
+  required String root,
+  required String provider,
+}) {
   return discoverDefaultOnnxRuntimePreloadLibraries(
     explicitLibraries: parsed.values('preload-library'),
     libraryDirectories: [
       ...parsed.values('cuda-library-dir'),
       ...parsed.values('native-library-dir'),
     ],
+    libraryNames: onnxRuntimePreloadLibraryNamesForProvider(provider),
     runtimeEnvSearchRoots: [root],
   );
 }
@@ -281,4 +386,78 @@ String? _runtimeDependencyError(String root, String provider, _Args parsed) {
     ],
   );
   return audit.skipReason;
+}
+
+bool _envFlag(String name) {
+  final value = Platform.environment[name]?.toLowerCase();
+  return value == '1' || value == 'true' || value == 'yes';
+}
+
+int? _intValue(Object? value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is num) {
+    return value.toInt();
+  }
+  return int.tryParse('$value');
+}
+
+double? _doubleValue(Object? value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is num) {
+    return value.toDouble();
+  }
+  return double.tryParse('$value');
+}
+
+List<int> _intListValue(Object? value) {
+  if (value == null) {
+    return const [];
+  }
+  if (value is Iterable) {
+    final parsed = <int>[];
+    for (final item in value) {
+      parsed.add(_strictIntValue(item));
+    }
+    return parsed;
+  }
+  final text = '$value'.trim();
+  if (text.isEmpty) {
+    return const [];
+  }
+  return [
+    for (final part in text.split(RegExp(r'[\s,]+')))
+      if (part.isNotEmpty) int.parse(part),
+  ];
+}
+
+int _strictIntValue(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  if (value is num) {
+    if (value.isFinite && value == value.truncateToDouble()) {
+      return value.toInt();
+    }
+    throw FormatException('expected integer token id, got $value');
+  }
+  final text = '$value'.trim();
+  if (text.isEmpty) {
+    throw const FormatException('expected integer token id, got empty value');
+  }
+  return int.parse(text);
+}
+
+bool _boolValue(Object? value) {
+  if (value == null) {
+    return false;
+  }
+  if (value is bool) {
+    return value;
+  }
+  final text = '$value'.toLowerCase();
+  return text == '1' || text == 'true' || text == 'yes';
 }

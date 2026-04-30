@@ -1,2 +1,4 @@
-/// Raw native bindings are intentionally not part of the public Dart API.
+/// Complete low-level `mlx-c` FFI bindings generated from vendored headers.
 library;
+
+export 'src/raw/raw.dart';

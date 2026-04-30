@@ -1,6 +1,6 @@
 // Dart-side parity test for the Qwen2 BPE tokenizer.
 //
-// Drives the full Dart -> C ABI -> Zig -> tokenizer pipeline against the
+// Drives the full Dart -> C ABI -> native -> tokenizer pipeline against the
 // HuggingFace ground-truth fixture committed under
 // `test/fixtures/cosyvoice2/qwen2_tokenizer_cases.json`.
 //
@@ -17,7 +17,8 @@ import 'package:dart_inference/models.dart';
 
 void main() {
   final tokenizerDir = Platform.environment['QWEN2_TOKENIZER_DIR'];
-  final casesPath = Platform.environment['QWEN2_TOKENIZER_CASES'] ??
+  final casesPath =
+      Platform.environment['QWEN2_TOKENIZER_CASES'] ??
       'test/fixtures/cosyvoice2/qwen2_tokenizer_cases.json';
 
   group('Qwen2BpeTokenizer parity', () {
@@ -32,9 +33,7 @@ void main() {
       final raw = await File(casesPath).readAsString();
       final payload = jsonDecode(raw) as Map<String, dynamic>;
       final list = payload['cases'] as List;
-      cases = [
-        for (final c in list) (c as Map).cast<String, dynamic>(),
-      ];
+      cases = [for (final c in list) (c as Map).cast<String, dynamic>()];
     });
 
     tearDownAll(() {
@@ -57,8 +56,10 @@ void main() {
             .toList(growable: false);
         final actual = tokenizer.encode(text);
         if (actual.length == expected.length &&
-            List.generate(actual.length, (k) => actual[k] == expected[k])
-                .every((v) => v)) {
+            List.generate(
+              actual.length,
+              (k) => actual[k] == expected[k],
+            ).every((v) => v)) {
           passed += 1;
         } else {
           failures.add(
@@ -69,7 +70,8 @@ void main() {
       expect(
         failures,
         isEmpty,
-        reason: 'parity: $passed/${cases.length} passed.\n'
+        reason:
+            'parity: $passed/${cases.length} passed.\n'
             '${failures.join('\n')}',
       );
     });

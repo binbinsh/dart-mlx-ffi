@@ -4,113 +4,122 @@
 
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
 - Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.85`.
-- Added a generic TTS ONNX component bundle that can inspect, load, run, and metadata-smoke any provider ONNX target declared in the catalog, so newly exported Chatterbox, IndexTTS2, NeuTTS Air, Dia2, VibeVoice, and Qwen3-TTS graphs automatically use the same Dart -> Zig -> ONNX Runtime path.
-- Added structured TTS backend ONNX migration manifests and a library-level provider asset audit so blocked local providers report exact Dart/Zig/ONNX target graphs, current source weights, and missing required runtime assets without relying on CLI-local path heuristics.
-- Made CosyVoice2 migration status ONNX-target-first: all core components now have explicit Dart/Zig/ONNX target paths with legacy source artifacts recorded only as export sources, loaded CosyVoice2 ONNX components can be retrieved and run by name through the bundle API, and newly exported ONNX components can smoke from runtime input metadata without per-component Dart input code.
-- Moved ONNX provider alias/default selection into Zig open-option normalization, removed duplicate provider/option alias policy from the C++ ORT adapter, added Zig bridge base fields to adapter diagnostics, and exposed TensorRT EP cache/workspace/subgraph flags plus reusable TensorRT dependency auditing for TTS, structured frontend, smoke, and ONNX server startup paths.
-- Moved `VectorStore` cosine search, batched index insertion, top-k ranking, and `l2Normalise` math into a Zig-owned native vector module exposed through `dinf_vec_*`, leaving Dart to hold only document metadata and result wrapping.
-- Moved Kokoro float32 concatenation and float32-to-PCM16 WAV encoding into Zig through `dinf_audio_*`, including a chunked path that writes multi-chunk synthesis output without Dart pre-concatenating audio.
-- Moved UniFrontend structured-logit argmax and sigmoid-mask scanning into Zig through `dinf_dec_*`, reusing native-backed runtime output tensors without copying logits back through Dart loops.
-- Removed the legacy Dart heap-tensor fallback paths from UniFrontend decoding, so structured logits must stay native-backed and all argmax/sigmoid/BIOES/span-type work goes through Zig.
-- Removed the obsolete Dart-facing `dinf_dec_sigmoid` mask ABI after structured decoding moved to native active-label and span helpers.
-- Moved UniFrontend binary span boundary scanning into Zig through `dinf_dec_spans`, avoiding Dart-side per-character scanning after sigmoid thresholding.
-- Moved UniFrontend BIOES argmax/span decoding into Zig through `dinf_dec_bioes`, so emphasis and TN span heads no longer materialize Dart id lists first.
-- Moved UniFrontend TN span type majority voting into Zig through `dinf_dec_span_types`, avoiding Dart-side per-character type tallying.
-- Moved UniFrontend emotion active-label scanning and best-label fallback into Zig through `dinf_dec_active`.
-- Moved UniFrontend encoded input tensors onto Zig-owned native buffers with Zig-side bulk fill, so structured frontend inference no longer copies fixed input/mask tensors from Dart heap buffers before each native run.
-- Consolidated UniFrontend native input reset into `dinf_struct_reset`, reducing the per-batch buffer clear/fill path from eight Dart FFI calls to one Zig call.
-- Moved Kokoro ONNX input tensors onto reusable Zig-owned native buffers with dynamic tensor views, avoiding the runtime scratch-copy step for token ids, style vectors, and speed scalars.
-- Consolidated Kokoro per-chunk ONNX input framing, voice-row selection, and speed scalar writes into `dinf_kok_inputs`, replacing the Dart-side multi-call prep path.
-- Moved the remaining Kokoro voice-row copy helper to `dinf_kok_row` and removed the unused Dart-facing generic fill/copy ABI bindings.
-- Moved ONNX convenience tensor helpers onto Zig-owned native buffers, so helper-created int64/float32/bool inputs no longer need a second native scratch copy during runtime calls.
-- Moved `RuntimeTensor` typed factories onto Zig-owned native buffers, making factory-created runtime inputs native-backed by default.
+- Added a generic TTS ONNX component bundle that can inspect, load, run, and metadata-smoke any provider ONNX target declared in the catalog, so newly exported Chatterbox, IndexTTS2, NeuTTS Air, Dia2, VibeVoice, and Qwen3-TTS graphs automatically use the same Dart -> native FFI -> ONNX Runtime path.
+- Added Sarashina2 TensorRT EPContext preparation and auto-discovery so the direct Dart/FFI ONNX path can use a cached TensorRT flow-step engine without a TTS server process.
+- Fixed ONNX session `requireProvider=false` fallback so CUDA/TensorRT initialization failures retry with sanitized CPU options instead of blocking component bundle loads.
+- Added the Sarashina2.2-TTS local text path: raw text now goes through the native `tokenizer.sara2tok` runtime, split Llama ONNX semantic generation, native semantic-token sampling, and the CosyVoice2-style flow/HiFT decoder, with prompt audio tokens wired into semantic generation when prompt text is supplied.
+- Moved Sarashina2 prompt token-id composition into the Dart tokenizer ABI and feeds the split LLM from a native-backed token-id buffer instead of expanding tokenizer output through a Dart list.
+- Added the NeuTTS Air partial Dart/FFI runtime surface: Qwen2 tokenizer sidecar loading, prompt special-token resolution, native `<|speech_N|>` parsing/formatting, prompt token-id construction, registry opt-in, and a NeuCodec decoder wrapper that will run `neucodec_decoder.onnx` once exported.
+- Keeps NeuTTS Air codec-token text parsing in a native-backed buffer through the decoder path, while preserving the public decoded-token list for metadata.
+- Keeps caller-provided NeuTTS Air codec-token lists in a native-backed request source before decoder execution, avoiding a second list-to-native conversion in the ONNX path.
+- Added native-backed NeuTTS Air prompt-token-id builders and lets the provider path skip prompt-token-id metadata lists while preserving prompt token counts.
+- Lets the NeuTTS Air provider path skip codec-token metadata list/text materialization while preserving codec token counts for response metadata.
+- Added Qwen2 tokenizer sidecar generation/loading for vocab+merges tokenizers, so CosyVoice2 and NeuTTS Air can start from native-backed tokenizer tables instead of reparsing Hugging Face tokenizer assets in the Dart hot path.
+- Moved CosyVoice2 text-tokenization plus LLM prefill embedding construction behind one native FFI ABI call, leaving Dart to pass raw text, prompt speech tokens, and native embedding tables instead of materializing text token lists in the synthesis path.
+- Moved CosyVoice2 RAS repetition-window checks onto native-backed decode history buffers, leaving Dart to own RNG and loop control without allocating per-step history sublists.
+- Feeds CosyVoice2 flow embedding directly from the native-backed RAS decode buffer, avoiding a Dart token-list round trip between LLM decode and flow encoder.
+- Lets the CosyVoice2 provider path skip generated speech-token list materialization, keeping only the token count while the flow encoder consumes the native RAS buffer.
+- Moved CosyVoice2 flow-token prompt/generated concatenation into native embedding, so Dart no longer builds an intermediate joined speech-token list before `flow_encoder_fp32`.
+- Added a CosyVoice2 flow embedding slice ABI so Sarashina2 can pass full semantic-token sources with an offset/count instead of building a decoded-token list for the flow encoder input.
+- Keeps Sarashina2 external semantic-token text parsing in a native-backed buffer through the flow decoder path, while direct/debug calls can still request full token metadata lists.
+- Keeps Sarashina2 LLM-generated semantic tokens in a native-backed buffer through flow decoding, with Dart token lists only materialized when metadata is requested.
+- Moved Sarashina2 and NeuTTS Air native-backed speech/semantic token range validation into Dart helpers, avoiding Dart-side token iteration on parsed-buffer decode paths.
+- Validates Sarashina2 and NeuTTS Air request token-list sources after copying them into the native decode buffer, so provider paths avoid a separate Dart-side validation pass.
+- Skips redundant Sarashina2/NeuTTS Air token validation after native token parsers and lets the NeuTTS Air provider pass its already-validated native codec source straight to the decoder.
+- Short-circuits empty Dart int-token lists in CosyVoice2, Sarashina2, and NeuTTS Air FFI wrappers instead of allocating empty typed-list copies.
+- Moved CosyVoice2 prompt-audio linear resampling and mel-layout transposition into Dart helpers used by zero-shot prompt extraction.
+- Moved CosyVoice2 zero-shot prompt 128-mel, matcha 80-mel, and kaldi fbank extraction into a dedicated native prompt module, so prompt ONNX inputs now stay native-backed through speech-tokenizer, CampPlus, and flow conditioning.
+- Added a reusable CosyVoice2 native prompt-plan handle with precomputed window/filterbank tables, so repeated zero-shot prompt extraction no longer rebuilds mel constants from Dart or per prompt.
+- Precomputed CosyVoice2 prompt DFT rotation step tables in the native prompt plan, reducing per-frame trigonometric work without allocating full DFT bases.
+- Moved CosyVoice2 prompt fbank cepstral mean normalization into a native in-place helper and feeds CampPlus from the resulting native buffer.
+- Moved CosyVoice2 zero-shot prompt token/feature clipping into native and keeps clipped prompt tensors native-backed for LLM prefill and flow conditioning.
+- Keeps CosyVoice2/Sarashina2 prompt speaker embeddings native-backed through flow conditioning and closes prompt-extraction native buffers after prompt-audio synthesis.
+- Moved CosyVoice2 diffusion timestep scheduling into a reusable native-filled native tensor, avoiding per-step Dart `Float32List([t, t])` allocation.
+- Reused the CosyVoice2 diffusion duplicate-batch input buffer across estimator steps instead of allocating a fresh native tensor every step.
+- Reused CosyVoice2 LLM attention-mask buffers across decode steps instead of allocating a new native mask for every generated token.
+- Reused one CosyVoice2 LLM speech-token embedding buffer across autoregressive decode steps through the existing native embedding ABI.
+- Reused one Sarashina2 LLM token-embedding buffer across semantic-token decode steps through the same native embedding ABI.
+- Reused native empty float tensors for CosyVoice2 no-prompt flow conditioning and streaming HiFT cache inputs instead of constructing empty Dart heap tensors.
+- Reads CosyVoice2/Sarashina2 prompt speech-token counts from native buffer sizes instead of creating typed-data views just to count tokens.
+- Returned CosyVoice2/Sarashina2 provider WAV bytes from the native encoder while HiFT output tensors are still alive, so provider synthesis no longer re-encodes copied Dart audio samples.
+- Let CosyVoice2/Sarashina2 provider synthesis skip Dart float mel/audio copies entirely while still reporting sample counts and returning native-encoded WAV bytes.
+- Lets the Sarashina2 provider path skip semantic-token metadata list materialization, preserving token counts while direct/debug calls keep full token lists by default.
+- Added structured TTS backend ONNX migration manifests and a library-level provider asset audit so blocked local providers report exact Dart/FFI/ONNX target graphs, current source weights, and missing required runtime assets without relying on CLI-local path heuristics.
+- Made CosyVoice2 migration status ONNX-target-first: all core components now have explicit Dart/FFI/ONNX target paths with legacy source artifacts recorded only as export sources, loaded CosyVoice2 ONNX components can be retrieved and run by name through the bundle API, and newly exported ONNX components can smoke from runtime input metadata without per-component Dart input code.
+- Moved ONNX provider alias/default selection into native open-option normalization, removed duplicate provider/option alias policy from the C++ ORT adapter, added native bridge base fields to adapter diagnostics, and exposed TensorRT EP cache/workspace/subgraph flags plus reusable TensorRT dependency auditing for TTS, structured frontend, smoke, and ONNX server startup paths.
+- Moved `VectorStore` cosine search, batched insertion, top-k ranking, and `l2Normalise` math back into Dart, removing the native vector helper ABI.
+- Moved Kokoro float32 concatenation and float32-to-PCM16 WAV encoding into shared Dart helpers, including a chunked path that writes multi-chunk synthesis output without pre-concatenating audio.
+- Moved UniFrontend structured-logit argmax, sigmoid active-label scanning, binary span detection, BIOES decoding, span-type majority voting, and input/mask filling into Dart helpers backed by reusable native tensor buffers.
+- Moved Kokoro ONNX input framing, voice-row selection, speed scalar writes, config vocab loading, phoneme filtering/chunk planning, voice archive loading, and NPY parsing into Dart helpers.
+- Moved ONNX convenience tensor helpers onto native-backed native buffers, so helper-created int64/float32/bool inputs no longer need a second native scratch copy during runtime calls.
+- Moved `RuntimeTensor` typed factories onto native-backed native buffers, making factory-created runtime inputs native-backed by default.
 - Moved Kokoro ONNX audio output chunk handoff to native tensor pointers, so multi-chunk WAV encoding no longer copies each generated audio chunk into a Dart `Float32List` first.
-- Moved UniFrontend token-span, target, and candidate mask writes into Zig fill helpers, keeping structured frontend mask mutation on native-backed buffers.
-- Consolidated UniFrontend target/candidate mask row writes behind `dinf_struct_matches`, letting Zig consume matcher results directly instead of round-tripping candidate ids through Dart lists.
-- Moved UniFrontend pronunciation candidate-id rows into the Zig target matcher handle, so matched targets return precomputed native candidate ids instead of rebuilding them from Dart maps during input encoding.
-- Moved UniFrontend token/attention and char/mask row writes into Zig helpers backed by reusable native scratch buffers.
-- Moved UniFrontend char-vocab lookup and char/mask row filling into `dinf_fill_chars_i64`, removing the Dart-side per-character id loop in structured input encoding.
-- Moved UniFrontend MmBERT BPE tokenization into a Zig-owned tokenizer handle through `dinf_bpe_*`, so structured input encoding fills native token ids and token offsets without Dart-side BPE merge loops or token-list copies.
-- Changed UniFrontend token input encoding to use `dinf_bpe_fill`, letting Zig write `input_ids`, `attention_mask`, and token offsets in one pass without a Dart token scratch buffer or a second fill call.
-- Moved UniFrontend SSML stripping for TTS text into Zig through `dinf_text_strip_ssml`, replacing Dart-side RegExp tag removal on the frontend output path.
-- Moved UniFrontend SSML composition, XML escaping, and Dart UTF-16 span slicing into Zig through `dinf_text_ssml`.
-- Moved UniFrontend emphasis span trimming and whitespace-merge normalization into Zig through `dinf_text_norm_spans`.
-- Moved UniFrontend English/Chinese TN item overlap selection and ordering into Zig through `dinf_text_select_tn`.
-- Moved UniFrontend Chinese-script detection into Zig through `dinf_text_has_zh`, removing the TTS routing RegExp from Dart.
-- Moved UniFrontend fallback TN text verbalization and Chinese/English TN preference scoring into Zig through `dinf_text_tn_*`.
-- Moved Kokoro eSpeak-NG dynamic library loading, initialization, voice selection, and phoneme calls behind Zig through `dinf_esp_*`, removing Dart-side direct eSpeak C FFI.
-- Removed the Dart-side `espeak-ng` process fallback and moved eSpeak data-path environment/default directory resolution into Zig, keeping Kokoro phonemization on the `Dart -> Zig -> C library` path.
-- Consolidated the default Kokoro phonemizer pipeline behind `dinf_esp_kok_*`, so normalization, language routing, mixed-script splitting, SSML/pinyin handling, eSpeak calls, post-processing, and cleanup run inside Zig with a single Dart call per uncached request.
-- Moved Kokoro `config.json` vocab parsing into Zig through `dinf_kok_vocab`, so runtime load no longer JSON-decodes the token vocab or fills vocab buffers in Dart.
-- Moved Kokoro voice `.npz` loading, ZIP store/deflate extraction, and float32 `.npy` parsing into Zig through `dinf_kok_npz`, so Dart no longer depends on `archive` or materializes decompressed voice arrays before native buffer adoption.
-- Fixed Zig-owned Kokoro `.npz` entry names to return null-terminated ABI strings instead of borrowing raw ZIP name slices.
-- Moved Kokoro phoneme filtering, chunk planning, and token id generation into Zig through `dinf_kok_*`, so TTS synthesis consumes native token chunks without Dart-side chunk strings or token-list copies.
-- Moved Kokoro English text normalization and eSpeak phoneme post-processing into Zig through `dinf_kok_norm` and `dinf_kok_post`.
-- Moved Kokoro SSML plain-text extraction, explicit phoneme cleanup, and pinyin phoneme-tag detection/normalization into Zig through compact `dinf_kok_*` text helpers.
-- Moved Kokoro phonemizer language routing and mixed CJK/Latin run splitting into Zig through `dinf_kok_lang` and `dinf_kok_runs`.
-- Moved Kokoro `<phoneme ph="...">` SSML parsing into Zig through `dinf_kok_ssml`, removing the Dart-side tag scanning RegExp.
-- Moved Kokoro eSpeak phoneme cleanup into Zig through `dinf_kok_clean`, replacing per-call Dart regex cleanup on the phonemizer output path.
+- Moved UniFrontend target matching, candidate-id rows, token/attention rows, char/mask rows, MmBERT BPE tokenization, SSML composition/stripping, emphasis trimming, TN item selection, Chinese detection, and fallback TN verbalization into Dart.
+- Moved Kokoro eSpeak-NG dynamic library loading, initialization, voice selection, phoneme calls, language routing, SSML/pinyin handling, text normalization, and cleanup to direct Dart FFI plus Dart text helpers.
+- Removed old Dart-facing helper ABI declarations for Kokoro, UniFrontend, BPE, decoder, text, eSpeak, and vector operations.
+- Moved Kokoro `config.json` vocab parsing, voice `.npz` loading, ZIP store extraction, and float32 `.npy` parsing into Dart.
+- Fixed native-backed Kokoro `.npz` entry names to return null-terminated ABI strings instead of borrowing raw ZIP name slices.
 - Fixed UniFrontend emphasis span normalization so decoded spans are normalized before the mutable destination list is cleared.
-- Split the Dart-facing vector ABI exports into `vector_api.zig` so `runtime.zig` stays below the source-size limit during continued migration.
-- Split Zig-owned memory snapshot collection into `mem.zig`, keeping `dinf_mem` stable while leaving `runtime.zig` room for further migration work under the source-size limit.
+- Split the Dart-facing vector ABI exports into `vector_api.native` so `runtime.native` stays below the source-size limit during continued migration.
+- Split native-backed memory snapshot collection into `mem.native`, keeping `dinf_mem` stable while leaving `runtime.native` room for further migration work under the source-size limit.
 - Trimmed Dart-side run-path allocation by writing typed-list inputs directly into the reusable native descriptor arena before `dinf_run`, avoiding transient `RuntimeTensor` and shape-list wrappers.
 - Replaced the private adapter diagnostics JSON callback with typed diagnostic entries and added a `vendors/` rule forbidding vendored source edits unless explicitly requested.
-- Replaced the private Zig-to-C++ open-options JSON with typed `DinfOptionEntry` arrays, so Dart options stay typed through Zig before reaching the native adapter backends.
+- Replaced the private native-to-C++ open-options JSON with typed `DinfOptionEntry` arrays, so Dart options stay typed through native before reaching the native adapter backends.
 - Removed the private C++ `dinf_cpp_mem_json` path; the native CLI now reads typed `DinfMemoryInfo` directly before rendering its report JSON.
-- Removed stale Zig-side JSON capability/status helpers now that runtime backend info, accelerator defaults, and engine order use typed fields and masks.
-- Removed the obsolete Zig resolver/fallback JSON compatibility paths, leaving runtime artifact selection on the typed resolver ABI only.
-- Moved `zigRuntimeMode` dispatch from Zig-owned JSON parsing to typed `dinf_open` entry lookup, avoiding an extra open-path parse before native session creation.
-- Replaced Dart-side native open-option JSON encoding with the typed `dinf_open` entry ABI, leaving Zig to merge options and build the private adapter JSON.
-- Replaced Dart session-diagnostics JSON parsing with the typed `dinf_diag` entry ABI, moving adapter diagnostics JSON flattening behind Zig.
+- Removed stale native-side JSON capability/status helpers now that runtime backend info, accelerator defaults, and engine order use typed fields and masks.
+- Removed the obsolete native resolver/fallback JSON compatibility paths, leaving runtime artifact selection on the typed resolver ABI only.
+- Moved `nativeRuntimeMode` dispatch from native-backed JSON parsing to typed `dinf_open` entry lookup, avoiding an extra open-path parse before native session creation.
+- Replaced Dart-side native open-option JSON encoding with the typed `dinf_open` entry ABI, leaving native to merge options and build the private adapter JSON.
+- Replaced Dart session-diagnostics JSON parsing with the typed `dinf_diag` entry ABI, moving adapter diagnostics JSON flattening behind native.
 - Replaced native memory-snapshot JSON with the typed `dinf_mem` ABI so Dart receives cross-platform memory fields without decoding native JSON.
 - Replaced runtime backend-info JSON with the typed `dinf_info` ABI, removing the Dart-side JSON decode and obsolete private adapter info symbol.
 - Replaced Hugging Face artifact reference JSON with the compact `dinf_hf_ref` packed-text ABI, removing native JSON decode from Dart artifact parsing.
 - Replaced Core ML layout discovery JSON with the compact `dinf_coreml_layout` packed-text ABI, removing another Dart-side native JSON decode.
-- Split the ONNX C++ adapter into small session and pipeline modules so future `Dart -> Zig -> C/C++` migration work stays under the source-size limit.
+- Split the ONNX C++ adapter into small session and pipeline modules so future `Dart -> native FFI -> C/C++` migration work stays under the source-size limit.
 - Replaced ONNX preload-library discovery JSON with the compact `dinf_ort_libs` packed-text ABI, removing another Dart-side native JSON decode.
 - Replaced Dart resolver/fallback JSON calls with typed `dinf_resolve` and `dinf_fallback` ABIs so runtime artifact selection no longer builds or parses JSON in Dart.
-- Moved native runtime open-option assembly into Zig through `dinf_open_opts` and removed the obsolete `dinf_open` Dart-facing entry point.
-- Replaced the capabilities JSON binding with Zig-owned accelerator bitmasks through `dinf_accel_mask`.
-- Moved unresolved remote artifact rejection fully into the Zig open path, removing the Dart preflight call and obsolete `dinf_artifact_remote` binding.
-- Moved Hugging Face auth-token environment lookup into Zig through `dinf_hf_token`.
-- Moved runtime engine/artifact selection into Zig through the native resolver ABI, leaving Dart to pass compact artifact descriptors and unwrap the selected artifact.
-- Moved registered-runtime fallback selection into Zig through the native fallback ABI, leaving Dart to pass registered engine ids and unwrap the selected fallback artifact.
-- Moved Hugging Face default cache root platform/env policy into Zig through `dinf_hf_cache_root`.
-- Split Zig runtime tensor ABI, validation, and native buffer ownership helpers into `abi.zig` to keep `runtime.zig` below the source-size limit before further migration.
-- Moved Hugging Face artifact reference parsing, directory artifact policy, and cache path construction into Zig through `dinf_hf_*`.
-- Moved unresolved remote artifact detection into Zig resolver policy.
+- Moved native runtime open-option assembly into native through `dinf_open_opts` and removed the obsolete `dinf_open` Dart-facing entry point.
+- Replaced the capabilities JSON binding with native-backed accelerator bitmasks through `dinf_accel_mask`.
+- Moved unresolved remote artifact rejection fully into the native open path, removing the Dart preflight call and obsolete `dinf_artifact_remote` binding.
+- Moved Hugging Face auth-token environment lookup into native through `dinf_hf_token`.
+- Moved runtime engine/artifact selection into native through the native resolver ABI, leaving Dart to pass compact artifact descriptors and unwrap the selected artifact.
+- Moved registered-runtime fallback selection into native through the native fallback ABI, leaving Dart to pass registered engine ids and unwrap the selected fallback artifact.
+- Moved Hugging Face default cache root platform/env policy into native through `dinf_hf_cache_root`.
+- Split native runtime tensor ABI, validation, and native buffer ownership helpers into `abi.native` to keep `runtime.native` below the source-size limit before further migration.
+- Moved Hugging Face artifact reference parsing, directory artifact policy, and cache path construction into native through `dinf_hf_*`.
+- Moved unresolved remote artifact detection into native resolver policy.
 - Moved the default ONNX Runtime CUDA/TensorRT preload library list out of Dart so `dinf_ort_libs` owns the default names.
-- Moved model bundle artifact path resolution into Zig through `dinf_artifact_path`.
-- Moved runtime artifact platform compatibility, MLX preview gating, registered MLX artifact detection, engine order, and default accelerator policy into Zig resolver policy.
-- Moved runtime platform/capability discovery into Zig through `dinf_platform_id` and `dinf_accel_mask`, so Dart no longer owns native backend accelerator defaults.
-- Moved Core ML bundle layout discovery into Zig through `dinf_coreml_layout`, so Dart no longer owns CoreML-LLM chunk sorting, monolithic bundle detection, pipeline JSON detection, or sidecar scanning.
-- Moved ONNX Runtime preload library discovery into Zig through `dinf_ort_libs`, so Dart no longer owns runtime env-file parsing, CUDA/TensorRT directory inference, or preload library filesystem scanning for session setup.
+- Moved model bundle artifact path resolution into native through `dinf_artifact_path`.
+- Moved runtime artifact platform compatibility, MLX preview gating, registered MLX artifact detection, engine order, and default accelerator policy into native resolver policy.
+- Moved runtime platform/capability discovery into native through `dinf_platform_id` and `dinf_accel_mask`, so Dart no longer owns native backend accelerator defaults.
+- Moved Core ML bundle layout discovery into native through `dinf_coreml_layout`, so Dart no longer owns CoreML-LLM chunk sorting, monolithic bundle detection, pipeline JSON detection, or sidecar scanning.
+- Moved ONNX Runtime preload library discovery into native through `dinf_ort_libs`, so Dart no longer owns runtime env-file parsing, CUDA/TensorRT directory inference, or preload library filesystem scanning for session setup.
 - Shortened the Dart-facing native ABI from `dart_inference_runtime_*` to `dinf_*`, shortened the private adapter symbols to `dinf_cpp_*`, and renamed the code-asset marker file to `rt_bindings.dart`.
-- Routed runtime tensor dtype/shape/byte-length validation through Zig's shared tensor layout rules before echo, MLX, or private adapter execution.
-- Moved `NativeTensorBuffer` dtype/shape byte-length computation into Zig through `dinf_alloc_tensor`, so Dart no longer duplicates tensor layout rules for zero-copy input buffers.
-- Moved Linux memory snapshots into Zig by reading `/proc/self/status` directly from `dinf_mem`, while leaving non-Linux platform-specific memory probes behind the private adapter.
-- Moved `zigRuntimeMode` dispatch to Zig-owned open handling instead of substring matching Dart-encoded options.
+- Routed runtime tensor dtype/shape/byte-length validation through native's shared tensor layout rules before echo, MLX, or private adapter execution.
+- Moved `NativeTensorBuffer` dtype/shape byte-length computation into native through `dinf_alloc_tensor`, so Dart no longer duplicates tensor layout rules for zero-copy input buffers.
+- Moved Linux memory snapshots into native by reading `/proc/self/status` directly from `dinf_mem`, while leaving non-Linux platform-specific memory probes behind the private adapter.
+- Moved `nativeRuntimeMode` dispatch to native-backed open handling instead of substring matching Dart-encoded options.
 - Removed the stale unused `dart_inference_bindings_generated.dart` raw-binding placeholder from the public package surface.
-- Renamed the private Apple `mlx-c` dependency to `dinf_zig_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside Zig.
-- Moved `.mlxfn` positional input ordering into Zig by parsing artifact-side `inputs.json` / `input_order`, reporting it in diagnostics, and reordering named runtime tensors before `mlx_imported_function_apply`.
+- Renamed the private Apple `mlx-c` dependency to `dinf_mlx_c` and reused the Dart-side runtime input tensor descriptor arena across calls so the hot path keeps fewer per-run allocations outside native.
+- Moved `.mlxfn` positional input ordering into native by parsing artifact-side `inputs.json` / `input_order`, reporting it in diagnostics, and reordering named runtime tensors before `mlx_imported_function_apply`.
 - Restored the vendored MLX, `mlx-c`, `fmt`, and `metal-cpp` source trees to the publish package so Apple builds have the private `mlx-c` dependency sources locally.
-- Split Zig-owned MLX artifact discovery and config/quantization parsing into `mlx_artifact.zig`, leaving `mlx_backend.zig` focused on session state, weight loading, and executor dispatch.
+- Split native-backed MLX artifact discovery and config/quantization parsing into `mlx_artifact.native`, leaving `mlx_backend.native` focused on session state, weight loading, and executor dispatch.
 - Moved vendored native dependencies from `third_party/` to `vendors/` and updated native build paths plus publish filters.
-- Updated Zig MLX backend metadata so Apple builds report `enabled: true` and expose the registered `.mlxfn` plus `dart_inference_linear` executor surface.
-- Removed the second Zig-side MLX output copy by moving materialized C-allocator buffers directly into the Dart-facing runtime tensor batch.
-- Added Zig-owned `.mlxfn` imported-function execution so exported MLX bundles now run through `dinf_* -> Zig -> mlx-c`, and moved the benchmark helper off the removed Dart MLX import runner.
+- Updated native MLX backend metadata so Apple builds report `enabled: true` and expose the registered `.mlxfn` plus `dart_inference_linear` executor surface.
+- Removed the second native-side MLX output copy by moving materialized C-allocator buffers directly into the Dart-facing runtime tensor batch.
+- Added native-backed `.mlxfn` imported-function execution so exported MLX bundles now run through `dinf_* -> native -> mlx-c`, and moved the benchmark helper off the removed Dart MLX import runner.
 - Registered MLX in the bundled runtime registry while keeping default resolver selection limited to implemented `.mlxfn`/`mlx-function` artifacts.
-- Split Zig runtime input tensor conversion into `mlx_input.zig` to keep the MLX backend extensible under the source-file size limit.
-- Added the first real Zig MLX executor template for `dart_inference_linear`, using Zig-owned safetensors weights with `mlx_matmul`/`mlx_add` before returning runtime ABI tensors.
-- Added a Zig-owned MLX C type/output materialization layer and wired the runtime MLX path to copy future `mlx_array` executor outputs into the Dart runtime tensor ABI.
-- Added Zig-side MLX quantization metadata parsing for affine/default quantized snapshots so executor selection does not need Dart to inspect config files.
-- Added Zig-owned MLX model metadata discovery for `config.json`, `tokenizer.json`, and `generation_config.json`, including `model_type` and architecture diagnostics parsed in Zig.
-- Added an Apple-only Zig `mlx-c` safetensors weight loader that keeps loaded parameter and metadata maps inside the Zig-owned MLX session and merges multi-file safetensors layouts without involving Dart.
-- Added Zig-owned MLX artifact session discovery for local safetensors layouts, including session diagnostics for artifact kind and weight shard count.
-- Moved explicit MLX runtime session creation into Zig and added the first Zig-side managed tensor-to-`mlx_array` conversion skeleton before the executor returns its not-yet-implemented error.
-- Made the Zig runtime the only Dart-facing native build output and stopped producing the old Dart-facing MLX code asset from the build hook.
-- Routed explicit MLX runtime loads through the Zig runtime boundary so future `mlx-c` execution cannot silently fall back to the private C++ adapter path.
-- Added an Apple-only private `mlx-c` build target and linked it from the Zig runtime so MLX migration work can call `mlx-c` from Zig instead of Dart.
+- Split native runtime input tensor conversion into `mlx_input.native` to keep the MLX backend extensible under the source-file size limit.
+- Added the first real native MLX executor template for `dart_inference_linear`, using native-backed safetensors weights with `mlx_matmul`/`mlx_add` before returning runtime ABI tensors.
+- Added a native-backed MLX C type/output materialization layer and wired the runtime MLX path to copy future `mlx_array` executor outputs into the Dart runtime tensor ABI.
+- Added native-side MLX quantization metadata parsing for affine/default quantized snapshots so executor selection does not need Dart to inspect config files.
+- Added native-backed MLX model metadata discovery for `config.json`, `tokenizer.json`, and `generation_config.json`, including `model_type` and architecture diagnostics parsed in native.
+- Added an Apple-only native `mlx-c` safetensors weight loader that keeps loaded parameter and metadata maps inside the native-backed MLX session and merges multi-file safetensors layouts without involving Dart.
+- Added native-backed MLX artifact session discovery for local safetensors layouts, including session diagnostics for artifact kind and weight shard count.
+- Moved explicit MLX runtime session creation into native and added the first native-side managed tensor-to-`mlx_array` conversion skeleton before the executor returns its not-yet-implemented error.
+- Made the native runtime the only Dart-facing native build output and stopped producing the old Dart-facing MLX code asset from the build hook.
+- Routed explicit MLX runtime loads through the native runtime boundary so future `mlx-c` execution cannot silently fall back to the private C++ adapter path.
+- Added an Apple-only private `mlx-c` build target and linked it from the native runtime so MLX migration work can call `mlx-c` from native instead of Dart.
 - Removed the former raw/shim/stable APIs, legacy model runners, legacy tests, old Dart-facing MLX C++ bridge, and stale local MLX benchmark/probe/example entry points from the package source.
 - Renamed native runtime adapter internals to the `DINF/dinf_` prefix.
 - Added a Dart ONNX Runtime convenience layer (`DartOnnxSession`) on top of the shared model runtime API.

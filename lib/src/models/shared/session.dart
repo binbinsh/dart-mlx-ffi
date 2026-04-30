@@ -147,10 +147,8 @@ abstract interface class StreamSession {
 /// tensor from which the argmax is taken.
 ///
 /// This function manages timing, stop-token detection, and result assembly.
-typedef StepFunction<T extends Object> = Object Function(
-  List<int> tokens,
-  T cache,
-);
+typedef StepFunction<T extends Object> =
+    Object Function(List<int> tokens, T cache);
 
 /// Run a greedy decode loop.
 ///

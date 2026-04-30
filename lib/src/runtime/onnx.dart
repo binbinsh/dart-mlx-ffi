@@ -1,15 +1,33 @@
-import 'dart:ffi' as ffi;
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
-
-import 'package:ffi/ffi.dart';
 
 import '../models/shared/model_spec.dart';
 import '../models/shared/runtime_metadata.dart';
-import 'native_bindings.dart' as native;
-import 'native_runtime.dart';
+import 'native_tensor_buffers.dart';
 import 'runtime.dart';
+import 'runtime_deps.dart';
+import 'runtime_library_dirs.dart';
 
 const _disabledRuntimeEnvFile = '<dart_inference:no-runtime-env>';
+
+/// Returns the ONNX Runtime execution-provider name for common user aliases.
+String? canonicalOnnxExecutionProvider(String value) {
+  final normalized = value.trim().toLowerCase();
+  return switch (normalized) {
+    'cpu' || 'cpuexecutionprovider' => 'CPUExecutionProvider',
+    'cuda' || 'cudaexecutionprovider' => 'CUDAExecutionProvider',
+    'trt' ||
+    'tensorrt' ||
+    'tensorrtexecutionprovider' => 'TensorrtExecutionProvider',
+    'directml' || 'dml' || 'dmlexecutionprovider' => 'DmlExecutionProvider',
+    'openvino' || 'openvinoexecutionprovider' => 'OpenVINOExecutionProvider',
+    'rocm' || 'rocmexecutionprovider' => 'ROCMExecutionProvider',
+    'qnn' || 'npu' || 'qnnexecutionprovider' => 'QNNExecutionProvider',
+    'xnnpack' || 'xnnpackexecutionprovider' => 'XnnpackExecutionProvider',
+    _ => null,
+  };
+}
 
 /// Convenience configuration for loading an ONNX Runtime session through the
 /// package's native runtime bridge.
@@ -24,6 +42,7 @@ final class DartOnnxConfig {
     this.numThreads = 4,
     this.preferCpu = false,
     this.backendOptions = const {},
+    this.runDiagnostics = false,
   });
 
   final String modelPath;
@@ -35,6 +54,7 @@ final class DartOnnxConfig {
   final int numThreads;
   final bool preferCpu;
   final Map<String, Object?> backendOptions;
+  final bool runDiagnostics;
 }
 
 /// Thin Dart ONNX Runtime session wrapper.
@@ -45,13 +65,34 @@ final class DartOnnxSession {
   DartOnnxSession._(this._session);
 
   final ModelSession _session;
+  Map<String, Object?>? _diagnostics;
 
-  Map<String, Object?> get diagnostics => _session.diagnostics;
+  Map<String, Object?> get diagnostics => _diagnostics ??= _session.diagnostics;
 
-  String get selectedProvider =>
-      '${_session.diagnostics['provider'] ?? 'unknown'}';
+  String get selectedProvider => '${diagnostics['provider'] ?? 'unknown'}';
 
   static DartOnnxSession load(DartOnnxConfig config) {
+    try {
+      return _loadNative(config);
+    } catch (error) {
+      final requestedProvider = canonicalOnnxExecutionProvider(config.provider);
+      if (config.requireProvider ||
+          requestedProvider == 'CPUExecutionProvider') {
+        rethrow;
+      }
+      try {
+        return _loadNative(_cpuFallbackConfig(config));
+      } catch (fallbackError) {
+        throw StateError(
+          'Failed to load ${config.id} with ${config.provider}; '
+          'CPU fallback also failed. Provider error: $error. '
+          'CPU error: $fallbackError',
+        );
+      }
+    }
+  }
+
+  static DartOnnxSession _loadNative(DartOnnxConfig config) {
     final backendOptions = <String, Object?>{
       'provider': config.provider,
       'deviceId': config.deviceId,
@@ -59,7 +100,11 @@ final class DartOnnxSession {
       ...config.backendOptions,
     };
     if (!backendOptions.containsKey('preloadLibraries')) {
-      final preloadLibraries = discoverDefaultOnnxRuntimePreloadLibraries();
+      final preloadLibraries = discoverDefaultOnnxRuntimePreloadLibraries(
+        libraryNames: onnxRuntimePreloadLibraryNamesForProvider(
+          config.provider,
+        ),
+      );
       if (preloadLibraries.isNotEmpty) {
         backendOptions['preloadLibraries'] = encodeOnnxRuntimePreloadLibraries(
           preloadLibraries,
@@ -85,7 +130,7 @@ final class DartOnnxSession {
         prefer: config.preferCpu
             ? const [Accelerator.cpu]
             : const [Accelerator.gpu, Accelerator.cpu],
-        diagnostics: true,
+        diagnostics: config.runDiagnostics,
         numThreads: config.numThreads > 0 ? config.numThreads : null,
         backendOptions: backendOptions,
       ),
@@ -105,6 +150,56 @@ final class DartOnnxSession {
   void close() {
     _session.close();
   }
+}
+
+DartOnnxConfig _cpuFallbackConfig(DartOnnxConfig config) {
+  return DartOnnxConfig(
+    modelPath: config.modelPath,
+    id: config.id,
+    family: config.family,
+    provider: 'cpu',
+    deviceId: 0,
+    requireProvider: false,
+    numThreads: config.numThreads,
+    preferCpu: true,
+    backendOptions: _cpuFallbackBackendOptions(config.backendOptions),
+    runDiagnostics: config.runDiagnostics,
+  );
+}
+
+Map<String, Object?> _cpuFallbackBackendOptions(Map<String, Object?> options) {
+  const providerOnlyKeys = {
+    'cudaMemoryLimitMb',
+    'gpuMemoryLimitMb',
+    'cudaGraph',
+    'cudaGraphId',
+    'deviceOutputNames',
+    'inputDeviceNames',
+    'preferredOutputDevice',
+    'preloadLibraries',
+    'prepackedWeightsKey',
+    'syncInputs',
+    'syncOutputs',
+    'trtEngineCacheEnable',
+    'trtEngineCachePath',
+    'trtCacheDir',
+    'trtFp16',
+    'trtMaxWorkspaceSizeMb',
+    'trtProfileMaxShapes',
+    'trtProfileMinShapes',
+    'trtProfileOptShapes',
+    'trtWorkspaceMemoryLimitMb',
+    'useEnvAllocators',
+    'useIoBinding',
+    'useOutputViews',
+  };
+  final sanitized = <String, Object?>{};
+  for (final entry in options.entries) {
+    if (!providerOnlyKeys.contains(entry.key)) {
+      sanitized[entry.key] = entry.value;
+    }
+  }
+  return sanitized;
 }
 
 final class DartOnnxResult {
@@ -127,33 +222,32 @@ final class DartOnnxResult {
 }
 
 RuntimeTensor int64Tensor(Int64List values, List<int> shape) {
-  final buffer = NativeTensorBuffer.int64(shape);
-  buffer.copyFrom(values);
-  return buffer.tensor;
+  return nativeInt64Buffer(values, shape: shape).tensor;
 }
 
 RuntimeTensor float32Tensor(Float32List values, List<int> shape) {
-  final buffer = NativeTensorBuffer.float32(shape);
-  buffer.copyFrom(values);
-  return buffer.tensor;
+  return nativeFloat32Buffer(values, shape: shape).tensor;
 }
 
 RuntimeTensor boolTensor(Uint8List values, List<int> shape) {
-  final buffer = NativeTensorBuffer.boolean(shape);
-  buffer.copyFrom(values);
-  return buffer.tensor;
+  return nativeBooleanBuffer(values, shape: shape).tensor;
 }
 
-Float32List float32View(RuntimeTensor tensor) => Float32List.view(
-  tensor.bytes.buffer,
-  tensor.bytes.offsetInBytes,
-  tensor.bytes.lengthInBytes ~/ 4,
-);
+Float32List float32View(RuntimeTensor tensor) {
+  if (tensor.isNativeHandle) {
+    throw StateError('Runtime tensor is backed by a native runtime handle.');
+  }
+  return Float32List.view(
+    tensor.bytes.buffer,
+    tensor.bytes.offsetInBytes,
+    tensor.byteLength ~/ 4,
+  );
+}
 
 List<String> discoverDefaultOnnxRuntimePreloadLibraries({
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
-  Iterable<String> libraryNames = const [],
+  Iterable<String>? libraryNames,
   String? runtimeEnvFile,
   Iterable<String> runtimeEnvSearchRoots = const [],
 }) {
@@ -169,13 +263,18 @@ List<String> discoverDefaultOnnxRuntimePreloadLibraries({
 List<String> discoverOnnxRuntimePreloadLibraries({
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
-  Iterable<String> libraryNames = const [],
+  Iterable<String>? libraryNames,
+  Iterable<String> runtimeEnvSearchRoots = const [],
 }) => _ortLibs(
   runtimeEnvFile: _disabledRuntimeEnvFile,
+  runtimeEnvSearchRoots: runtimeEnvSearchRoots,
   explicitLibraries: explicitLibraries,
   libraryDirectories: libraryDirectories,
   libraryNames: libraryNames,
 );
+
+List<String> onnxRuntimePreloadLibraryNamesForProvider(String provider) =>
+    RuntimeDependencyAudit.preloadLibrariesForProvider(provider);
 
 String encodeOnnxRuntimePreloadLibraries(Iterable<String> libraries) {
   return libraries.where((path) => path.isNotEmpty).join(':');
@@ -186,44 +285,68 @@ List<String> _ortLibs({
   Iterable<String> runtimeEnvSearchRoots = const [],
   Iterable<String> explicitLibraries = const [],
   Iterable<String> libraryDirectories = const [],
-  Iterable<String> libraryNames = const [],
+  Iterable<String>? libraryNames,
 }) {
-  final envFile = _nativeText(runtimeEnvFile ?? '');
-  final roots = _nativeText(_pack(runtimeEnvSearchRoots));
-  final explicit = _nativeText(_pack(explicitLibraries));
-  final dirs = _nativeText(_pack(libraryDirectories));
-  final names = _nativeText(_pack(libraryNames));
-  ffi.Pointer<ffi.Char> result = ffi.nullptr;
-  try {
-    result = native.ortLibs(envFile, roots, explicit, dirs, names);
-    if (result == ffi.nullptr) {
-      return const [];
-    }
-    final text = result.cast<Utf8>().toDartString();
-    if (text.isEmpty) {
-      return const [];
-    }
-    return [
-      for (final value in text.split('\n'))
-        if (value.isNotEmpty) value,
-    ];
-  } finally {
-    if (result != ffi.nullptr) {
-      native.freeStr(result);
-    }
-    calloc
-      ..free(envFile)
-      ..free(roots)
-      ..free(explicit)
-      ..free(dirs)
-      ..free(names);
+  final roots = cleanRuntimeLibraryPaths(runtimeEnvSearchRoots);
+  final requestedNames = libraryNames
+      ?.where((value) => value.trim().isNotEmpty)
+      .toList(growable: false);
+  if (requestedNames != null && requestedNames.isEmpty) {
+    return explicitLibraries
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
   }
+  final dirs = [
+    ...libraryDirectories,
+    ..._runtimeEnvLibraryDirectories(runtimeEnvFile),
+    ...runtimeLibraryDirectories(roots),
+    ...pythonNvidiaLibraryDirectories(roots),
+  ];
+  final out = <String>[];
+  final seen = <String>{};
+  for (final path in explicitLibraries) {
+    final trimmed = path.trim();
+    if (trimmed.isNotEmpty && File(trimmed).existsSync()) {
+      final absolute = File(trimmed).absolute.path;
+      if (seen.add(absolute)) out.add(absolute);
+    }
+  }
+  final namesToFind = requestedNames ?? RuntimeDependencyAudit.cudaLibraries;
+  for (final name in namesToFind) {
+    for (final dir in dirs) {
+      final candidate = File('$dir/$name');
+      if (candidate.existsSync()) {
+        final absolute = candidate.absolute.path;
+        if (seen.add(absolute)) out.add(absolute);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
-ffi.Pointer<ffi.Char> _nativeText(String value) {
-  return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-}
-
-String _pack(Iterable<String> values) {
-  return values.where((value) => value.isNotEmpty).join('\n');
+List<String> _runtimeEnvLibraryDirectories(String? runtimeEnvFile) {
+  if (runtimeEnvFile == null || runtimeEnvFile == _disabledRuntimeEnvFile) {
+    return const [];
+  }
+  final file = File(runtimeEnvFile);
+  if (!file.existsSync()) {
+    return const [];
+  }
+  final dirs = <String>{};
+  try {
+    final decoded = jsonDecode(file.readAsStringSync());
+    if (decoded is! Map) return const [];
+    final ort = decoded['DART_INFERENCE_ORT_RUNTIME_LIBRARY'];
+    if (ort is String && ort.trim().isNotEmpty) {
+      final ortFile = File(ort);
+      final runtimeRoot = ortFile.absolute.parent.parent.parent.path;
+      addExistingRuntimeLibraryDir(dirs, ortFile.absolute.parent.path);
+      addExistingRuntimeLibraryDir(dirs, '$runtimeRoot/cuda/lib');
+      addExistingRuntimeLibraryDir(dirs, '$runtimeRoot/tensorrt/lib');
+    }
+  } catch (_) {
+    return const [];
+  }
+  return dirs.toList(growable: false);
 }

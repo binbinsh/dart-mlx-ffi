@@ -55,6 +55,10 @@ bool dinf_option_bool(
   return entry->bool_value != 0;
 }
 
+bool dinf_option_exists(const DinfOptions* options, const char* key) {
+  return find_entry(options, key) != nullptr;
+}
+
 std::string dinf_option_string(
     const DinfOptions* options,
     const char* key,

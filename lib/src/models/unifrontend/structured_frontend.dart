@@ -1,13 +1,9 @@
 import 'dart:convert';
-import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dart_inference/runtime.dart';
-import 'package:ffi/ffi.dart';
-
-import '../../runtime/native_bindings.dart' as native;
 
 part 'structured_input.dart';
 part 'structured_ssml.dart';
@@ -431,25 +427,16 @@ final class StructuredDecoder {
 }
 
 final class _FloatTensor {
-  _FloatTensor(this.data, this.shape, this.nativeData);
+  _FloatTensor(this.data, this.shape);
   final Float32List data;
   final List<int> shape;
-  final ffi.Pointer<ffi.Float> nativeData;
 }
 
 _FloatTensor? _floatTensor(Object? value) {
   if (value is! RuntimeTensor || value.dtype != RuntimeTensorDataType.float32) {
     return null;
   }
-  return _FloatTensor(
-    Float32List.view(
-      value.bytes.buffer,
-      value.bytes.offsetInBytes,
-      value.bytes.lengthInBytes ~/ 4,
-    ),
-    value.shape,
-    value.nativeData?.cast<ffi.Float>() ?? ffi.nullptr,
-  );
+  return _FloatTensor(value.asFloat32List(), value.shape);
 }
 
 List<SpanLabel> _decodeBinarySpans(
@@ -462,42 +449,22 @@ List<SpanLabel> _decodeBinarySpans(
   final spans = <SpanLabel>[];
   final logits = tensor.data;
   final limit = math.min(numChars, math.max(0, logits.length - offset));
-  final pointer = tensor.nativeData;
   if (limit <= 0) {
     return const [];
   }
-  _requireNative(pointer);
-  final starts = calloc<ffi.Int32>(limit);
-  final ends = calloc<ffi.Int32>(limit);
-  final count = calloc<ffi.IntPtr>();
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final status = native.decSpans(
-      pointer,
-      tensor.data.length,
-      offset,
-      limit,
-      numChars,
-      threshold,
-      starts,
-      ends,
-      count,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeDecodeError(error));
+  var start = -1;
+  for (var i = 0; i < limit; i += 1) {
+    final active = _sigmoid(logits[offset + i]) >= threshold;
+    if (active && start < 0) {
+      start = i;
     }
-    for (var i = 0; i < count.value; i++) {
-      spans.add(SpanLabel(starts[i], ends[i], label));
+    if ((!active || i + 1 == limit) && start >= 0) {
+      final end = active && i + 1 == limit ? i + 1 : i;
+      spans.add(SpanLabel(start, end, label));
+      start = -1;
     }
-    return spans;
-  } finally {
-    calloc
-      ..free(starts)
-      ..free(ends)
-      ..free(count)
-      ..free(error);
   }
+  return spans;
 }
 
 List<int> _argmaxIds({
@@ -510,30 +477,24 @@ List<int> _argmaxIds({
   if (itemCount <= 0 || classCount <= 0) {
     return const [];
   }
-  final pointer = tensor.nativeData;
-  _requireNative(pointer);
-  final out = calloc<ffi.Int32>(itemCount);
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final status = native.decArgmax(
-      pointer,
-      tensor.data.length,
-      base,
-      itemCount,
-      stride,
-      classCount,
-      out,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeDecodeError(error));
+  final out = List<int>.filled(itemCount, 0, growable: false);
+  for (var item = 0; item < itemCount; item += 1) {
+    var best = 0;
+    var bestValue = double.negativeInfinity;
+    final row = base + item * stride;
+    for (var klass = 0; klass < classCount; klass += 1) {
+      final index = row + klass;
+      final value = index < tensor.data.length
+          ? tensor.data[index]
+          : double.negativeInfinity;
+      if (value > bestValue) {
+        bestValue = value;
+        best = klass;
+      }
     }
-    return out.asTypedList(itemCount).toList(growable: false);
-  } finally {
-    calloc
-      ..free(out)
-      ..free(error);
+    out[item] = best;
   }
+  return out;
 }
 
 final class _ActiveIds {
@@ -552,58 +513,26 @@ _ActiveIds _activeIdsFromTensor(
   if (count <= 0) {
     return _ActiveIds(active: const [], best: 0);
   }
-  final pointer = tensor.nativeData;
-  _requireNative(pointer);
-  final out = calloc<ffi.Int32>(count);
-  final activeCount = calloc<ffi.IntPtr>();
-  final best = calloc<ffi.Int32>();
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final status = native.decActive(
-      pointer,
-      tensor.data.length,
-      offset,
-      count,
-      threshold,
-      out,
-      activeCount,
-      best,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeDecodeError(error));
+  final active = <int>[];
+  var best = 0;
+  var bestValue = double.negativeInfinity;
+  for (var i = 0; i < count; i += 1) {
+    final index = offset + i;
+    final value = index < tensor.data.length
+        ? tensor.data[index]
+        : double.negativeInfinity;
+    if (value > bestValue) {
+      bestValue = value;
+      best = i;
     }
-    return _ActiveIds(
-      active: out.asTypedList(activeCount.value).toList(growable: false),
-      best: best.value,
-    );
-  } finally {
-    calloc
-      ..free(out)
-      ..free(activeCount)
-      ..free(best)
-      ..free(error);
+    if (_sigmoid(value) >= threshold) {
+      active.add(i);
+    }
   }
+  return _ActiveIds(active: List<int>.unmodifiable(active), best: best);
 }
 
-void _requireNative(ffi.Pointer<ffi.Float> pointer) {
-  if (pointer == ffi.nullptr) {
-    throw StateError(
-      'Structured decoder requires native-backed float32 tensors.',
-    );
-  }
-}
-
-String _takeDecodeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
-  final value = error.value;
-  if (value == ffi.nullptr) return 'Native decoder call failed.';
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
-  }
-}
+double _sigmoid(double value) => 1.0 / (1.0 + math.exp(-value));
 
 List<TnItem> _decodeTnItems({
   required String text,
@@ -676,44 +605,32 @@ List<int> _spanTypeIdsFromTensor({
   if (classCount <= 0) {
     return List<int>.filled(spans.length, 0, growable: false);
   }
-  final pointer = tensor.nativeData;
-  _requireNative(pointer);
-  final starts = calloc<ffi.Int32>(spans.length);
-  final ends = calloc<ffi.Int32>(spans.length);
-  final counts = calloc<ffi.Int32>(classCount);
-  final out = calloc<ffi.Int32>(spans.length);
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    for (var i = 0; i < spans.length; i++) {
-      starts[i] = spans[i].start;
-      ends[i] = spans[i].end;
+  final out = <int>[];
+  for (final span in spans) {
+    final counts = List<int>.filled(classCount, 0);
+    for (
+      var charIndex = math.max(0, span.start);
+      charIndex < math.min(itemCount, span.end);
+      charIndex += 1
+    ) {
+      final id = _argmaxIds(
+        tensor: tensor,
+        base: base + charIndex * stride,
+        itemCount: 1,
+        stride: stride,
+        classCount: classCount,
+      ).first;
+      counts[id] += 1;
     }
-    final status = native.decSpanTypes(
-      pointer,
-      tensor.data.length,
-      base,
-      itemCount,
-      stride,
-      classCount,
-      starts,
-      ends,
-      spans.length,
-      counts,
-      out,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeDecodeError(error));
+    var best = 0;
+    for (var i = 1; i < counts.length; i += 1) {
+      if (counts[i] > counts[best]) {
+        best = i;
+      }
     }
-    return out.asTypedList(spans.length).toList(growable: false);
-  } finally {
-    calloc
-      ..free(starts)
-      ..free(ends)
-      ..free(counts)
-      ..free(out)
-      ..free(error);
+    out.add(best);
   }
+  return out;
 }
 
 List<SpanLabel> _decodeBioesFromTensor({
@@ -727,37 +644,39 @@ List<SpanLabel> _decodeBioesFromTensor({
   if (itemCount <= 0 || classCount <= 0) {
     return const [];
   }
-  final pointer = tensor.nativeData;
-  _requireNative(pointer);
-  final starts = calloc<ffi.Int32>(itemCount);
-  final ends = calloc<ffi.Int32>(itemCount);
-  final count = calloc<ffi.IntPtr>();
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final status = native.decBioes(
-      pointer,
-      tensor.data.length,
-      base,
-      itemCount,
-      stride,
-      classCount,
-      starts,
-      ends,
-      count,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeDecodeError(error));
+  final ids = _argmaxIds(
+    tensor: tensor,
+    base: base,
+    itemCount: itemCount,
+    stride: stride,
+    classCount: classCount,
+  );
+  final spans = <SpanLabel>[];
+  var start = -1;
+  for (var i = 0; i < ids.length; i += 1) {
+    switch (ids[i]) {
+      case 1:
+        if (start < 0) start = i;
+      case 2:
+        if (start < 0) start = i;
+      case 3:
+        spans.add(SpanLabel(start < 0 ? i : start, i + 1, label));
+        start = -1;
+      case 4:
+        if (start >= 0) {
+          spans.add(SpanLabel(start, i, label));
+          start = -1;
+        }
+        spans.add(SpanLabel(i, i + 1, label));
+      default:
+        if (start >= 0) {
+          spans.add(SpanLabel(start, i, label));
+          start = -1;
+        }
     }
-    return [
-      for (var i = 0; i < count.value; i++)
-        SpanLabel(starts[i], ends[i], label),
-    ];
-  } finally {
-    calloc
-      ..free(starts)
-      ..free(ends)
-      ..free(count)
-      ..free(error);
   }
+  if (start >= 0) {
+    spans.add(SpanLabel(start, ids.length, label));
+  }
+  return spans;
 }

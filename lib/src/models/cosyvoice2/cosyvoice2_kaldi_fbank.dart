@@ -50,7 +50,9 @@ class KaldiFbankConfig {
 
 /// Output shape (nFrames, numMelBins) row-major.
 ({Float32List data, int nFrames, int numMelBins}) computeKaldiFbank(
-    Float32List audio, KaldiFbankConfig cfg) {
+  Float32List audio,
+  KaldiFbankConfig cfg,
+) {
   final frameLen = (cfg.sampleRate * cfg.frameLengthMs / 1000.0).round();
   final frameShift = (cfg.sampleRate * cfg.frameShiftMs / 1000.0).round();
   final nFft = _nextPow2(frameLen);
@@ -74,7 +76,9 @@ class KaldiFbankConfig {
   );
 
   final out = Float32List(nFrames * cfg.numMelBins);
-  final buf = Float64List(nFft); // zero-padded frame, f64 for accumulation parity
+  final buf = Float64List(
+    nFft,
+  ); // zero-padded frame, f64 for accumulation parity
 
   for (var t = 0; t < nFrames; t += 1) {
     final start = t * frameShift;
@@ -148,8 +152,7 @@ class KaldiFbankConfig {
 }
 
 /// Convenience: subtract per-utterance mean (CMN) along time, in-place.
-void cepstralMeanNormalize(
-    Float32List feat, int nFrames, int numMelBins) {
+void cepstralMeanNormalize(Float32List feat, int nFrames, int numMelBins) {
   if (nFrames == 0) return;
   final mean = Float64List(numMelBins);
   for (var t = 0; t < nFrames; t += 1) {

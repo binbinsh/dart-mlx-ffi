@@ -3,52 +3,26 @@ part of 'structured_frontend.dart';
 const _ssmlEmphasis = 1;
 const _ssmlPhoneme = 2;
 const _ssmlSub = 3;
-const _tnSourceEn = 1;
-const _tnSourceZh = 2;
 
 List<SpanLabel> _normalizeEmphasisSpans(String text, List<SpanLabel> spans) {
   if (spans.isEmpty) {
     return const [];
   }
-  final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  final starts = calloc<ffi.Int32>(spans.length);
-  final ends = calloc<ffi.Int32>(spans.length);
-  final outStarts = calloc<ffi.Int32>(spans.length);
-  final outEnds = calloc<ffi.Int32>(spans.length);
-  final outCount = calloc<ffi.IntPtr>();
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    for (var i = 0; i < spans.length; i += 1) {
-      starts[i] = spans[i].start;
-      ends[i] = spans[i].end;
+  final out = <SpanLabel>[];
+  for (final span in spans) {
+    var start = span.start.clamp(0, text.length).toInt();
+    var end = span.end.clamp(start, text.length).toInt();
+    while (start < end && text[start].trim().isEmpty) {
+      start += 1;
     }
-    final status = native.textNormSpans(
-      input,
-      starts,
-      ends,
-      spans.length,
-      outStarts,
-      outEnds,
-      outCount,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeTextError(error));
+    while (end > start && text[end - 1].trim().isEmpty) {
+      end -= 1;
     }
-    return [
-      for (var i = 0; i < outCount.value; i += 1)
-        SpanLabel(outStarts[i], outEnds[i], spans.first.label),
-    ];
-  } finally {
-    calloc
-      ..free(input)
-      ..free(starts)
-      ..free(ends)
-      ..free(outStarts)
-      ..free(outEnds)
-      ..free(outCount)
-      ..free(error);
+    if (start < end) {
+      out.add(SpanLabel(start, end, span.label));
+    }
   }
+  return out;
 }
 
 String composeSsml(String text, FrontendIr ir) {
@@ -68,7 +42,7 @@ String composeSsml(String text, FrontendIr ir) {
       tags.add(_SsmlTag(item.start, item.end, _ssmlSub, item.spoken));
     }
   }
-  return _composeSsmlNative(
+  return _composeSsml(
     text,
     tags,
     ir.emotionLabels.isEmpty ? null : ir.emotionLabels.first,
@@ -84,94 +58,27 @@ List<TnItem> _selectTnItems(String text, FrontendIr ir) {
   if (zh.isEmpty) {
     return en;
   }
-  final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  final enRanges = _TnRangeArray(en);
-  final zhRanges = _TnRangeArray(zh);
-  final maxCount = en.length + zh.length;
-  final sources = calloc<ffi.Int32>(maxCount);
-  final indices = calloc<ffi.Int32>(maxCount);
-  final count = calloc<ffi.IntPtr>();
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final status = native.textSelectTn(
-      input,
-      enRanges.starts,
-      enRanges.ends,
-      enRanges.length,
-      zhRanges.starts,
-      zhRanges.ends,
-      zhRanges.length,
-      sources,
-      indices,
-      count,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeTextError(error));
-    }
-    return [
-      for (var i = 0; i < count.value; i += 1)
-        _tnItemForSource(sources[i], indices[i], en, zh),
-    ];
-  } finally {
-    enRanges.close();
-    zhRanges.close();
-    calloc
-      ..free(input)
-      ..free(sources)
-      ..free(indices)
-      ..free(count)
-      ..free(error);
+  final preferZh = looksChinese(text);
+  final primary = preferZh ? zh : en;
+  final secondary = preferZh ? en : zh;
+  final out = <TnItem>[];
+  for (final item in primary) {
+    out.add(item);
   }
+  for (final item in secondary) {
+    if (!out.any((selected) => _overlaps(selected, item))) {
+      out.add(item);
+    }
+  }
+  out.sort((a, b) => a.start.compareTo(b.start));
+  return out;
 }
 
-TnItem _tnItemForSource(
-  int source,
-  int index,
-  List<TnItem> en,
-  List<TnItem> zh,
-) {
-  if (source == _tnSourceEn) {
-    return en[index];
-  }
-  if (source == _tnSourceZh) {
-    return zh[index];
-  }
-  throw StateError('Native TN selector returned unknown source $source.');
-}
+bool _overlaps(TnItem left, TnItem right) =>
+    left.start < right.end && right.start < left.end;
 
 bool looksChinese(String text) {
-  final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  try {
-    return native.textHasZh(input) != 0;
-  } finally {
-    calloc.free(input);
-  }
-}
-
-final class _TnRangeArray {
-  _TnRangeArray(List<TnItem> items)
-    : length = items.length,
-      starts = items.isEmpty ? ffi.nullptr : calloc<ffi.Int32>(items.length),
-      ends = items.isEmpty ? ffi.nullptr : calloc<ffi.Int32>(items.length) {
-    for (var i = 0; i < items.length; i += 1) {
-      starts[i] = items[i].start;
-      ends[i] = items[i].end;
-    }
-  }
-
-  final int length;
-  final ffi.Pointer<ffi.Int32> starts;
-  final ffi.Pointer<ffi.Int32> ends;
-
-  void close() {
-    if (starts != ffi.nullptr) {
-      calloc.free(starts);
-    }
-    if (ends != ffi.nullptr) {
-      calloc.free(ends);
-    }
-  }
+  return text.runes.any(_isChineseRune);
 }
 
 final class _SsmlTag {
@@ -182,94 +89,50 @@ final class _SsmlTag {
   final String? value;
 }
 
-String _composeSsmlNative(String text, List<_SsmlTag> tags, String? emotion) {
-  final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  final nativeTags = _TextTagArray(tags);
-  final emotionPtr = emotion == null
-      ? ffi.nullptr
-      : emotion.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  ffi.Pointer<ffi.Char> out = ffi.nullptr;
-  try {
-    out = native.textSsml(
-      input,
-      nativeTags.pointer,
-      nativeTags.length,
-      emotionPtr,
-      error,
-    );
-    if (out == ffi.nullptr) {
-      throw StateError(_takeTextError(error));
+String _composeSsml(String text, List<_SsmlTag> tags, String? emotion) {
+  final ordered = tags.toList()
+    ..sort((a, b) {
+      final byStart = a.start.compareTo(b.start);
+      if (byStart != 0) return byStart;
+      return b.end.compareTo(a.end);
+    });
+  final out = StringBuffer('<speak>');
+  var cursor = 0;
+  for (final tag in ordered) {
+    final start = tag.start.clamp(cursor, text.length).toInt();
+    final end = tag.end.clamp(start, text.length).toInt();
+    out.write(_xmlEscape(text.substring(cursor, start)));
+    final surface = _xmlEscape(text.substring(start, end));
+    final value = _xmlEscape(tag.value ?? '');
+    switch (tag.kind) {
+      case _ssmlEmphasis:
+        out.write('<emphasis>$surface</emphasis>');
+      case _ssmlPhoneme:
+        out.write('<phoneme ph="$value">$surface</phoneme>');
+      case _ssmlSub:
+        out.write('<sub alias="$value">$surface</sub>');
+      default:
+        out.write(surface);
     }
-    return out.cast<Utf8>().toDartString();
-  } finally {
-    if (out != ffi.nullptr) {
-      native.freeStr(out);
-    }
-    nativeTags.close();
-    calloc.free(input);
-    if (emotionPtr != ffi.nullptr) {
-      calloc.free(emotionPtr);
-    }
-    calloc.free(error);
+    cursor = end;
   }
-}
-
-final class _TextTagArray {
-  _TextTagArray(List<_SsmlTag> tags)
-    : length = tags.length,
-      pointer = tags.isEmpty
-          ? ffi.nullptr
-          : calloc<native.TextTagAbi>(tags.length) {
-    try {
-      for (var i = 0; i < tags.length; i += 1) {
-        final tag = tags[i];
-        pointer[i]
-          ..start = tag.start
-          ..end = tag.end
-          ..kind = tag.kind
-          ..value = ffi.nullptr;
-        final value = tag.value;
-        if (value != null) {
-          final ptr = value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-          _strings.add(ptr);
-          pointer[i].value = ptr;
-        }
-      }
-    } catch (_) {
-      close();
-      rethrow;
-    }
-  }
-
-  final int length;
-  final ffi.Pointer<native.TextTagAbi> pointer;
-  final List<ffi.Pointer<ffi.Char>> _strings = [];
-
-  void close() {
-    for (final value in _strings) {
-      calloc.free(value);
-    }
-    _strings.clear();
-    if (pointer != ffi.nullptr) {
-      calloc.free(pointer);
-    }
-  }
+  out.write(_xmlEscape(text.substring(cursor)));
+  out.write('</speak>');
+  return out.toString();
 }
 
 String stripSsmlForTts(String ssml) {
-  return _textCall(ssml, native.textStripSsml);
-}
-
-String _takeTextError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
-  final value = error.value;
-  if (value == ffi.nullptr) return 'Native text call failed.';
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
-  }
+  final withAliases = ssml.replaceAllMapped(
+    RegExp(
+      r'<sub\b[^>]*\balias="([^"]*)"[^>]*>.*?</sub>',
+      caseSensitive: false,
+      dotAll: true,
+    ),
+    (match) => _xmlUnescape(match.group(1)!),
+  );
+  return _collapseText(
+    _xmlUnescape(withAliases.replaceAll(RegExp(r'<[^>]+>', dotAll: true), '')),
+  );
 }
 
 String _verbalizeEnglishWithLexicon(
@@ -287,36 +150,108 @@ String _verbalizeEnglishWithLexicon(
 }
 
 String verbalizeEnglish(String surface) {
-  return _textCall(surface, native.textTnEn);
+  final trimmed = surface.trim();
+  final money = RegExp(r'^\$(\d+)$').firstMatch(trimmed);
+  if (money != null) {
+    return '${_englishNumber(int.parse(money.group(1)!))} dollars';
+  }
+  final number = int.tryParse(trimmed);
+  if (number != null) {
+    return _englishNumber(number);
+  }
+  return trimmed;
 }
 
 String verbalizeChinese(String surface) {
-  return _textCall(surface, native.textTnZh);
+  const digits = {
+    '0': '零',
+    '1': '一',
+    '2': '二',
+    '3': '三',
+    '4': '四',
+    '5': '五',
+    '6': '六',
+    '7': '七',
+    '8': '八',
+    '9': '九',
+  };
+  return surface.runes
+      .map(
+        (rune) =>
+            digits[String.fromCharCode(rune)] ?? String.fromCharCode(rune),
+      )
+      .join();
 }
 
-String _textCall(
-  String value,
-  ffi.Pointer<ffi.Char> Function(
-    ffi.Pointer<ffi.Char>,
-    ffi.Pointer<ffi.Pointer<ffi.Char>>,
-  )
-  call,
-) {
-  final input = value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  ffi.Pointer<ffi.Char> out = ffi.nullptr;
-  try {
-    out = call(input, error);
-    if (out == ffi.nullptr) {
-      throw StateError(_takeTextError(error));
-    }
-    return out.cast<Utf8>().toDartString();
-  } finally {
-    if (out != ffi.nullptr) {
-      native.freeStr(out);
-    }
-    calloc
-      ..free(input)
-      ..free(error);
+String _englishNumber(int value) {
+  const small = [
+    'zero',
+    'one',
+    'two',
+    'three',
+    'four',
+    'five',
+    'six',
+    'seven',
+    'eight',
+    'nine',
+    'ten',
+    'eleven',
+    'twelve',
+    'thirteen',
+    'fourteen',
+    'fifteen',
+    'sixteen',
+    'seventeen',
+    'eighteen',
+    'nineteen',
+  ];
+  const tens = [
+    '',
+    '',
+    'twenty',
+    'thirty',
+    'forty',
+    'fifty',
+    'sixty',
+    'seventy',
+    'eighty',
+    'ninety',
+  ];
+  if (value < 20) return small[value];
+  if (value < 100) {
+    final ten = value ~/ 10;
+    final rest = value % 10;
+    return rest == 0 ? tens[ten] : '${tens[ten]} ${small[rest]}';
   }
+  if (value < 1000) {
+    final hundred = value ~/ 100;
+    final rest = value % 100;
+    return rest == 0
+        ? '${small[hundred]} hundred'
+        : '${small[hundred]} hundred ${_englishNumber(rest)}';
+  }
+  return value.toString();
 }
+
+bool _isChineseRune(int rune) =>
+    (rune >= 0x3400 && rune <= 0x4dbf) ||
+    (rune >= 0x4e00 && rune <= 0x9fff) ||
+    (rune >= 0xf900 && rune <= 0xfaff);
+
+String _xmlEscape(String value) => value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+
+String _xmlUnescape(String value) => value
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+
+String _collapseText(String value) =>
+    value.replaceAll(RegExp(r'\s+'), ' ').trim();

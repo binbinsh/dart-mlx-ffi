@@ -28,7 +28,7 @@
 //     whisper's `mel_filters.npz` to within ~1e-7 absolute error in
 //     all test cells we've checked.
 //
-// All math stays on CPU; no FFI, no Zig. This keeps the build matrix
+// All math stays on CPU; no FFI, no native. This keeps the build matrix
 // honest and lets the parity test run in standard `dart test`.
 
 import 'dart:math' as math;
@@ -101,7 +101,9 @@ enum LogMode { matcha, whisper }
 /// Compute a mel-spectrogram from float32 PCM samples in `[-1, 1]`.
 /// Returns `(numMels, nFrames)` row-major.
 ({Float32List data, int numMels, int nFrames}) computeMelSpectrogram(
-    Float32List audio, MelConfig cfg) {
+  Float32List audio,
+  MelConfig cfg,
+) {
   // 1. (Optional) reflect pad. Matcha uses manual symmetric pad of
   //    (n_fft - hop)/2 with `center=False`. Whisper uses torch.stft
   //    `center=True`, which reflects by n_fft//2 on each side.
@@ -112,8 +114,9 @@ enum LogMode { matcha, whisper }
   final nFrames = ((padded.length - cfg.nFft) ~/ cfg.hopLength) + 1;
   if (nFrames <= 0) {
     throw ArgumentError(
-        'audio too short (got ${audio.length} samples, need at least '
-        '${cfg.nFft - 2 * pad}) for cfg=$cfg');
+      'audio too short (got ${audio.length} samples, need at least '
+      '${cfg.nFft - 2 * pad}) for cfg=$cfg',
+    );
   }
 
   // 3. Apply Hann window.
@@ -161,8 +164,7 @@ enum LogMode { matcha, whisper }
   if (cfg.power == 1.0) {
     for (var k = 0; k < nFreq; k += 1) {
       for (var t = 0; t < effFrames; t += 1) {
-        magOrPow[k * effFrames + t] =
-            math.sqrt(mag2[k * nFrames + t] + 1e-9);
+        magOrPow[k * effFrames + t] = math.sqrt(mag2[k * nFrames + t] + 1e-9);
       }
     }
   } else {
@@ -219,7 +221,8 @@ Float32List _reflectPad(Float32List x, int pad) {
   if (pad == 0) return x;
   if (x.length <= pad) {
     throw ArgumentError(
-        'reflect-pad of $pad requires audio length > $pad (got ${x.length})');
+      'reflect-pad of $pad requires audio length > $pad (got ${x.length})',
+    );
   }
   final out = Float32List(x.length + 2 * pad);
   // Left: mirror around index 0 (exclusive), i.e. x[1], x[2], ...
@@ -281,7 +284,8 @@ class _MelFilterbank {
 
   static final _cache = <String, _MelFilterbank>{};
   static _MelFilterbank cached(MelConfig cfg) {
-    final key = '${cfg.sampleRate}_${cfg.nFft}_${cfg.numMels}_'
+    final key =
+        '${cfg.sampleRate}_${cfg.nFft}_${cfg.numMels}_'
         '${cfg.fmin}_${cfg.fmax}';
     final hit = _cache[key];
     if (hit != null) return hit;

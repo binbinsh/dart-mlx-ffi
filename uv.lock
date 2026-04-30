@@ -648,6 +648,9 @@ coreml-convert = [
     { name = "torch" },
     { name = "torchvision" },
 ]
+cosyvoice2-tools = [
+    { name = "torch" },
+]
 gguf-tools = [
     { name = "gguf" },
 ]
@@ -660,6 +663,7 @@ litert-convert = [
 onnx-convert = [
     { name = "accelerate" },
     { name = "onnx" },
+    { name = "onnxconverter-common" },
     { name = "onnxruntime" },
     { name = "optimum", extra = ["onnxruntime"] },
 ]
@@ -702,6 +706,7 @@ coreml-convert = [
     { name = "torch", specifier = ">=2.9.1" },
     { name = "torchvision", specifier = ">=0.24.1" },
 ]
+cosyvoice2-tools = [{ name = "torch", specifier = ">=2.9.1" }]
 gguf-tools = [{ name = "gguf", specifier = ">=0.18.0" }]
 litert-convert = [
     { name = "litert-torch", specifier = ">=0.8.0" },
@@ -712,6 +717,7 @@ litert-convert = [
 onnx-convert = [
     { name = "accelerate", specifier = ">=1.13.0" },
     { name = "onnx", specifier = ">=1.21.0" },
+    { name = "onnxconverter-common", specifier = ">=1.16.0" },
     { name = "onnxruntime", specifier = ">=1.25.0" },
     { name = "optimum", extras = ["onnxruntime"], specifier = ">=1.17.1" },
 ]
@@ -2097,6 +2103,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/4b/d5/5395094d968387cdd1c9aa977f8cb679aaf6513bbdbe491f08b149c3d8c9/onnx2tf-1.28.8.tar.gz", hash = "sha256:6e51c2de4f7ea5c326a152fa7abfc0b4e4164e10e5b843a7e63501644414e868", size = 361970, upload-time = "2025-12-28T13:42:05.991Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/0b/332cb01941fbbebc76efc965e6ca3118b02672cf443f19c4107d917b7d0a/onnx2tf-1.28.8-py3-none-any.whl", hash = "sha256:a332ae4c8d9c23636c4ccdb3ae1c9537075c0fe8d81b33f031b9bdc7cd36f878", size = 469211, upload-time = "2025-12-28T13:42:04.384Z" },
+]
+
+[[package]]
+name = "onnxconverter-common"
+version = "1.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "onnx" },
+    { name = "packaging" },
+    { name = "protobuf" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/67/8dca1868a6e226f8d3f7d666cb6a48b79a60aad5267b16b24627cd8d9eb8/onnxconverter_common-1.16.0-py2.py3-none-any.whl", hash = "sha256:df39ee96f17fff119dff10dd245467651b60b9e8a96020eb93402239794852f7", size = 89511, upload-time = "2025-08-28T19:37:46.988Z" },
 ]
 
 [[package]]

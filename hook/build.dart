@@ -23,7 +23,7 @@ void main(List<String> arguments) async {
     final code = input.config.code;
     if (code.linkModePreference == LinkModePreference.static) {
       throw UnsupportedError(
-        'dart_inference requires bundled dynamic libraries for its Zig runtime.',
+        'dart_inference requires bundled dynamic libraries for its native runtime.',
       );
     }
 
@@ -45,6 +45,17 @@ void main(List<String> arguments) async {
       code: code,
     );
 
+    if (_isAppleTarget(code.targetOS)) {
+      await _buildMlxAsset(
+        logger,
+        input: input,
+        output: output,
+        packageRoot: packageRoot,
+        packageRootPath: packageRootPath,
+        code: code,
+      );
+    }
+
     output.dependencies.addAll(await _collectDependencies(packageRoot));
   });
 }
@@ -59,13 +70,8 @@ Future<void> _buildRuntimeAsset(
 }) async {
   final outputDirectory = input.outputDirectory;
   final outputDirectoryPath = outputDirectory.toFilePath();
-  final runtimeLibraryName = code.targetOS.libraryFileName(
-    '${input.packageName}_runtime',
-    DynamicLoadingBundled(),
-  );
-  final runtimeLibraryFile = outputDirectory.resolve(runtimeLibraryName);
   final adapterLibraryName = code.targetOS.libraryFileName(
-    '${input.packageName}_runtime_adapter',
+    '${input.packageName}_runtime',
     DynamicLoadingBundled(),
   );
   final adapterLibraryFile = outputDirectory.resolve(adapterLibraryName);
@@ -98,7 +104,7 @@ Future<void> _buildRuntimeAsset(
   );
   logger.info(
     'runtime-backend-env target=${code.targetOS.name} '
-    'runtime=zig '
+    'runtime=cpp '
     'ortEnabled=$ortEnabled '
     'ortInclude=${ortInclude ?? '<unset>'} '
     'ortLibrary=${ortLibrary ?? '<unset>'} '
@@ -176,24 +182,6 @@ Future<void> _buildRuntimeAsset(
       '$adapterLibraryFile',
     );
   }
-  final mlxCEnabled = _isAppleTarget(code.targetOS);
-  if (mlxCEnabled) {
-    await _buildMlxCDependency(
-      logger,
-      input: input,
-      output: output,
-      packageRoot: packageRoot,
-      packageRootPath: packageRootPath,
-      outputDirectory: outputDirectory,
-      outputDirectoryPath: outputDirectoryPath,
-      code: code,
-      compiler: compiler,
-      cxxCompiler: cxxCompiler,
-      archiver: archiver,
-      generator: generator,
-    );
-  }
-
   await _bundleRuntimeDependency(
     logger,
     input: input,
@@ -240,59 +228,47 @@ Future<void> _buildRuntimeAsset(
   output.assets.code.add(
     CodeAsset(
       package: input.packageName,
-      name: '${input.packageName}_runtime_adapter_dependency',
+      name: 'rt_bindings.dart',
       linkMode: DynamicLoadingBundled(),
       file: adapterLibraryFile,
     ),
   );
-  await _buildZigRuntimeAsset(
-    logger,
-    input: input,
-    output: output,
-    packageRoot: packageRoot,
-    packageRootPath: packageRootPath,
-    code: code,
-    libraryFile: runtimeLibraryFile,
-    adapterLibraryDirectory: outputDirectoryPath,
-    mlxCEnabled: mlxCEnabled,
-  );
 }
 
-Future<void> _buildMlxCDependency(
+Future<void> _buildMlxAsset(
   Logger logger, {
   required BuildInput input,
   required BuildOutputBuilder output,
   required Uri packageRoot,
   required String packageRootPath,
-  required Uri outputDirectory,
-  required String outputDirectoryPath,
   required CodeConfig code,
-  required String? compiler,
-  required String? cxxCompiler,
-  required String? archiver,
-  required String generator,
 }) async {
+  final outputDirectory = input.outputDirectory;
+  final outputDirectoryPath = outputDirectory.toFilePath();
   final libraryName = code.targetOS.libraryFileName(
-    'dinf_zig_mlx_c',
+    '${input.packageName}_mlx',
     DynamicLoadingBundled(),
   );
   final libraryFile = outputDirectory.resolve(libraryName);
-  final buildDirectory = outputDirectory.resolve('cmake_zig_mlx_c/');
-  final buildDirectoryPath = buildDirectory.toFilePath();
   final sdkName = code.targetOS == OS.iOS
       ? _iosSdkName(code.iOS.targetSdk)
       : 'macosx';
   final metalEnabled = await _resolveMetalSupport(logger, code, sdkName);
+  final buildDirectory = outputDirectory.resolve('cmake_mlx/');
+  final buildDirectoryPath = buildDirectory.toFilePath();
 
   await Directory.fromUri(buildDirectory).create(recursive: true);
 
+  final compiler = code.cCompiler?.compiler.toFilePath();
+  final archiver = code.cCompiler?.archiver.toFilePath();
+  final cxxCompiler = _deriveCppCompiler(compiler);
   final configureArgs = <String>[
     '-S',
     packageRoot.resolve('native/mlx_c').toFilePath(),
     '-B',
     buildDirectoryPath,
     '-G',
-    generator,
+    _cmakeGenerator(),
     '-DCMAKE_BUILD_TYPE=Release',
     '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$outputDirectoryPath',
     '-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$outputDirectoryPath',
@@ -334,87 +310,13 @@ Future<void> _buildMlxCDependency(
   );
 
   if (!File.fromUri(libraryFile).existsSync()) {
-    throw StateError(
-      'Expected private mlx-c runtime library was not produced: $libraryFile',
-    );
-  }
-  output.assets.code.add(
-    CodeAsset(
-      package: input.packageName,
-      name: '${input.packageName}_zig_mlx_c_dependency',
-      linkMode: DynamicLoadingBundled(),
-      file: libraryFile,
-    ),
-  );
-}
-
-Future<void> _buildZigRuntimeAsset(
-  Logger logger, {
-  required BuildInput input,
-  required BuildOutputBuilder output,
-  required Uri packageRoot,
-  required String packageRootPath,
-  required CodeConfig code,
-  required Uri libraryFile,
-  required String adapterLibraryDirectory,
-  required bool mlxCEnabled,
-}) async {
-  final zig = await _resolveZigExecutable(packageRootPath);
-  final pinnedVersion = _pinnedZigVersion(packageRootPath);
-  final actualVersion = await _zigVersion(zig);
-  if (actualVersion != pinnedVersion) {
-    throw StateError(
-      'dart_inference Zig runtime requires Zig $pinnedVersion, '
-      'but $zig reports $actualVersion. Set DART_INFERENCE_ZIG to a pinned Zig '
-      '$pinnedVersion executable.',
-    );
-  }
-
-  final source = packageRoot.resolve('native/zig_runtime/runtime.zig');
-  final args = <String>[
-    'build-lib',
-    source.toFilePath(),
-    '-dynamic',
-    '-O',
-    'ReleaseFast',
-    '-lc',
-    '-femit-bin=${libraryFile.toFilePath()}',
-    '-fallow-shlib-undefined',
-    '-fstrip',
-    '-L$adapterLibraryDirectory',
-    '-ldart_inference_runtime_adapter',
-    if (mlxCEnabled) '-ldinf_zig_mlx_c',
-    '-rpath',
-    _runtimeOriginRpath(code.targetOS),
-    '--cache-dir',
-    packageRoot.resolve('.dart_tool/zig-cache').toFilePath(),
-    '--global-cache-dir',
-    packageRoot.resolve('.dart_tool/zig-global-cache').toFilePath(),
-    '-target',
-    _zigTarget(code),
-  ];
-  logger.info(
-    'Building Zig runtime with Zig $actualVersion for ${code.targetOS.name}/'
-    '${code.targetArchitecture.name}',
-  );
-  await _runProcess(
-    logger,
-    code: code,
-    executable: zig,
-    arguments: args,
-    workingDirectory: packageRootPath,
-  );
-
-  if (!File.fromUri(libraryFile).existsSync()) {
-    throw StateError(
-      'Expected Zig runtime native library was not produced: $libraryFile',
-    );
+    throw StateError('Expected MLX native library was not produced: $libraryFile');
   }
 
   output.assets.code.add(
     CodeAsset(
       package: input.packageName,
-      name: 'rt_bindings.dart',
+      name: 'dart_inference_mlx_bindings.dart',
       linkMode: DynamicLoadingBundled(),
       file: libraryFile,
     ),
@@ -622,36 +524,6 @@ Future<void> _runProcess(
   }
 }
 
-Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
-  final dependencies = <Uri>{};
-  final runtimeOverride = _runtimeEnvOverrideFile(packageRoot.toFilePath());
-  if (runtimeOverride != null) {
-    dependencies.add(runtimeOverride.uri);
-  }
-  for (final relativePath in const [
-    'native',
-    'vendors',
-    '.zigversion',
-    'hook/build.dart',
-  ]) {
-    final uri = packageRoot.resolve(relativePath);
-    final type = FileSystemEntity.typeSync(uri.toFilePath());
-    if (type == FileSystemEntityType.notFound) {
-      continue;
-    }
-    if (type == FileSystemEntityType.file) {
-      dependencies.add(uri);
-      continue;
-    }
-    await for (final entity in Directory.fromUri(uri).list(recursive: true)) {
-      if (entity is File) {
-        dependencies.add(entity.uri);
-      }
-    }
-  }
-  return dependencies;
-}
-
 Future<bool> _hasMetalToolchain(Logger logger, String sdkName) async {
   final result = await Process.run('xcrun', ['-sdk', sdkName, 'metal', '-v']);
   if (result.exitCode == 0) {
@@ -679,6 +551,35 @@ Future<bool> _resolveMetalSupport(
     return false;
   }
   return _hasMetalToolchain(logger, sdkName);
+}
+
+Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
+  final dependencies = <Uri>{};
+  final runtimeOverride = _runtimeEnvOverrideFile(packageRoot.toFilePath());
+  if (runtimeOverride != null) {
+    dependencies.add(runtimeOverride.uri);
+  }
+  for (final relativePath in const [
+    'native',
+    'vendors',
+    'hook/build.dart',
+  ]) {
+    final uri = packageRoot.resolve(relativePath);
+    final type = FileSystemEntity.typeSync(uri.toFilePath());
+    if (type == FileSystemEntityType.notFound) {
+      continue;
+    }
+    if (type == FileSystemEntityType.file) {
+      dependencies.add(uri);
+      continue;
+    }
+    await for (final entity in Directory.fromUri(uri).list(recursive: true)) {
+      if (entity is File) {
+        dependencies.add(entity.uri);
+      }
+    }
+  }
+  return dependencies;
 }
 
 bool _isAppleTarget(OS os) => os == OS.iOS || os == OS.macOS;
@@ -904,155 +805,6 @@ String? _deriveCppCompiler(String? cCompiler) {
   }
   return cCompiler;
 }
-
-Future<String> _resolveZigExecutable(String packageRootPath) async {
-  final explicit = Platform.environment['DART_INFERENCE_ZIG'];
-  if (explicit != null && explicit.isNotEmpty) {
-    return explicit;
-  }
-  final generic = Platform.environment['ZIG'];
-  if (generic != null && generic.isNotEmpty) {
-    return generic;
-  }
-  final local = _localPinnedZigExecutable(packageRootPath);
-  if (local != null) {
-    return local;
-  }
-  return 'zig';
-}
-
-String? _localPinnedZigExecutable(String packageRootPath) {
-  final host = Platform.isWindows
-      ? 'windows'
-      : Platform.isMacOS
-      ? 'macos'
-      : Platform.isLinux
-      ? 'linux'
-      : null;
-  if (host == null) {
-    return null;
-  }
-  final arch = _hostZigArchitectureName();
-  if (arch == null) {
-    return null;
-  }
-  final version = _pinnedZigVersion(packageRootPath);
-  final suffix = Platform.isWindows ? 'zig.exe' : 'zig';
-  final candidate =
-      '$packageRootPath/.dart_tool/zig/zig-$arch-$host-$version/$suffix';
-  return File(candidate).existsSync() ? candidate : null;
-}
-
-String? _hostZigArchitectureName() {
-  if (Platform.isWindows) {
-    final raw = Platform.environment['PROCESSOR_ARCHITECTURE'] ?? '';
-    final wow = Platform.environment['PROCESSOR_ARCHITEW6432'] ?? '';
-    final value = (wow.isNotEmpty ? wow : raw).toLowerCase();
-    if (value.contains('arm64') || value.contains('aarch64')) {
-      return 'aarch64';
-    }
-    if (value.contains('86')) {
-      return 'x86_64';
-    }
-    return null;
-  }
-  final result = Process.runSync('uname', ['-m']);
-  if (result.exitCode != 0) {
-    return null;
-  }
-  final value = result.stdout.toString().trim().toLowerCase();
-  return switch (value) {
-    'x86_64' || 'amd64' => 'x86_64',
-    'arm64' || 'aarch64' => 'aarch64',
-    'armv7l' || 'armv7' || 'arm' => 'arm',
-    'riscv64' => 'riscv64',
-    _ => null,
-  };
-}
-
-String _pinnedZigVersion(String packageRootPath) {
-  final versionFile = File('$packageRootPath/.zigversion');
-  if (versionFile.existsSync()) {
-    final value = versionFile.readAsStringSync().trim();
-    if (value.isNotEmpty) {
-      return value;
-    }
-  }
-  final toolchainFile = File(
-    '$packageRootPath/native/zig_runtime/toolchain.json',
-  );
-  if (!toolchainFile.existsSync()) {
-    throw StateError(
-      'Missing Zig version metadata. Expected .zigversion or '
-      'native/zig_runtime/toolchain.json.',
-    );
-  }
-  final payload = jsonDecode(toolchainFile.readAsStringSync());
-  if (payload is Map && payload['version'] is String) {
-    final value = (payload['version'] as String).trim();
-    if (value.isNotEmpty) {
-      return value;
-    }
-  }
-  throw StateError(
-    'native/zig_runtime/toolchain.json does not contain a Zig version.',
-  );
-}
-
-Future<String> _zigVersion(String executable) async {
-  final result = await Process.run(executable, ['version']);
-  if (result.exitCode != 0) {
-    throw ProcessException(
-      executable,
-      const ['version'],
-      result.stderr.toString(),
-      result.exitCode,
-    );
-  }
-  return result.stdout.toString().trim();
-}
-
-String _zigTarget(CodeConfig code) {
-  final arch = _zigArchitectureName(code.targetArchitecture);
-  return switch (code.targetOS) {
-    OS.linux => '$arch-linux-gnu',
-    OS.android =>
-      arch == 'arm' ? 'arm-linux-androideabi' : '$arch-linux-android',
-    OS.windows => '$arch-windows-gnu',
-    OS.macOS => '$arch-macos',
-    OS.iOS =>
-      code.iOS.targetSdk == IOSSdk.iPhoneSimulator
-          ? '$arch-ios-simulator'
-          : '$arch-ios',
-    OS() => throw UnsupportedError(
-      'Unsupported Zig runtime target OS: ${code.targetOS.name}',
-    ),
-  };
-}
-
-String _runtimeOriginRpath(OS os) => switch (os) {
-  OS.iOS || OS.macOS => '@loader_path',
-  OS.linux || OS.android => r'$ORIGIN',
-  OS.windows => '.',
-  OS() => throw UnsupportedError(
-    'Unsupported runtime rpath target OS: ${os.name}',
-  ),
-};
-
-String _zigArchitectureName(Architecture architecture) =>
-    switch (architecture) {
-      Architecture.arm => 'arm',
-      Architecture.arm64 => 'aarch64',
-      Architecture.ia32 => 'x86',
-      Architecture.x64 => 'x86_64',
-      Architecture.riscv64 => 'riscv64',
-      Architecture.riscv32 => throw UnsupportedError(
-        'riscv32 is unsupported for Zig runtime builds.',
-      ),
-      Architecture() => throw UnsupportedError(
-        'Unsupported Zig runtime architecture: ${architecture.name}',
-      ),
-    };
 
 String _cmakeGenerator() {
   if (_executableExists('ninja') || _executableExists('ninja-build')) {

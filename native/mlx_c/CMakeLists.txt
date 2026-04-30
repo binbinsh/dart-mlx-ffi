@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(dinf_zig_mlx_c LANGUAGES C CXX)
+project(dart_inference_mlx LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,22 @@ add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx
                  ${CMAKE_CURRENT_BINARY_DIR}/mlx)
 
 set(MLXC_SRC
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_core.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_array.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_conv.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_extra.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_math.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_memio.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_mm.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_misc.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_more.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_ops.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_rand.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_scan.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_sys.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_io.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_tensor.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/bridge_fast.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/array.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/closure.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx-c/mlx/c/compile.cpp
@@ -62,6 +78,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE mlx)
 
 set_target_properties(
   ${PROJECT_NAME}
-  PROPERTIES OUTPUT_NAME "dinf_zig_mlx_c"
+  PROPERTIES OUTPUT_NAME "dart_inference_mlx"
              BUILD_WITH_INSTALL_RPATH ON
              INSTALL_RPATH "@loader_path")

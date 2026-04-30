@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <utility>
 
 #if defined(_WIN32)
@@ -142,6 +145,59 @@ bool Ok(const OrtApi* api, OrtStatus* status, std::string* error) {
   return false;
 }
 
+struct SharedPrepackedWeights {
+  SharedPrepackedWeights(
+      const OrtApi* api,
+      OrtPrepackedWeightsContainer* container)
+      : api(api), container(container) {}
+
+  ~SharedPrepackedWeights() {
+    if (container != nullptr) {
+      api->ReleasePrepackedWeightsContainer(container);
+    }
+  }
+
+  const OrtApi* api;
+  OrtPrepackedWeightsContainer* container;
+};
+
+std::mutex& PrepackedWeightsMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::unordered_map<std::string, std::weak_ptr<SharedPrepackedWeights>>&
+PrepackedWeightsRegistry() {
+  static std::unordered_map<std::string, std::weak_ptr<SharedPrepackedWeights>>
+      registry;
+  return registry;
+}
+
+std::shared_ptr<SharedPrepackedWeights> SharedPrepackedWeightsFor(
+    const OrtApi* api,
+    const std::string& key,
+    std::string* error) {
+  if (key.empty()) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> lock(PrepackedWeightsMutex());
+  auto& registry = PrepackedWeightsRegistry();
+  const auto found = registry.find(key);
+  if (found != registry.end()) {
+    if (auto existing = found->second.lock()) {
+      return existing;
+    }
+    registry.erase(found);
+  }
+  OrtPrepackedWeightsContainer* container = nullptr;
+  if (!Ok(api, api->CreatePrepackedWeightsContainer(&container), error)) {
+    return nullptr;
+  }
+  auto shared = std::make_shared<SharedPrepackedWeights>(api, container);
+  registry[key] = shared;
+  return shared;
+}
+
 #if defined(_WIN32)
 std::wstring Utf8ToWide(const char* value) {
   if (value == nullptr) {
@@ -175,6 +231,48 @@ std::vector<std::string> SplitPaths(const std::string& raw) {
   }
   return out;
 }
+
+std::string TrimAsciiSpace(const std::string& value) {
+  size_t begin = 0;
+  while (begin < value.size() &&
+         (value[begin] == ' ' || value[begin] == '\t')) {
+    begin += 1;
+  }
+  size_t end = value.size();
+  while (end > begin && (value[end - 1] == ' ' || value[end - 1] == '\t')) {
+    end -= 1;
+  }
+  return value.substr(begin, end - begin);
+}
+
+std::vector<std::string> SplitNames(const std::string& raw) {
+  std::vector<std::string> out;
+  std::string current;
+  for (const char ch : raw) {
+    if (ch == ',' || ch == ';' || ch == '\n' || ch == '\r') {
+      const std::string name = TrimAsciiSpace(current);
+      if (!name.empty()) {
+        out.push_back(name);
+      }
+      current.clear();
+      continue;
+    }
+    current.push_back(ch);
+  }
+  const std::string name = TrimAsciiSpace(current);
+  if (!name.empty()) {
+    out.push_back(name);
+  }
+  return out;
+}
+
+bool ContainsName(
+    const std::vector<std::string>& names,
+    const std::string& name) {
+  return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+#include "ort_session_tensor.inc"
 
 bool PreloadLibraries(const DinfOptions* runtime_options, std::string* error) {
   const std::string raw =
@@ -232,36 +330,6 @@ bool ContainsProvider(
     const std::string& provider) {
   return std::find(providers.begin(), providers.end(), provider) !=
          providers.end();
-}
-
-std::vector<std::string> SessionNames(
-    const OrtApi* api,
-    OrtSession* session,
-    OrtAllocator* allocator,
-    bool inputs,
-    std::string* error) {
-  size_t count = 0;
-  if (inputs) {
-    if (!Ok(api, api->SessionGetInputCount(session, &count), error)) {
-      return {};
-    }
-  } else if (!Ok(api, api->SessionGetOutputCount(session, &count), error)) {
-    return {};
-  }
-  std::vector<std::string> names;
-  names.reserve(count);
-  for (size_t i = 0; i < count; ++i) {
-    char* name = nullptr;
-    OrtStatus* status = inputs
-        ? api->SessionGetInputName(session, i, allocator, &name)
-        : api->SessionGetOutputName(session, i, allocator, &name);
-    if (!Ok(api, status, error)) {
-      return {};
-    }
-    names.emplace_back(name == nullptr ? "" : name);
-    allocator->Free(allocator, name);
-  }
-  return names;
 }
 
 std::vector<TensorMetadata> SessionMetadata(
@@ -370,6 +438,20 @@ std::vector<std::string> MetadataNames(
   return names;
 }
 
+bool StaticTensorShapes(const std::vector<TensorMetadata>& metadata) {
+  for (const auto& item : metadata) {
+    if (item.onnx_type != "tensor") {
+      return false;
+    }
+    for (const auto dim : item.shape) {
+      if (dim < 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 std::vector<std::string> ShapeSignature(const TensorMetadata& metadata) {
   std::vector<std::string> signature;
   signature.reserve(metadata.shape.size());
@@ -429,167 +511,36 @@ std::string RequestedProvider(const DinfOptions* runtime_options) {
   return "CPUExecutionProvider";
 }
 
-bool AppendProvider(
-    const OrtApi* api,
-    OrtSessionOptions* options,
-    const std::string& provider,
-    const std::vector<std::string>& providers,
-    const DinfOptions* runtime_options,
-    bool* appended,
-    std::string* error) {
-  if (appended != nullptr) {
-    *appended = false;
+std::shared_ptr<OrtEnv> SharedEnv(const OrtApi* api, std::string* error) {
+  static std::mutex mutex;
+  static std::weak_ptr<OrtEnv> env_ref;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (auto existing = env_ref.lock()) {
+    return existing;
   }
-  if (provider.empty() || provider == "CPUExecutionProvider") {
-    return true;
+  OrtEnv* raw = nullptr;
+  if (!Ok(
+          api,
+          api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dart_inference", &raw),
+          error)) {
+    return {};
   }
-  if (!ContainsProvider(providers, provider)) {
-    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
-      *error = "Requested ONNX Runtime provider is unavailable: " + provider;
-      return false;
-    }
-    return true;
-  }
-
-  if (provider == "CUDAExecutionProvider" &&
-      api->SessionOptionsAppendExecutionProvider_CUDA != nullptr) {
-    OrtCUDAProviderOptions cuda_options{};
-    cuda_options.device_id =
-        std::max(0, dinf_option_int(runtime_options, "deviceId", 0));
-    const int cuda_mem_limit_mb =
-        dinf_option_int(runtime_options, "cudaMemoryLimitMb", 0);
-    if (cuda_mem_limit_mb > 0) {
-      cuda_options.gpu_mem_limit =
-          static_cast<size_t>(cuda_mem_limit_mb) * 1024ULL * 1024ULL;
-    }
-    const int arena_extend_strategy =
-        dinf_option_int(runtime_options, "cudaArenaExtendStrategy", -1);
-    if (arena_extend_strategy >= 0) {
-      cuda_options.arena_extend_strategy = arena_extend_strategy;
-    }
-    std::string append_error;
-    if (Ok(api,
-           api->SessionOptionsAppendExecutionProvider_CUDA(
-               options,
-               &cuda_options),
-           &append_error)) {
-      if (appended != nullptr) {
-        *appended = true;
-      }
-      return true;
-    }
-    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
-      *error = append_error;
-      return false;
-    }
-  }
-
-  if (provider == "TensorrtExecutionProvider" &&
-      api->SessionOptionsAppendExecutionProvider_TensorRT != nullptr) {
-    OrtTensorRTProviderOptions trt_options{};
-    trt_options.device_id =
-        std::max(0, dinf_option_int(runtime_options, "deviceId", 0));
-    trt_options.trt_max_partition_iterations =
-        std::max(0, dinf_option_int(runtime_options, "trtMaxPartitionIterations", 0));
-    trt_options.trt_min_subgraph_size =
-        std::max(0, dinf_option_int(runtime_options, "trtMinSubgraphSize", 0));
-    const int trt_workspace_mb =
-        dinf_option_int(runtime_options, "trtWorkspaceMemoryLimitMb", 0);
-    if (trt_workspace_mb > 0) {
-      trt_options.trt_max_workspace_size =
-          static_cast<size_t>(trt_workspace_mb) * 1024ULL * 1024ULL;
-    }
-    trt_options.trt_fp16_enable =
-        dinf_option_bool(runtime_options, "trtFp16", false) ? 1 : 0;
-    trt_options.trt_int8_enable =
-        dinf_option_bool(runtime_options, "trtInt8", false) ? 1 : 0;
-    trt_options.trt_dump_subgraphs =
-        dinf_option_bool(runtime_options, "trtDumpSubgraphs", false) ? 1 : 0;
-    const std::string trt_cache_path =
-        dinf_option_string(runtime_options, "trtEngineCachePath");
-    if (!trt_cache_path.empty()) {
-      trt_options.trt_engine_cache_enable = 1;
-      trt_options.trt_engine_cache_path = trt_cache_path.c_str();
-    } else {
-      trt_options.trt_engine_cache_enable =
-          dinf_option_bool(runtime_options, "trtEngineCacheEnable", false) ? 1 : 0;
-    }
-    trt_options.trt_force_sequential_engine_build =
-        dinf_option_bool(runtime_options, "trtForceSequentialEngineBuild", false)
-        ? 1
-        : 0;
-    std::string append_error;
-    if (Ok(api,
-           api->SessionOptionsAppendExecutionProvider_TensorRT(
-               options,
-               &trt_options),
-           &append_error)) {
-      if (appended != nullptr) {
-        *appended = true;
-      }
-      return true;
-    }
-    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
-      *error = append_error;
-      return false;
-    }
-  }
-
-  std::string append_error;
-  if (!Ok(api,
-          api->SessionOptionsAppendExecutionProvider(
-              options, provider.c_str(), nullptr, nullptr, 0),
-          &append_error)) {
-    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
-      *error = append_error;
-      return false;
-    }
-    return true;
-  }
-  if (appended != nullptr) {
-    *appended = true;
-  }
-  return true;
+  auto env = std::shared_ptr<OrtEnv>(
+      raw,
+      [api](OrtEnv* value) {
+        if (value != nullptr) {
+          api->ReleaseEnv(value);
+        }
+      });
+  env_ref = env;
+  return env;
 }
+
+#include "ort_session_provider.inc"
 
 }  // namespace
 
-Session::Session(
-    const OrtApi* api,
-    OrtEnv* env,
-    OrtSessionOptions* options,
-    OrtSession* session,
-    OrtAllocator* allocator,
-    OrtMemoryInfo* memory_info,
-    std::string provider,
-    std::vector<std::string> available_providers,
-    std::vector<std::string> input_names,
-    std::vector<std::string> output_names,
-    std::vector<TensorMetadata> input_metadata,
-    std::vector<TensorMetadata> output_metadata,
-    int num_threads,
-    bool provider_appended)
-    : api_(api),
-      env_(env),
-      options_(options),
-      session_(session),
-      allocator_(allocator),
-      memory_info_(memory_info),
-      provider_(std::move(provider)),
-      available_providers_(std::move(available_providers)),
-      input_names_(std::move(input_names)),
-      output_names_(std::move(output_names)),
-      input_metadata_(std::move(input_metadata)),
-      output_metadata_(std::move(output_metadata)),
-      num_threads_(num_threads),
-      provider_appended_(provider_appended) {}
-
-Session::~Session() {
-  api_->ReleaseMemoryInfo(memory_info_);
-  api_->ReleaseSession(session_);
-  api_->ReleaseSessionOptions(options_);
-  api_->ReleaseEnv(env_);
-}
+#include "ort_session_lifecycle.inc"
 
 const std::vector<std::string>& Session::InputNames() const {
   return input_names_;
@@ -606,13 +557,30 @@ int Session::Run(
     size_t* output_count,
     std::string* error) {
   std::vector<OrtValue*> input_values(input_count);
+  std::vector<uint8_t> input_owned(input_count, 1);
   std::vector<const char*> input_names(input_count);
   for (size_t i = 0; i < input_count; ++i) {
     input_names[i] = inputs[i].name;
+    if (inputs[i].tensor.memory_kind == DINF_TENSOR_MEMORY_HANDLE) {
+      const auto* handle = inputs[i].tensor.handle;
+      if (handle == nullptr || handle->value == nullptr) {
+        *error = "ONNX Runtime input tensor handle is null";
+        ReleaseValues(input_values, &input_owned);
+        return 1;
+      }
+      input_values[i] = static_cast<OrtValue*>(handle->value);
+      input_owned[i] = 0;
+      continue;
+    }
+    if (inputs[i].tensor.memory_kind != DINF_TENSOR_MEMORY_CPU) {
+      *error = "Unsupported ONNX Runtime input memory kind";
+      ReleaseValues(input_values, &input_owned);
+      return 1;
+    }
     const auto dtype = OrtDtype(inputs[i].tensor.dtype);
     if (dtype == ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED) {
       *error = "Unsupported ONNX Runtime input dtype";
-      ReleaseValues(input_values);
+      ReleaseValues(input_values, &input_owned);
       return 1;
     }
     if (!Ok(api_, api_->CreateTensorWithDataAsOrtValue(
@@ -624,7 +592,7 @@ int Session::Run(
                       dtype,
                       &input_values[i]),
             error)) {
-      ReleaseValues(input_values);
+      ReleaseValues(input_values, &input_owned);
       return 1;
     }
   }
@@ -635,35 +603,94 @@ int Session::Run(
     output_names.push_back(name.c_str());
   }
 
-  std::vector<OrtValue*> output_values(output_names.size());
-  if (!Ok(api_,
-          api_->Run(
-              session_,
-              nullptr,
-              input_names.data(),
-              input_values.data(),
-              input_values.size(),
-              output_names.data(),
-              output_names.size(),
-              output_values.data()),
-          error)) {
-    ReleaseValues(input_values);
-    ReleaseValues(output_values);
-    return 1;
+  std::vector<OrtValue*> output_values;
+  if (use_io_binding_ && io_binding_ != nullptr) {
+    api_->ClearBoundInputs(io_binding_);
+    for (size_t i = 0; i < input_values.size(); ++i) {
+      if (!Ok(api_,
+              api_->BindInput(io_binding_, input_names[i], input_values[i]),
+              error)) {
+        ReleaseValues(input_values, &input_owned);
+        return 1;
+      }
+    }
+    if (!cache_bound_outputs_ || !bound_outputs_cached_) {
+      api_->ClearBoundOutputs(io_binding_);
+      for (size_t i = 0; i < output_names.size(); ++i) {
+        const auto* name = output_names[i];
+        const auto& output_name = output_names_[i];
+        OrtMemoryInfo* target_memory_info =
+            OutputUsesDeviceHandle(output_name) ? device_memory_info_ : memory_info_;
+        if (!Ok(api_,
+                api_->BindOutputToDevice(io_binding_, name, target_memory_info),
+                error)) {
+          ReleaseValues(input_values, &input_owned);
+          return 1;
+        }
+      }
+      bound_outputs_cached_ = cache_bound_outputs_;
+    }
+    if (sync_bound_inputs_ &&
+        !Ok(api_, api_->SynchronizeBoundInputs(io_binding_), error)) {
+      ReleaseValues(input_values, &input_owned);
+      return 1;
+    }
+    if (!Ok(api_, api_->RunWithBinding(session_, run_options_, io_binding_), error)) {
+      ReleaseValues(input_values, &input_owned);
+      return 1;
+    }
+    if (sync_bound_outputs_ &&
+        !Ok(api_, api_->SynchronizeBoundOutputs(io_binding_), error)) {
+      ReleaseValues(input_values, &input_owned);
+      return 1;
+    }
+    OrtValue** bound_outputs = nullptr;
+    size_t bound_output_count = 0;
+    if (!Ok(api_,
+            api_->GetBoundOutputValues(
+                io_binding_,
+                allocator_,
+                &bound_outputs,
+                &bound_output_count),
+            error)) {
+      ReleaseValues(input_values, &input_owned);
+      return 1;
+    }
+    output_values.assign(bound_outputs, bound_outputs + bound_output_count);
+    if (bound_outputs != nullptr) {
+      allocator_->Free(allocator_, bound_outputs);
+    }
+  } else {
+    output_values.resize(output_names.size());
+    if (!Ok(api_,
+            api_->Run(
+                session_,
+                run_options_,
+                input_names.data(),
+                input_values.data(),
+                input_values.size(),
+                output_names.data(),
+                output_names.size(),
+                output_values.data()),
+            error)) {
+      ReleaseValues(input_values, &input_owned);
+      ReleaseValues(output_values);
+      return 1;
+    }
   }
 
   std::vector<DinfNamedTensor> produced;
   for (size_t i = 0; i < output_values.size(); ++i) {
     OrtTensorTypeAndShapeInfo* info = nullptr;
     if (!Ok(api_, api_->GetTensorTypeAndShape(output_values[i], &info), error)) {
-      ReleaseValues(input_values);
+      ReleaseValues(input_values, &input_owned);
       ReleaseValues(output_values);
       return 1;
     }
     ONNXTensorElementDataType ort_type;
     if (!Ok(api_, api_->GetTensorElementType(info, &ort_type), error)) {
       api_->ReleaseTensorTypeAndShapeInfo(info);
-      ReleaseValues(input_values);
+      ReleaseValues(input_values, &input_owned);
       ReleaseValues(output_values);
       return 1;
     }
@@ -675,87 +702,150 @@ int Session::Run(
     size_t rank = 0;
     if (!Ok(api_, api_->GetDimensionsCount(info, &rank), error)) {
       api_->ReleaseTensorTypeAndShapeInfo(info);
-      ReleaseValues(input_values);
+      FreeProduced(&produced);
+      ReleaseValues(input_values, &input_owned);
       ReleaseValues(output_values);
       return 1;
     }
     std::vector<int64_t> shape(rank);
     if (!Ok(api_, api_->GetDimensions(info, shape.data(), rank), error)) {
       api_->ReleaseTensorTypeAndShapeInfo(info);
-      ReleaseValues(input_values);
+      FreeProduced(&produced);
+      ReleaseValues(input_values, &input_owned);
       ReleaseValues(output_values);
       return 1;
     }
     size_t count = 0;
     if (!Ok(api_, api_->GetTensorShapeElementCount(info, &count), error)) {
       api_->ReleaseTensorTypeAndShapeInfo(info);
-      ReleaseValues(input_values);
+      FreeProduced(&produced);
+      ReleaseValues(input_values, &input_owned);
       ReleaseValues(output_values);
       return 1;
     }
     api_->ReleaseTensorTypeAndShapeInfo(info);
+    const size_t byte_length = count * dinf_dtype_size(dtype);
+    const std::string output_name =
+        i < output_names_.size() ? output_names_[i] : std::string();
+    if (OutputUsesDeviceHandle(output_name)) {
+      DinfNamedTensor tensor = MakeHandleTensor(
+          api_,
+          output_name.c_str(),
+          dtype,
+          shape,
+          byte_length,
+          output_values[i]);
+      if (tensor.name == nullptr ||
+          (rank > 0 && tensor.tensor.shape == nullptr) ||
+          tensor.tensor.handle == nullptr) {
+        std::free(tensor.name);
+        std::free(tensor.tensor.shape);
+        if (tensor.tensor.handle != nullptr) {
+          dinf_release_tensor_handle(tensor.tensor.handle);
+          output_values[i] = nullptr;
+        }
+        FreeProduced(&produced);
+        ReleaseValues(input_values, &input_owned);
+        ReleaseValues(output_values);
+        *error = "Failed to allocate ONNX Runtime output tensor handle";
+        return 1;
+      }
+      output_values[i] = nullptr;
+      produced.push_back(tensor);
+      continue;
+    }
     void* data = nullptr;
     if (!Ok(api_, api_->GetTensorMutableData(output_values[i], &data), error)) {
-      ReleaseValues(input_values);
+      FreeProduced(&produced);
+      ReleaseValues(input_values, &input_owned);
       ReleaseValues(output_values);
       return 1;
     }
+    if (use_output_views_) {
+      DinfNamedTensor tensor = MakeCpuViewTensor(
+          api_,
+          output_name.c_str(),
+          dtype,
+          shape,
+          byte_length,
+          data,
+          output_values[i]);
+      if (tensor.name == nullptr ||
+          (rank > 0 && tensor.tensor.shape == nullptr) ||
+          tensor.tensor.handle == nullptr) {
+        std::free(tensor.name);
+        std::free(tensor.tensor.shape);
+        if (tensor.tensor.handle != nullptr) {
+          dinf_release_tensor_handle(tensor.tensor.handle);
+          output_values[i] = nullptr;
+        }
+        FreeProduced(&produced);
+        ReleaseValues(input_values, &input_owned);
+        ReleaseValues(output_values);
+        *error = "Failed to allocate ONNX Runtime CPU output tensor view";
+        return 1;
+      }
+      output_values[i] = nullptr;
+      produced.push_back(tensor);
+      continue;
+    }
     produced.push_back(dinf_make_tensor(
-        output_names[i],
+        output_name.c_str(),
         dtype,
         shape,
         data,
-        count * dinf_dtype_size(dtype)));
+        byte_length));
   }
 
-  ReleaseValues(input_values);
+  ReleaseValues(input_values, &input_owned);
   ReleaseValues(output_values);
-  *output_count = produced.size();
-  *outputs = static_cast<DinfNamedTensor*>(
-      std::malloc(sizeof(DinfNamedTensor) * produced.size()));
-  if (!produced.empty()) {
-    std::memcpy(*outputs, produced.data(), sizeof(DinfNamedTensor) * produced.size());
+  *output_count = 0;
+  *outputs = nullptr;
+  if (produced.empty()) {
+    return 0;
   }
+  auto* output_array = static_cast<DinfNamedTensor*>(
+      std::malloc(sizeof(DinfNamedTensor) * produced.size()));
+  if (output_array == nullptr) {
+    FreeProduced(&produced);
+    *error = "Failed to allocate ONNX Runtime output tensor array";
+    return 1;
+  }
+  std::memcpy(
+      output_array,
+      produced.data(),
+      sizeof(DinfNamedTensor) * produced.size());
+  *outputs = output_array;
+  *output_count = produced.size();
   return 0;
 }
 
-void Session::Diagnostics(
-    DinfDiagBuilder* out,
-    const std::string& prefix) const {
-  out->AddString(dinf_diag_path(prefix, "engine"), "onnx");
-  out->AddString(dinf_diag_path(prefix, "provider"), provider_);
-  out->AddBool(dinf_diag_path(prefix, "provider_appended"), provider_appended_);
-  out->AddInt(dinf_diag_path(prefix, "num_threads"), num_threads_);
-  out->AddStringList(
-      dinf_diag_path(prefix, "available_providers"),
-      available_providers_);
-  out->AddStringList(dinf_diag_path(prefix, "input_names"), input_names_);
-  out->AddStringList(dinf_diag_path(prefix, "output_names"), output_names_);
-  AddTensorMetadataList(
-      out,
-      dinf_diag_path(prefix, "input_metadata"),
-      input_metadata_);
-  AddTensorMetadataList(
-      out,
-      dinf_diag_path(prefix, "output_metadata"),
-      output_metadata_);
+#include "ort_session_diag.inc"
+
+bool Session::OutputUsesDeviceHandle(const std::string& name) const {
+  if (!use_io_binding_ || !use_device_outputs_ ||
+      device_memory_info_ == nullptr) {
+    return false;
+  }
+  if (!device_output_names_.empty()) {
+    return ContainsName(device_output_names_, name);
+  }
+  return !ContainsName(cpu_output_names_, name);
 }
 
-void Session::ReleaseValues(std::vector<OrtValue*>& values) {
-  for (auto* value : values) {
+void Session::ReleaseValues(
+    std::vector<OrtValue*>& values,
+    const std::vector<uint8_t>* owned) {
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (owned != nullptr && (i >= owned->size() || (*owned)[i] == 0)) {
+      continue;
+    }
+    auto* value = values[i];
     if (value != nullptr) {
       api_->ReleaseValue(value);
+      values[i] = nullptr;
     }
   }
-}
-
-void Session::ReleaseNames(std::vector<char*>& names) {
-  for (auto* name : names) {
-    if (name != nullptr) {
-      allocator_->Free(allocator_, name);
-    }
-  }
-  names.clear();
 }
 
 std::unique_ptr<Session> CreateSession(
@@ -763,39 +853,77 @@ std::unique_ptr<Session> CreateSession(
     const DinfOptions* runtime_options,
     std::string* error) {
   const OrtApi* api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-  OrtEnv* env = nullptr;
+  std::shared_ptr<OrtEnv> env = SharedEnv(api, error);
   OrtSessionOptions* options = nullptr;
   OrtSession* session = nullptr;
   OrtAllocator* allocator = nullptr;
   OrtMemoryInfo* memory_info = nullptr;
-  if (!Ok(api, api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dart_inference", &env), error)) {
+  OrtMemoryInfo* device_memory_info = nullptr;
+  OrtRunOptions* run_options = nullptr;
+  if (!env) {
     return nullptr;
   }
   if (!Ok(api, api->CreateSessionOptions(&options), error)) {
-    api->ReleaseEnv(env);
     return nullptr;
   }
   const int num_threads = std::max(1, dinf_option_int(runtime_options, "numThreads", 1));
   if (!Ok(api, api->SetIntraOpNumThreads(options, num_threads), error)) {
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
   }
   if (!Ok(api, api->SetSessionGraphOptimizationLevel(options, ORT_ENABLE_ALL), error)) {
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
+  }
+  if (!ApplySessionConfigEntries(api, options, runtime_options, error)) {
+    api->ReleaseSessionOptions(options);
+    return nullptr;
+  }
+  if (dinf_option_bool(runtime_options, "disableMemPattern", false) &&
+      !Ok(api, api->DisableMemPattern(options), error)) {
+    api->ReleaseSessionOptions(options);
+    return nullptr;
+  }
+  if (dinf_option_bool(runtime_options, "disableCpuMemArena", false) &&
+      !Ok(api, api->DisableCpuMemArena(options), error)) {
+    api->ReleaseSessionOptions(options);
+    return nullptr;
+  }
+  const std::string execution_mode =
+      dinf_option_string(runtime_options, "executionMode");
+  if (!execution_mode.empty()) {
+    const ExecutionMode mode =
+        execution_mode == "parallel" || execution_mode == "ORT_PARALLEL"
+        ? ORT_PARALLEL
+        : ORT_SEQUENTIAL;
+    if (!Ok(api, api->SetSessionExecutionMode(options, mode), error)) {
+      api->ReleaseSessionOptions(options);
+      return nullptr;
+    }
+  }
+  const std::string optimized_model_path =
+      dinf_option_string(runtime_options, "optimizedModelFilePath");
+  if (!optimized_model_path.empty()) {
+#if defined(_WIN32)
+    const std::wstring wide_optimized_path =
+        Utf8ToWide(optimized_model_path.c_str());
+    const auto* optimized_path = wide_optimized_path.c_str();
+#else
+    const auto* optimized_path = optimized_model_path.c_str();
+#endif
+    if (!Ok(api, api->SetOptimizedModelFilePath(options, optimized_path), error)) {
+      api->ReleaseSessionOptions(options);
+      return nullptr;
+    }
   }
   if (!PreloadLibraries(runtime_options, error)) {
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
   }
   std::string provider_error;
   const std::vector<std::string> providers = AvailableProviders(api, &provider_error);
   if (!provider_error.empty()) {
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     *error = provider_error;
     return nullptr;
   }
@@ -810,7 +938,6 @@ std::unique_ptr<Session> CreateSession(
           &provider_appended,
           error)) {
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
   }
   const std::string effective_provider =
@@ -823,15 +950,35 @@ std::unique_ptr<Session> CreateSession(
 #else
   const auto* ort_path = model_path;
 #endif
-  if (!Ok(api, api->CreateSession(env, ort_path, options, &session), error)) {
+  const std::string prepacked_weights_key =
+      dinf_option_string(runtime_options, "prepackedWeightsKey");
+  std::shared_ptr<SharedPrepackedWeights> prepacked_weights;
+  if (!prepacked_weights_key.empty()) {
+    prepacked_weights =
+        SharedPrepackedWeightsFor(api, prepacked_weights_key, error);
+    if (!prepacked_weights) {
+      api->ReleaseSessionOptions(options);
+      return nullptr;
+    }
+  }
+  OrtStatus* create_status = nullptr;
+  if (prepacked_weights) {
+    create_status = api->CreateSessionWithPrepackedWeightsContainer(
+        env.get(),
+        ort_path,
+        options,
+        prepacked_weights->container,
+        &session);
+  } else {
+    create_status = api->CreateSession(env.get(), ort_path, options, &session);
+  }
+  if (!Ok(api, create_status, error)) {
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
   }
   if (!Ok(api, api->GetAllocatorWithDefaultOptions(&allocator), error)) {
     api->ReleaseSession(session);
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
   }
   if (!Ok(api,
@@ -840,44 +987,167 @@ std::unique_ptr<Session> CreateSession(
           error)) {
     api->ReleaseSession(session);
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
+  }
+  OrtIoBinding* io_binding = nullptr;
+  const bool use_io_binding = dinf_option_bool(
+      runtime_options,
+      "useIoBinding",
+      dinf_option_bool(runtime_options, "ioBinding", false));
+  const bool requested_device_outputs = dinf_option_bool(
+      runtime_options,
+      "useDeviceOutputs",
+      dinf_option_bool(runtime_options, "deviceOutputs", false));
+  const bool cuda_backed_provider =
+      (effective_provider == "CUDAExecutionProvider" ||
+       effective_provider == "TensorrtExecutionProvider") &&
+      provider_appended;
+  const bool use_device_outputs =
+      use_io_binding && requested_device_outputs && cuda_backed_provider;
+  const bool use_output_views = dinf_option_bool(
+      runtime_options,
+      "useOutputViews",
+      dinf_option_bool(runtime_options, "zeroCopyOutputs", false));
+  const bool sync_bound_inputs = dinf_option_bool(
+      runtime_options,
+      "syncBoundInputs",
+      dinf_option_bool(runtime_options, "syncIoBindingInputs", true));
+  const bool sync_bound_outputs = dinf_option_bool(
+      runtime_options,
+      "syncBoundOutputs",
+      dinf_option_bool(runtime_options, "syncIoBindingOutputs", true));
+  const bool requested_cache_bound_outputs = dinf_option_bool(
+      runtime_options,
+      "cacheBoundOutputs",
+      dinf_option_bool(runtime_options, "cacheIoBindingOutputs", false));
+  if (use_device_outputs &&
+      !Ok(api,
+          api->CreateMemoryInfo(
+              "Cuda",
+              OrtDeviceAllocator,
+              std::max(0, dinf_option_int(runtime_options, "deviceId", 0)),
+              OrtMemTypeDefault,
+              &device_memory_info),
+          error)) {
+    api->ReleaseMemoryInfo(memory_info);
+    api->ReleaseSession(session);
+    api->ReleaseSessionOptions(options);
+    return nullptr;
+  }
+  if (use_io_binding &&
+      !Ok(api, api->CreateIoBinding(session, &io_binding), error)) {
+    if (device_memory_info != nullptr) {
+      api->ReleaseMemoryInfo(device_memory_info);
+    }
+    api->ReleaseMemoryInfo(memory_info);
+    api->ReleaseSession(session);
+    api->ReleaseSessionOptions(options);
+    return nullptr;
+  }
+  const int cuda_graph_id = dinf_option_int(runtime_options, "cudaGraphId", -1);
+  if (cuda_graph_id >= 0) {
+    if (!Ok(api, api->CreateRunOptions(&run_options), error)) {
+      if (io_binding != nullptr) {
+        api->ReleaseIoBinding(io_binding);
+      }
+      if (device_memory_info != nullptr) {
+        api->ReleaseMemoryInfo(device_memory_info);
+      }
+      api->ReleaseMemoryInfo(memory_info);
+      api->ReleaseSession(session);
+      api->ReleaseSessionOptions(options);
+      return nullptr;
+    }
+    const std::string graph_id = std::to_string(cuda_graph_id);
+    if (!Ok(
+            api,
+            api->AddRunConfigEntry(
+                run_options, "gpu_graph_id", graph_id.c_str()),
+            error)) {
+      api->ReleaseRunOptions(run_options);
+      if (io_binding != nullptr) {
+        api->ReleaseIoBinding(io_binding);
+      }
+      if (device_memory_info != nullptr) {
+        api->ReleaseMemoryInfo(device_memory_info);
+      }
+      api->ReleaseMemoryInfo(memory_info);
+      api->ReleaseSession(session);
+      api->ReleaseSessionOptions(options);
+      return nullptr;
+    }
   }
   std::vector<TensorMetadata> input_metadata =
       SessionMetadata(api, session, allocator, true, error);
   if (!error->empty()) {
+    if (run_options != nullptr) {
+      api->ReleaseRunOptions(run_options);
+    }
+    if (io_binding != nullptr) {
+      api->ReleaseIoBinding(io_binding);
+    }
+    if (device_memory_info != nullptr) {
+      api->ReleaseMemoryInfo(device_memory_info);
+    }
     api->ReleaseMemoryInfo(memory_info);
     api->ReleaseSession(session);
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
   }
   std::vector<TensorMetadata> output_metadata =
       SessionMetadata(api, session, allocator, false, error);
   if (!error->empty()) {
+    if (run_options != nullptr) {
+      api->ReleaseRunOptions(run_options);
+    }
+    if (io_binding != nullptr) {
+      api->ReleaseIoBinding(io_binding);
+    }
+    if (device_memory_info != nullptr) {
+      api->ReleaseMemoryInfo(device_memory_info);
+    }
     api->ReleaseMemoryInfo(memory_info);
     api->ReleaseSession(session);
     api->ReleaseSessionOptions(options);
-    api->ReleaseEnv(env);
     return nullptr;
   }
+  const bool cache_bound_outputs =
+      requested_cache_bound_outputs && StaticTensorShapes(output_metadata);
   std::vector<std::string> input_names = MetadataNames(input_metadata);
   std::vector<std::string> output_names = MetadataNames(output_metadata);
+  std::vector<std::string> cpu_output_names =
+      SplitNames(dinf_option_string(runtime_options, "cpuOutputNames"));
+  std::vector<std::string> device_output_names =
+      SplitNames(dinf_option_string(runtime_options, "deviceOutputNames"));
   return std::unique_ptr<Session>(new Session(
       api,
-      env,
+      std::move(env),
       options,
       session,
       allocator,
       memory_info,
+      device_memory_info,
       effective_provider,
       providers,
       std::move(input_names),
       std::move(output_names),
+      std::move(cpu_output_names),
+      std::move(device_output_names),
       std::move(input_metadata),
       std::move(output_metadata),
       num_threads,
-      provider_appended));
+      provider_appended,
+      use_io_binding,
+      use_device_outputs,
+      use_output_views,
+      sync_bound_inputs,
+      sync_bound_outputs,
+      cache_bound_outputs,
+      prepacked_weights_key,
+      std::static_pointer_cast<void>(prepacked_weights),
+      io_binding,
+      run_options,
+      cuda_graph_id));
 }
 
 std::vector<int64_t> TensorShape(const DinfTensor& tensor) {

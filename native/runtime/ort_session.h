@@ -24,19 +24,33 @@ class Session final : public DinfRuntimeSession {
  public:
   Session(
       const OrtApi* api,
-      OrtEnv* env,
+      std::shared_ptr<OrtEnv> env,
       OrtSessionOptions* options,
       OrtSession* session,
       OrtAllocator* allocator,
       OrtMemoryInfo* memory_info,
+      OrtMemoryInfo* device_memory_info,
       std::string provider,
       std::vector<std::string> available_providers,
       std::vector<std::string> input_names,
       std::vector<std::string> output_names,
+      std::vector<std::string> cpu_output_names,
+      std::vector<std::string> device_output_names,
       std::vector<TensorMetadata> input_metadata,
       std::vector<TensorMetadata> output_metadata,
       int num_threads,
-      bool provider_appended);
+      bool provider_appended,
+      bool use_io_binding,
+      bool use_device_outputs,
+      bool use_output_views,
+      bool sync_bound_inputs,
+      bool sync_bound_outputs,
+      bool cache_bound_outputs,
+      std::string prepacked_weights_key,
+      std::shared_ptr<void> prepacked_weights,
+      OrtIoBinding* io_binding,
+      OrtRunOptions* run_options,
+      int cuda_graph_id);
 
   ~Session() override;
 
@@ -56,24 +70,41 @@ class Session final : public DinfRuntimeSession {
       const std::string& prefix) const override;
 
  private:
-  void ReleaseValues(std::vector<OrtValue*>& values);
+  bool OutputUsesDeviceHandle(const std::string& name) const;
 
-  void ReleaseNames(std::vector<char*>& names);
+  void ReleaseValues(
+      std::vector<OrtValue*>& values,
+      const std::vector<uint8_t>* owned = nullptr);
 
   const OrtApi* api_;
-  OrtEnv* env_;
+  std::shared_ptr<OrtEnv> env_;
   OrtSessionOptions* options_;
   OrtSession* session_;
+  OrtIoBinding* io_binding_;
+  OrtRunOptions* run_options_;
   OrtAllocator* allocator_;
   OrtMemoryInfo* memory_info_;
+  OrtMemoryInfo* device_memory_info_;
   std::string provider_;
+  std::string prepacked_weights_key_;
   std::vector<std::string> available_providers_;
   std::vector<std::string> input_names_;
   std::vector<std::string> output_names_;
+  std::vector<std::string> cpu_output_names_;
+  std::vector<std::string> device_output_names_;
   std::vector<TensorMetadata> input_metadata_;
   std::vector<TensorMetadata> output_metadata_;
+  std::shared_ptr<void> prepacked_weights_;
   int num_threads_;
+  int cuda_graph_id_;
   bool provider_appended_;
+  bool use_io_binding_;
+  bool use_device_outputs_;
+  bool use_output_views_;
+  bool sync_bound_inputs_;
+  bool sync_bound_outputs_;
+  bool cache_bound_outputs_;
+  bool bound_outputs_cached_;
 };
 
 std::unique_ptr<Session> CreateSession(

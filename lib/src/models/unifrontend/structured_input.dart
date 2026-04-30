@@ -271,97 +271,45 @@ void _resetStructuredInputs(
   required int tokenPadId,
   required int charPadId,
 }) {
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final status = native.structReset(
-      inputs.inputIdsBuffer.nativeData.cast<ffi.Int64>(),
-      inputs.inputIdsBuffer.byteLength ~/ 8,
-      tokenPadId,
-      inputs.attentionBuffer.nativeData.cast<ffi.Int64>(),
-      inputs.attentionBuffer.byteLength ~/ 8,
-      inputs.charIdsBuffer.nativeData.cast<ffi.Int64>(),
-      inputs.charIdsBuffer.byteLength ~/ 8,
-      charPadId,
-      inputs.charMaskBuffer.nativeData.cast<ffi.Int64>(),
-      inputs.charMaskBuffer.byteLength ~/ 8,
-      inputs.homographTargetBuffer.nativeData.cast<ffi.Uint8>(),
-      inputs.homographTargetBuffer.byteLength,
-      inputs.homographCandidateBuffer.nativeData.cast<ffi.Uint8>(),
-      inputs.homographCandidateBuffer.byteLength,
-      inputs.polyphoneTargetBuffer.nativeData.cast<ffi.Uint8>(),
-      inputs.polyphoneTargetBuffer.byteLength,
-      inputs.polyphoneCandidateBuffer.nativeData.cast<ffi.Uint8>(),
-      inputs.polyphoneCandidateBuffer.byteLength,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeFillError(error));
-    }
-  } finally {
-    calloc.free(error);
-  }
+  inputs.inputIds.fillRange(0, inputs.inputIds.length, tokenPadId);
+  inputs.attention.fillRange(0, inputs.attention.length, 0);
+  inputs.charIds.fillRange(0, inputs.charIds.length, charPadId);
+  inputs.charMask.fillRange(0, inputs.charMask.length, 0);
+  inputs.homographTargetMasks.fillRange(
+    0,
+    inputs.homographTargetMasks.length,
+    0,
+  );
+  inputs.homographCandidateMasks.fillRange(
+    0,
+    inputs.homographCandidateMasks.length,
+    0,
+  );
+  inputs.polyphoneTargetCharMasks.fillRange(
+    0,
+    inputs.polyphoneTargetCharMasks.length,
+    0,
+  );
+  inputs.polyphoneCandidateMasks.fillRange(
+    0,
+    inputs.polyphoneCandidateMasks.length,
+    0,
+  );
 }
 
 final class _TokenOffsets {
   _TokenOffsets(List<(int, int)> offsets)
     : count = offsets.length,
-      starts = offsets.isEmpty
-          ? ffi.nullptr
-          : calloc<ffi.Int32>(offsets.length),
-      ends = offsets.isEmpty ? ffi.nullptr : calloc<ffi.Int32>(offsets.length) {
-    for (var i = 0; i < offsets.length; i++) {
-      final (start, end) = offsets[i];
-      starts[i] = start;
-      ends[i] = end;
-    }
-  }
-
-  _TokenOffsets.allocate(this.count)
-    : starts = count == 0 ? ffi.nullptr : calloc<ffi.Int32>(count),
-      ends = count == 0 ? ffi.nullptr : calloc<ffi.Int32>(count);
+      startValues = Int32List.fromList([
+        for (final (start, _) in offsets) start,
+      ]),
+      endValues = Int32List.fromList([for (final (_, end) in offsets) end]);
 
   final int count;
-  final ffi.Pointer<ffi.Int32> starts;
-  final ffi.Pointer<ffi.Int32> ends;
+  final Int32List startValues;
+  final Int32List endValues;
 
-  void close() {
-    if (starts != ffi.nullptr) {
-      calloc.free(starts);
-    }
-    if (ends != ffi.nullptr) {
-      calloc.free(ends);
-    }
-  }
-}
-
-final class _I64Scratch {
-  _I64Scratch(this.length)
-    : pointer = length == 0 ? ffi.nullptr : calloc<ffi.Int64>(length);
-
-  final int length;
-  final ffi.Pointer<ffi.Int64> pointer;
-
-  void copy(List<int> values) {
-    if (values.length > length) {
-      throw RangeError.range(values.length, 0, length, 'values.length');
-    }
-    for (var i = 0; i < values.length; i++) {
-      pointer[i] = values[i];
-    }
-  }
-
-  void set(int index, int value) {
-    if (index < 0 || index >= length) {
-      throw RangeError.range(index, 0, length - 1, 'index');
-    }
-    pointer[index] = value;
-  }
-
-  void close() {
-    if (pointer != ffi.nullptr) {
-      calloc.free(pointer);
-    }
-  }
+  void close() {}
 }
 
 final class _NativeTokenizedText {
@@ -389,40 +337,35 @@ void _fillMatchRows({
   if (count == 0) {
     return;
   }
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    final status = native.structMatches(
-      targetBuffer.nativeData.cast<ffi.Uint8>(),
-      targetBuffer.byteLength,
-      targetOffset,
-      targetWidth,
-      candidateBuffer.nativeData.cast<ffi.Uint8>(),
-      candidateBuffer.byteLength,
-      candidateOffset,
-      candidateWidth,
-      matches.items,
-      count,
-      tokens?.starts ?? ffi.nullptr,
-      tokens?.ends ?? ffi.nullptr,
-      tokens?.count ?? 0,
-      error,
-    );
-    if (status != 0) {
-      throw StateError(_takeFillError(error));
+  final target = targetBuffer.asUint8List();
+  final candidates = candidateBuffer.asUint8List();
+  for (var row = 0; row < count; row += 1) {
+    final match = matches.items[row];
+    final targetRow = targetOffset + row * targetWidth;
+    if (tokens == null) {
+      final start = match.start.clamp(0, targetWidth).toInt();
+      final end = match.end.clamp(start, targetWidth).toInt();
+      for (var i = start; i < end; i += 1) {
+        final index = targetRow + i;
+        if (index < target.length) target[index] = 1;
+      }
+    } else {
+      for (var i = 0; i < math.min(tokens.count, targetWidth); i += 1) {
+        final tokenStart = tokens.startValues[i];
+        final tokenEnd = tokens.endValues[i];
+        if (tokenEnd > match.start && tokenStart < match.end) {
+          final index = targetRow + i;
+          if (index < target.length) target[index] = 1;
+        }
+      }
     }
-  } finally {
-    calloc.free(error);
-  }
-}
-
-String _takeFillError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
-  final value = error.value;
-  if (value == ffi.nullptr) return 'Native fill call failed.';
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
+    final candidateRow = candidateOffset + row * candidateWidth;
+    for (final id in match.ids) {
+      if (id >= 0 && id < candidateWidth) {
+        final index = candidateRow + id;
+        if (index < candidates.length) candidates[index] = 1;
+      }
+    }
   }
 }
 
@@ -451,38 +394,35 @@ final class StructuredFrontendConfig {
     required String exportConfigPath,
     required String structuredConfigPath,
   }) async {
-    final exportPath = exportConfigPath
-        .toNativeUtf8(allocator: calloc)
-        .cast<ffi.Char>();
-    final structuredPath = structuredConfigPath
-        .toNativeUtf8(allocator: calloc)
-        .cast<ffi.Char>();
-    final out = calloc<native.StructConfigAbi>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      final status = native.structConfig(exportPath, structuredPath, out, error);
-      if (status != 0) {
-        throw StateError(_takeFillError(error));
-      }
-      final value = out.ref;
-      return StructuredFrontendConfig(
-        batchSize: value.batchSize,
-        tokenLength: value.tokenLength,
-        charLength: value.charLength,
-        homographTargets: value.homographTargets,
-        polyphoneTargets: value.polyphoneTargets,
-        numHomographClasses: value.homographClasses,
-        numPolyphoneClasses: value.polyphoneClasses,
-        emphasisThreshold: value.emphasisThreshold,
-      );
-    } finally {
-      calloc
-        ..free(exportPath)
-        ..free(structuredPath)
-        ..free(out)
-        ..free(error);
-    }
+    final export =
+        jsonDecode(await File(exportConfigPath).readAsString()) as Map;
+    final structured =
+        jsonDecode(await File(structuredConfigPath).readAsString()) as Map;
+    return StructuredFrontendConfig(
+      batchSize: _intConfig(export, 'export_batch_size', 1),
+      tokenLength: _intConfig(export, 'export_token_length', 512),
+      charLength: _intConfig(export, 'export_char_length', 1024),
+      homographTargets: _intConfig(export, 'export_homograph_targets', 16),
+      polyphoneTargets: _intConfig(export, 'export_polyphone_targets', 16),
+      numHomographClasses: _intConfig(export, 'num_homograph_classes', 1),
+      numPolyphoneClasses: _intConfig(export, 'num_polyphone_classes', 1),
+      emphasisThreshold: _doubleConfig(
+        structured,
+        'emphasis_decoding_threshold',
+        0.75,
+      ),
+    );
   }
+}
+
+int _intConfig(Map value, String key, int fallback) {
+  final raw = value[key];
+  return raw is num && raw >= 0 ? raw.toInt() : fallback;
+}
+
+double _doubleConfig(Map value, String key, double fallback) {
+  final raw = value[key];
+  return raw is num ? raw.toDouble() : fallback;
 }
 
 final class CharVocab {
@@ -491,41 +431,18 @@ final class CharVocab {
     required int padId,
     required int unkId,
   }) {
-    final nativeChars = <(int, int)>[];
-    for (final entry in charToId.entries) {
-      final runes = entry.key.runes.toList(growable: false);
-      if (runes.length == 1) {
-        nativeChars.add((runes.single, entry.value));
-      }
-    }
     return CharVocab._(
       Map<String, int>.unmodifiable(charToId),
       padId: padId,
       unkId: unkId,
-      nativeChars: nativeChars,
     );
   }
 
-  CharVocab._(
-    this.charToId, {
-    required this.padId,
-    required this.unkId,
-    required List<(int, int)> nativeChars,
-  }) : _codes = NativeTensorBuffer.int32([nativeChars.length]),
-       _ids = NativeTensorBuffer.int64([nativeChars.length]) {
-    final codes = _codes.asInt32List();
-    final ids = _ids.asInt64List();
-    for (var index = 0; index < nativeChars.length; index += 1) {
-      codes[index] = nativeChars[index].$1;
-      ids[index] = nativeChars[index].$2;
-    }
-  }
+  CharVocab._(this.charToId, {required this.padId, required this.unkId});
 
   final Map<String, int> charToId;
   final int padId;
   final int unkId;
-  final NativeTensorBuffer _codes;
-  final NativeTensorBuffer _ids;
 
   static Future<CharVocab> load(String path) async {
     final payload = jsonDecode(await File(path).readAsString()) as Map;
@@ -550,48 +467,27 @@ final class CharVocab {
     required int offset,
     required int width,
   }) {
-    final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final count = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      final status = native.fillCharsI64(
-        values.nativeData.cast<ffi.Int64>(),
-        mask.nativeData.cast<ffi.Int64>(),
-        values.byteLength ~/ 8,
-        offset,
-        width,
-        input,
-        _codes.nativeData.cast<ffi.Int32>(),
-        _ids.nativeData.cast<ffi.Int64>(),
-        _codes.byteLength ~/ 4,
-        padId,
-        unkId,
-        count,
-        error,
-      );
-      if (status != 0) {
-        throw StateError(_takeFillError(error));
-      }
-      return count.value;
-    } finally {
-      calloc
-        ..free(input)
-        ..free(count)
-        ..free(error);
+    final valueRow = values.asInt64List();
+    final maskRow = mask.asInt64List();
+    if (offset < 0 || width < 0 || offset + width > valueRow.length) {
+      throw RangeError.range(offset, 0, valueRow.length, 'offset');
     }
+    valueRow.fillRange(offset, offset + width, padId);
+    maskRow.fillRange(offset, offset + width, 0);
+    var count = 0;
+    for (final rune in text.runes) {
+      if (count >= width) break;
+      valueRow[offset + count] = idFor(String.fromCharCode(rune));
+      maskRow[offset + count] = 1;
+      count += 1;
+    }
+    return count;
   }
 
-  void close() {
-    _codes.close();
-    _ids.close();
-  }
+  void close() {}
 }
 
-final _bpeFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((handle) {
-  if (handle != ffi.nullptr) {
-    native.bpeFree(handle);
-  }
-});
+const _sentencePieceMarker = '▁';
 
 final class MmBertBpeTokenizer {
   factory MmBertBpeTokenizer({
@@ -602,7 +498,7 @@ final class MmBertBpeTokenizer {
     required int padId,
     required int unkId,
   }) {
-    final handle = _createBpe(
+    return MmBertBpeTokenizer._(
       vocab: vocab,
       mergeRanks: mergeRanks,
       bosId: bosId,
@@ -610,17 +506,6 @@ final class MmBertBpeTokenizer {
       padId: padId,
       unkId: unkId,
     );
-    final tokenizer = MmBertBpeTokenizer._(
-      vocab: vocab,
-      mergeRanks: mergeRanks,
-      bosId: bosId,
-      eosId: eosId,
-      padId: padId,
-      unkId: unkId,
-      handle: handle,
-    );
-    _bpeFinalizer.attach(tokenizer, handle, detach: tokenizer);
-    return tokenizer;
   }
 
   MmBertBpeTokenizer._({
@@ -630,8 +515,7 @@ final class MmBertBpeTokenizer {
     required this.eosId,
     required this.padId,
     required this.unkId,
-    required ffi.Pointer<ffi.Void> handle,
-  }) : _handle = handle;
+  });
 
   final Map<String, int> vocab;
   final Map<String, int> mergeRanks;
@@ -639,7 +523,6 @@ final class MmBertBpeTokenizer {
   final int eosId;
   final int padId;
   final int unkId;
-  final ffi.Pointer<ffi.Void> _handle;
   bool _closed = false;
 
   static Future<MmBertBpeTokenizer> load(String tokenizerJsonPath) async {
@@ -666,70 +549,95 @@ final class MmBertBpeTokenizer {
   }
 
   TokenizedText encode(String text, {required int maxLength}) {
-    final scratch = _I64Scratch(maxLength);
-    try {
-      final encoded = _encodeNative(text, maxLength: maxLength, ids: scratch);
-      try {
-        return TokenizedText(
-          ids: List<int>.generate(
-            encoded.count,
-            (index) => scratch.pointer[index],
-            growable: false,
-          ),
-          offsets: List<(int, int)>.generate(
-            encoded.count,
-            (index) =>
-                (encoded.offsets.starts[index], encoded.offsets.ends[index]),
-            growable: false,
-          ),
-        );
-      } finally {
-        encoded.close();
-      }
-    } finally {
-      scratch.close();
-    }
-  }
-
-  _NativeTokenizedText _encodeNative(
-    String text, {
-    required int maxLength,
-    required _I64Scratch ids,
-  }) {
     if (_closed) {
       throw StateError('BPE tokenizer is closed.');
     }
-    if (maxLength <= 0 || ids.length < maxLength) {
+    final encoded = _encodeDart(text, maxLength: maxLength);
+    return TokenizedText(ids: encoded.ids, offsets: encoded.offsets);
+  }
+
+  _DartTokenizedText _encodeDart(String text, {required int maxLength}) {
+    if (maxLength <= 0) {
       throw RangeError.value(maxLength, 'maxLength');
     }
-    final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final offsets = _TokenOffsets.allocate(maxLength);
-    final count = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      final status = native.bpeEncode(
-        _handle,
-        input,
-        maxLength,
-        ids.pointer,
-        offsets.starts,
-        offsets.ends,
-        count,
-        error,
-      );
-      if (status != 0) {
-        throw StateError(_takeFillError(error));
-      }
-      return _NativeTokenizedText(count: count.value, offsets: offsets);
-    } catch (_) {
-      offsets.close();
-      rethrow;
-    } finally {
-      calloc
-        ..free(input)
-        ..free(count)
-        ..free(error);
+    final ids = List<int>.filled(maxLength, padId);
+    final offsets = List<(int, int)>.filled(maxLength, (0, 0));
+    if (maxLength == 1) {
+      ids[0] = eosId;
+      return _DartTokenizedText(ids, offsets, count: maxLength);
     }
+
+    final pieces = _initialPieces(text);
+    _applyMerges(pieces);
+
+    ids[0] = bosId;
+    var out = 1;
+    for (final piece in pieces) {
+      if (out >= maxLength - 1) {
+        break;
+      }
+      ids[out] = _tokenId(piece.text);
+      offsets[out] = (piece.start, piece.end);
+      out += 1;
+    }
+    ids[out] = eosId;
+    return _DartTokenizedText(ids, offsets, count: maxLength);
+  }
+
+  List<_BpePiece> _initialPieces(String text) {
+    final pieces = <_BpePiece>[_BpePiece(_sentencePieceMarker, 0, 0)];
+    var cursor = 0;
+    for (final rune in text.runes) {
+      final char = String.fromCharCode(rune);
+      final next = cursor + char.length;
+      if (rune == 0x20 || char == _sentencePieceMarker) {
+        pieces.add(_BpePiece(_sentencePieceMarker, cursor, cursor));
+      } else {
+        pieces.add(_BpePiece(char, cursor, next));
+      }
+      cursor = next;
+    }
+    return pieces;
+  }
+
+  void _applyMerges(List<_BpePiece> pieces) {
+    while (pieces.length > 1) {
+      var bestRank = 0x7fffffffffffffff;
+      var bestIndex = -1;
+      for (var i = 0; i + 1 < pieces.length; i += 1) {
+        final rank = mergeRanks['${pieces[i].text} ${pieces[i + 1].text}'];
+        if (rank != null && rank < bestRank) {
+          bestRank = rank;
+          bestIndex = i;
+        }
+      }
+      if (bestIndex < 0) {
+        break;
+      }
+      final left = pieces[bestIndex];
+      final right = pieces[bestIndex + 1];
+      pieces[bestIndex] = _BpePiece(
+        left.text + right.text,
+        left.start,
+        math.max(left.end, right.end),
+      );
+      pieces.removeAt(bestIndex + 1);
+    }
+  }
+
+  int _tokenId(String piece) {
+    final id = vocab[piece];
+    if (id != null) {
+      return id;
+    }
+    if (piece.length == 1) {
+      final byte = piece.codeUnitAt(0);
+      if (byte <= 0xff) {
+        final hex = byte.toRadixString(16).toUpperCase().padLeft(2, '0');
+        return vocab['<0x$hex>'] ?? unkId;
+      }
+    }
+    return unkId;
   }
 
   _NativeTokenizedText _fillNative(
@@ -742,40 +650,22 @@ final class MmBertBpeTokenizer {
     if (_closed) {
       throw StateError('BPE tokenizer is closed.');
     }
-    if (values.byteLength != mask.byteLength) {
-      throw StateError('Native token value and mask buffers differ in size.');
+    final valueRow = values.asInt64List();
+    final maskRow = mask.asInt64List();
+    if (offset < 0 || width < 0 || offset + width > valueRow.length) {
+      throw RangeError.range(offset, 0, valueRow.length, 'offset');
     }
-    final input = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final offsets = _TokenOffsets.allocate(width);
-    final count = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    try {
-      final status = native.bpeFill(
-        _handle,
-        input,
-        values.nativeData.cast<ffi.Int64>(),
-        mask.nativeData.cast<ffi.Int64>(),
-        values.byteLength ~/ 8,
-        offset,
-        width,
-        offsets.starts,
-        offsets.ends,
-        count,
-        error,
-      );
-      if (status != 0) {
-        throw StateError(_takeFillError(error));
-      }
-      return _NativeTokenizedText(count: count.value, offsets: offsets);
-    } catch (_) {
-      offsets.close();
-      rethrow;
-    } finally {
-      calloc
-        ..free(input)
-        ..free(count)
-        ..free(error);
+    final encoded = _encodeDart(text, maxLength: width);
+    valueRow.fillRange(offset, offset + width, padId);
+    maskRow.fillRange(offset, offset + width, 0);
+    for (var i = 0; i < encoded.count; i += 1) {
+      valueRow[offset + i] = encoded.ids[i];
+      maskRow[offset + i] = encoded.ids[i] == padId ? 0 : 1;
     }
+    return _NativeTokenizedText(
+      count: encoded.count,
+      offsets: _TokenOffsets(encoded.offsets),
+    );
   }
 
   void close() {
@@ -783,99 +673,28 @@ final class MmBertBpeTokenizer {
       return;
     }
     _closed = true;
-    _bpeFinalizer.detach(this);
-    native.bpeFree(_handle);
   }
+}
+
+final class _DartTokenizedText {
+  const _DartTokenizedText(this.ids, this.offsets, {required this.count});
+  final List<int> ids;
+  final List<(int, int)> offsets;
+  final int count;
+}
+
+final class _BpePiece {
+  const _BpePiece(this.text, this.start, this.end);
+
+  final String text;
+  final int start;
+  final int end;
 }
 
 final class TokenizedText {
   TokenizedText({required this.ids, required this.offsets});
   final List<int> ids;
   final List<(int, int)> offsets;
-}
-
-ffi.Pointer<ffi.Void> _createBpe({
-  required Map<String, int> vocab,
-  required Map<String, int> mergeRanks,
-  required int bosId,
-  required int eosId,
-  required int padId,
-  required int unkId,
-}) {
-  final vocabEntries = vocab.entries.toList(growable: false);
-  final mergeEntries = mergeRanks.entries.toList(growable: false)
-    ..sort((a, b) => a.value.compareTo(b.value));
-  final vocabKeys = _CStringArray([
-    for (final entry in vocabEntries) entry.key,
-  ]);
-  final mergeKeys = _CStringArray([
-    for (final entry in mergeEntries) entry.key,
-  ]);
-  final vocabIds = vocabEntries.isEmpty
-      ? ffi.nullptr
-      : calloc<ffi.Int64>(vocabEntries.length);
-  final error = calloc<ffi.Pointer<ffi.Char>>();
-  try {
-    for (var i = 0; i < vocabEntries.length; i += 1) {
-      vocabIds[i] = vocabEntries[i].value;
-    }
-    final handle = native.bpeNew(
-      vocabKeys.pointer,
-      vocabIds,
-      vocabEntries.length,
-      mergeKeys.pointer,
-      mergeEntries.length,
-      bosId,
-      eosId,
-      padId,
-      unkId,
-      error,
-    );
-    if (handle == ffi.nullptr) {
-      throw StateError(_takeFillError(error));
-    }
-    return handle;
-  } finally {
-    vocabKeys.close();
-    mergeKeys.close();
-    if (vocabIds != ffi.nullptr) {
-      calloc.free(vocabIds);
-    }
-    calloc.free(error);
-  }
-}
-
-final class _CStringArray {
-  _CStringArray(List<String> values)
-    : length = values.length,
-      pointer = values.isEmpty
-          ? ffi.nullptr
-          : calloc<ffi.Pointer<ffi.Char>>(values.length) {
-    try {
-      for (var i = 0; i < values.length; i += 1) {
-        pointer[i] = values[i].toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-      }
-    } catch (_) {
-      close();
-      rethrow;
-    }
-  }
-
-  final int length;
-  final ffi.Pointer<ffi.Pointer<ffi.Char>> pointer;
-
-  void close() {
-    if (pointer == ffi.nullptr) {
-      return;
-    }
-    for (var i = 0; i < length; i += 1) {
-      final value = pointer[i];
-      if (value != ffi.nullptr) {
-        calloc.free(value);
-      }
-    }
-    calloc.free(pointer);
-  }
 }
 
 final class StructuredInputBuilder {

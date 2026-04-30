@@ -33,6 +33,7 @@ Future<void> main(List<String> args) async {
       : null;
   final payload = {
     ...TtsBackendCatalog.toJson(),
+    'nativeReusePlan': TtsBackendNativePlan.fromCatalog().toJson(),
     'loadOnnx': loadOnnx,
     'smokeOnnx': smokeOnnx,
     'smokeWarmupIterations': smokeWarmupIterations,
@@ -81,7 +82,7 @@ Future<List<Map<String, Object?>>> _loadModelStatuses({
   required String? dependencySkipReason,
 }) async {
   final paths = DartUniFrontendTtsPaths.fromUniFrontendRoot(root);
-  final backendOptions = _backendOptions(root, parsed);
+  final backendOptions = _backendOptions(root, provider, parsed);
   final closeables = <Object>[];
   try {
     return [
@@ -383,13 +384,18 @@ Map<String, Object?> _fileStatus(String path) {
   };
 }
 
-Map<String, Object?> _backendOptions(String root, _Args parsed) {
+Map<String, Object?> _backendOptions(
+  String root,
+  String provider,
+  _Args parsed,
+) {
   final preloadLibraries = discoverDefaultOnnxRuntimePreloadLibraries(
     libraryDirectories: [
       '$root/artifacts/runtime/onnxruntime/lib',
       '$root/artifacts/runtime/cuda/lib',
       '$root/artifacts/runtime/tensorrt/lib',
     ],
+    libraryNames: onnxRuntimePreloadLibraryNamesForProvider(provider),
     runtimeEnvSearchRoots: [root],
   );
   final trtCacheDir = parsed.option('trt-cache-dir');

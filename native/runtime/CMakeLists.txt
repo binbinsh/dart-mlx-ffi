@@ -54,14 +54,8 @@ if(APPLE)
       "${CMAKE_CURRENT_BINARY_DIR}/dart_inference_runtime_adapter.exports")
   file(
     WRITE "${_dart_inference_exports}"
-    "_dinf_cpp_open\n"
-    "_dinf_cpp_diag\n"
-    "_dinf_cpp_close\n"
-    "_dinf_cpp_free_options\n"
-    "_dinf_cpp_free_str\n"
-    "_dinf_cpp_free_tensors\n"
-    "_dinf_cpp_mem\n"
-    "_dinf_cpp_run\n")
+    "_dinf_*\n"
+    "_dinf_cpp_*\n")
   target_link_options(
     ${PROJECT_NAME} PRIVATE
     "LINKER:-exported_symbols_list,${_dart_inference_exports}")
@@ -75,7 +69,7 @@ elseif(UNIX)
       "${CMAKE_CURRENT_BINARY_DIR}/dart_inference_runtime_adapter.map")
   file(
     WRITE "${_dart_inference_exports}"
-    "{ global: dinf_cpp_*; local: *; };\n")
+    "{ global: dinf_*; dinf_cpp_*; local: *; };\n")
   target_link_options(
     ${PROJECT_NAME} PRIVATE
     "LINKER:--version-script=${_dart_inference_exports}")
@@ -83,7 +77,7 @@ endif()
 
 set_target_properties(
   ${PROJECT_NAME}
-  PROPERTIES OUTPUT_NAME "dart_inference_runtime_adapter"
+  PROPERTIES OUTPUT_NAME "dart_inference_runtime"
              C_VISIBILITY_PRESET hidden
              CXX_VISIBILITY_PRESET hidden
              VISIBILITY_INLINES_HIDDEN ON

@@ -27,7 +27,11 @@ Future<void> main(List<String> args) async {
       return;
     }
   }
-  final preloadLibraries = _preloadLibrariesFromArgs(parsed, root: root);
+  final preloadLibraries = _preloadLibrariesFromArgs(
+    parsed,
+    root: root,
+    provider: provider,
+  );
   final backendOptions = <String, Object?>{
     if (parsed.flag('trt-fp16')) 'trtFp16': true,
     if (trtCacheDir != null && trtCacheDir.isNotEmpty)
@@ -155,13 +159,18 @@ bool _looksLikeUniFrontendRoot(Directory directory) {
       Directory('${directory.path}/src/unifrontend').existsSync();
 }
 
-List<String> _preloadLibrariesFromArgs(_Args parsed, {required String root}) {
+List<String> _preloadLibrariesFromArgs(
+  _Args parsed, {
+  required String root,
+  required String provider,
+}) {
   return discoverDefaultOnnxRuntimePreloadLibraries(
     explicitLibraries: parsed.values('preload-library'),
     libraryDirectories: [
       ...parsed.values('cuda-library-dir'),
       ...parsed.values('native-library-dir'),
     ],
+    libraryNames: onnxRuntimePreloadLibraryNamesForProvider(provider),
     runtimeEnvSearchRoots: [root],
   );
 }

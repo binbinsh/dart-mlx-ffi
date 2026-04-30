@@ -16,7 +16,7 @@ Future<void> main(List<String> args) async {
   final preferCpu = parsed.flag('prefer-cpu');
   final requireProvider = parsed.flag('require-provider');
   final trtFp16 = parsed.flag('trt-fp16');
-  final backendOptionsExtra = _backendOptionsFromArgs(parsed);
+  final backendOptionsExtra = _backendOptionsFromArgs(parsed, provider);
   final runtimeRoot = onnxRuntimeRoot(
     explicitRuntimeRoot: parsed.option('runtime-root'),
     explicitRoot: parsed.option('root'),
@@ -278,13 +278,16 @@ int? _intPayload(Object? value, int? fallback) {
   return int.tryParse(value.toString()) ?? fallback;
 }
 
-Map<String, Object?> _backendOptionsFromArgs(_Args parsed) {
+Map<String, Object?> _backendOptionsFromArgs(_Args parsed, String? provider) {
   final preloadLibraries = discoverDefaultOnnxRuntimePreloadLibraries(
     explicitLibraries: parsed.values('preload-library'),
     libraryDirectories: [
       ...parsed.values('cuda-library-dir'),
       ...parsed.values('native-library-dir'),
     ],
+    libraryNames: provider == null
+        ? null
+        : onnxRuntimePreloadLibraryNamesForProvider(provider),
   );
   final trtCacheDir = parsed.option('trt-cache-dir');
   return {

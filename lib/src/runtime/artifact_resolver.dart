@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
 
+import 'native_ffi.dart' as dz;
 import 'package:ffi/ffi.dart';
 
 import '../models/shared/runtime_metadata.dart';
@@ -64,16 +65,22 @@ _HfRef? _hfRef(RuntimeArtifact artifact) {
   final repoMetadata = metadata['repo'];
   final artifactMetadata = metadata['artifact'];
   final hasMetadata = repoMetadata is String && artifactMetadata is String;
-  final sourceUri = _nativeText(artifact.sourceUri ?? '');
-  final artifactPath = _nativeText(artifact.path);
-  final repo = _nativeText(hasMetadata ? repoMetadata : '');
-  final path = _nativeText(hasMetadata ? artifactMetadata : '');
-  final revision = _nativeText(
+  final sourceUri = dz.NativeUtf8CString.utf8(artifact.sourceUri ?? '');
+  final artifactPath = dz.NativeUtf8CString.utf8(artifact.path);
+  final repo = dz.NativeUtf8CString.utf8(hasMetadata ? repoMetadata : '');
+  final path = dz.NativeUtf8CString.utf8(hasMetadata ? artifactMetadata : '');
+  final revision = dz.NativeUtf8CString.utf8(
     metadata['revision'] is String ? '${metadata['revision']}' : '',
   );
   ffi.Pointer<ffi.Char> result = ffi.nullptr;
   try {
-    result = native.hfRef(sourceUri, artifactPath, repo, path, revision);
+    result = native.hfRef(
+      sourceUri.pointer,
+      artifactPath.pointer,
+      repo.pointer,
+      path.pointer,
+      revision.pointer,
+    );
     if (result == ffi.nullptr) return null;
     final fields = result.cast<Utf8>().toDartString().split(_hfFieldSep);
     if (fields.length != 3) {
@@ -88,12 +95,11 @@ _HfRef? _hfRef(RuntimeArtifact artifact) {
     return _HfRef(repo: repoValue, path: pathValue, revision: revisionValue);
   } finally {
     if (result != ffi.nullptr) native.freeStr(result);
-    calloc
-      ..free(sourceUri)
-      ..free(artifactPath)
-      ..free(repo)
-      ..free(path)
-      ..free(revision);
+    sourceUri.close();
+    artifactPath.close();
+    repo.close();
+    path.close();
+    revision.close();
   }
 }
 
@@ -103,13 +109,18 @@ String _cachePath(
   String revision,
   String artifactPath,
 ) {
-  final root = _nativeText(cacheRoot);
-  final repoPtr = _nativeText(repo);
-  final revisionPtr = _nativeText(revision);
-  final artifactPtr = _nativeText(artifactPath);
+  final root = dz.NativeUtf8CString.utf8(cacheRoot);
+  final repoPtr = dz.NativeUtf8CString.utf8(repo);
+  final revisionPtr = dz.NativeUtf8CString.utf8(revision);
+  final artifactPtr = dz.NativeUtf8CString.utf8(artifactPath);
   ffi.Pointer<ffi.Char> result = ffi.nullptr;
   try {
-    result = native.hfCachePath(root, repoPtr, revisionPtr, artifactPtr);
+    result = native.hfCachePath(
+      root.pointer,
+      repoPtr.pointer,
+      revisionPtr.pointer,
+      artifactPtr.pointer,
+    );
     if (result == ffi.nullptr) {
       throw StateError('Failed to resolve Hugging Face cache path.');
     }
@@ -120,11 +131,10 @@ String _cachePath(
     return value;
   } finally {
     if (result != ffi.nullptr) native.freeStr(result);
-    calloc
-      ..free(root)
-      ..free(repoPtr)
-      ..free(revisionPtr)
-      ..free(artifactPtr);
+    root.close();
+    repoPtr.close();
+    revisionPtr.close();
+    artifactPtr.close();
   }
 }
 
@@ -155,10 +165,6 @@ String? _authToken() {
   } finally {
     native.freeStr(result);
   }
-}
-
-ffi.Pointer<ffi.Char> _nativeText(String value) {
-  return value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
 }
 
 /// Downloads and caches `hf://` runtime artifacts.
@@ -404,11 +410,11 @@ bool _hasCachedArtifact(String path) {
 }
 
 bool _isDirectoryArtifact(String path) {
-  final value = path.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+  final value = dz.NativeUtf8CString.utf8(path);
   try {
-    return native.hfDirArtifact(value) != 0;
+    return native.hfDirArtifact(value.pointer) != 0;
   } finally {
-    calloc.free(value);
+    value.close();
   }
 }
 

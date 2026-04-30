@@ -1,0 +1,34 @@
+library;
+
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:dart_inference/mlx.dart';
+import '../shared/session.dart';
+import '../shared/tensor_map.dart';
+import '../shared/tuning.dart';
+
+part 'config.dart';
+part 'cache.dart';
+part 'gdelta.dart';
+part 'linear.dart';
+part 'decode.dart';
+part 'bench.dart';
+part 'rope.dart';
+part 'runner.dart';
+part 'layers.dart';
+part 'session.dart';
+part 'topk.dart';
+part 'vision.dart';
+
+typedef Qwen35TimedGeneration = ({
+  List<int> tokenIds,
+  List<int> generatedTokenIds,
+  double promptMs,
+  double firstTokenMs,
+  double decodeMs,
+  double totalMs,
+  bool stoppedByStopToken,
+});

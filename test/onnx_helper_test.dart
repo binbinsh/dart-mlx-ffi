@@ -73,4 +73,56 @@ void main() {
       await root.delete(recursive: true);
     }
   });
+
+  test('discovers CUDA preload libraries from provider Python venv', () async {
+    final root = await Directory.systemTemp.createTemp('onnx-venv-test-');
+    try {
+      final cudaLibDir = Directory(
+        '${root.path}/src/ttsbackends/providers/sarashina2-tts/src/'
+        '.venv/lib/python3.12/site-packages/nvidia/cublas/lib',
+      )..createSync(recursive: true);
+      final cublasLt = File('${cudaLibDir.path}/libcublasLt.so.12')
+        ..writeAsBytesSync(const []);
+
+      final libraries = discoverOnnxRuntimePreloadLibraries(
+        runtimeEnvSearchRoots: [root.path],
+        libraryNames: const ['libcublasLt.so.12'],
+      );
+
+      expect(libraries, [cublasLt.absolute.path]);
+    } finally {
+      await root.delete(recursive: true);
+    }
+  });
+
+  test('filters preload libraries by execution provider', () async {
+    final root = await Directory.systemTemp.createTemp('onnx-provider-libs-');
+    try {
+      final sitePackages = '${root.path}/.venv/lib/python3.12/site-packages';
+      final cudaDir = Directory('$sitePackages/nvidia/cuda_runtime/lib')
+        ..createSync(recursive: true);
+      final trtDir = Directory('$sitePackages/tensorrt_libs')
+        ..createSync(recursive: true);
+      final cudart = File('${cudaDir.path}/libcudart.so.12')
+        ..writeAsBytesSync(const []);
+      final nvinfer = File('${trtDir.path}/libnvinfer.so.10')
+        ..writeAsBytesSync(const []);
+
+      final cudaLibraries = discoverOnnxRuntimePreloadLibraries(
+        runtimeEnvSearchRoots: [root.path],
+        libraryNames: onnxRuntimePreloadLibraryNamesForProvider('cuda'),
+      );
+      final trtLibraries = discoverOnnxRuntimePreloadLibraries(
+        runtimeEnvSearchRoots: [root.path],
+        libraryNames: onnxRuntimePreloadLibraryNamesForProvider('tensorrt'),
+      );
+
+      expect(cudaLibraries, contains(cudart.absolute.path));
+      expect(cudaLibraries, isNot(contains(nvinfer.absolute.path)));
+      expect(trtLibraries, contains(cudart.absolute.path));
+      expect(trtLibraries, contains(nvinfer.absolute.path));
+    } finally {
+      await root.delete(recursive: true);
+    }
+  });
 }

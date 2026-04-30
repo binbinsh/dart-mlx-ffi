@@ -18,10 +18,12 @@
 
 import 'dart:typed_data';
 
+import '../../runtime/native_runtime.dart' show NativeTensorBuffer;
 import '../../runtime/onnx.dart';
-import '../../runtime/runtime.dart' show RuntimeTensor;
+import '../../runtime/runtime.dart' show RuntimeTensor, RuntimeTensorDataType;
 import '../kokoro/kokoro.dart' show NpyArray, loadNpz;
 import 'cosyvoice2.dart';
+import 'cosyvoice2_native.dart';
 import 'qwen2_tokenizer.dart';
 
 /// Shape constants for the cosyvoice2 0.5B LLM as currently exported.
@@ -33,29 +35,91 @@ const int cosyvoice2SpeechVocabSize = 6564;
 const int cosyvoice2TextVocabSize = 151936;
 
 /// Mutable per-stream state carried across `prefill` -> `decodeStep`
-/// invocations.  Holds the latest hidden state, the running attention
-/// mask, and the 24-layer KV cache.
+/// invocations.  Holds the latest hidden state, cached sequence length, and
+/// the 24-layer KV cache.
 final class CosyVoice2LlmState {
   CosyVoice2LlmState._({
-    required this.attentionMask,
+    required this.totalSeq,
     required this.kvKeys,
     required this.kvValues,
     required this.lastHidden,
-  });
-
-  /// `[1, total_seq]` int64 attention mask (all ones in the trivial case).
-  Int64List attentionMask;
-
-  /// Per-layer KV cache: `kvKeys[L]` and `kvValues[L]` are flat float32
-  /// buffers of shape `[1, 2, total_seq, 64]`.
-  final List<Float32List> kvKeys;
-  final List<Float32List> kvValues;
+    required DartOnnxResult owner,
+    required CosyLlmAttentionMaskCache attentionMask,
+    NativeTensorBuffer? ownedLastHidden,
+  }) : _owner = owner,
+       _attentionMask = attentionMask,
+       _ownedLastHidden = ownedLastHidden,
+       _decodeInputs = _newLlmDecodeInputMap(kvKeys, kvValues);
 
   /// Total cached sequence length so far.
-  int get totalSeq => attentionMask.length;
+  int totalSeq;
 
-  /// Hidden state of the last produced position, `[1, 1, 896]` flattened.
-  Float32List lastHidden;
+  /// Per-layer KV cache. These are native ORT output tensors with shape
+  /// `[1, 2, total_seq, 64]`; keeping them native avoids a 48-tensor
+  /// Dart heap round trip on every decode step.
+  List<RuntimeTensor> kvKeys;
+  List<RuntimeTensor> kvValues;
+
+  /// Hidden state of the last produced position, `[1, 1, 896]`.
+  Object lastHidden;
+
+  DartOnnxResult _owner;
+  final CosyLlmAttentionMaskCache _attentionMask;
+  NativeTensorBuffer? _ownedLastHidden;
+  final Map<String, Object?> _decodeInputs;
+
+  void _replaceOwner(DartOnnxResult nextOwner, RuntimeTensor nextHidden) {
+    final previous = _owner;
+    final previousHidden = _ownedLastHidden;
+    _owner = nextOwner;
+    lastHidden = nextHidden;
+    _ownedLastHidden = null;
+    previousHidden?.close();
+    previous.close();
+  }
+
+  Map<String, Object?> _decodeInputMap({
+    required RuntimeTensor nextEmbed,
+    required RuntimeTensor attentionMask,
+  }) {
+    _decodeInputs['inputs_embeds'] = nextEmbed;
+    _decodeInputs['attention_mask'] = attentionMask;
+    _refreshDecodeKvInputs();
+    return _decodeInputs;
+  }
+
+  void _refreshDecodeKvInputs() {
+    for (var l = 0; l < cosyvoice2LlmNumLayers; l += 1) {
+      _decodeInputs['past_key_$l'] = kvKeys[l];
+      _decodeInputs['past_value_$l'] = kvValues[l];
+    }
+  }
+
+  void _clearDecodeInputMap() {
+    _decodeInputs.clear();
+  }
+
+  void close() {
+    _clearDecodeInputMap();
+    _ownedLastHidden?.close();
+    _ownedLastHidden = null;
+    _attentionMask.close();
+    _owner.close();
+  }
+
+  RuntimeTensor attentionMaskTensor(int seqLen) =>
+      _attentionMask.tensor(seqLen);
+}
+
+final class CosyVoice2LlmHeadLogits {
+  CosyVoice2LlmHeadLogits._({required this.tensor, required this.owner});
+
+  final RuntimeTensor tensor;
+  final DartOnnxResult owner;
+
+  void close() {
+    owner.close();
+  }
 }
 
 /// Pure-Dart driver around the split-LLM ONNX bundle.
@@ -80,9 +144,9 @@ final class CosyVoice2LlmDriver {
     required CosyVoice2LoadedComponent prefill,
     required CosyVoice2LoadedComponent decode,
     required CosyVoice2LoadedComponent head,
-  })  : _prefill = prefill,
-        _decode = decode,
-        _head = head;
+  }) : _prefill = prefill,
+       _decode = decode,
+       _head = head;
 
   final Qwen2BpeTokenizer tokenizer;
 
@@ -108,32 +172,60 @@ final class CosyVoice2LlmDriver {
     final decode = bundle.requireLoadedComponent('llm_decode');
     final head = bundle.requireLoadedComponent('llm_decoder_head');
     final tokenizer = await Qwen2BpeTokenizer.load(paths.qwen2TokenizerDir);
-    final embeddings = await loadNpz(paths.llmEmbeddingsNpz);
-    final text = embeddings['text_embedding'];
-    final llm = embeddings['llm_embedding'];
-    final speech = embeddings['speech_embedding'];
-    if (text == null || llm == null || speech == null) {
-      throw StateError(
-        'llm_embeddings.npz is missing required arrays '
-        '(have ${embeddings.keys.toList()}).',
+    Map<String, NpyArray>? embeddings;
+    final taken = <NpyArray>[];
+    try {
+      final loadedEmbeddings = await loadNpz(paths.llmEmbeddingsNpz);
+      embeddings = loadedEmbeddings;
+      final text = loadedEmbeddings.remove('text_embedding');
+      final llm = loadedEmbeddings.remove('llm_embedding');
+      final speech = loadedEmbeddings.remove('speech_embedding');
+      if (text != null) {
+        taken.add(text);
+      }
+      if (llm != null) {
+        taken.add(llm);
+      }
+      if (speech != null) {
+        taken.add(speech);
+      }
+      if (text == null || llm == null || speech == null) {
+        throw StateError(
+          'llm_embeddings.npz is missing required arrays '
+          '(have ${loadedEmbeddings.keys.toList()}).',
+        );
+      }
+      for (final value in loadedEmbeddings.values) {
+        value.close();
+      }
+      _expectShape(text.shape, [
+        cosyvoice2TextVocabSize,
+        cosyvoice2LlmHiddenDim,
+      ], 'text_embedding');
+      _expectShape(llm.shape, [2, cosyvoice2LlmHiddenDim], 'llm_embedding');
+      _expectShape(speech.shape, [
+        cosyvoice2SpeechVocabSize,
+        cosyvoice2LlmHiddenDim,
+      ], 'speech_embedding');
+      return CosyVoice2LlmDriver._(
+        tokenizer: tokenizer,
+        textEmbedding: text,
+        llmEmbedding: llm,
+        speechEmbedding: speech,
+        prefill: prefill,
+        decode: decode,
+        head: head,
       );
+    } catch (_) {
+      for (final value in taken) {
+        value.close();
+      }
+      for (final value in embeddings?.values ?? const <NpyArray>[]) {
+        value.close();
+      }
+      tokenizer.close();
+      rethrow;
     }
-    _expectShape(text.shape, [cosyvoice2TextVocabSize, cosyvoice2LlmHiddenDim],
-        'text_embedding');
-    _expectShape(llm.shape, [2, cosyvoice2LlmHiddenDim], 'llm_embedding');
-    _expectShape(
-        speech.shape,
-        [cosyvoice2SpeechVocabSize, cosyvoice2LlmHiddenDim],
-        'speech_embedding');
-    return CosyVoice2LlmDriver._(
-      tokenizer: tokenizer,
-      textEmbedding: text,
-      llmEmbedding: llm,
-      speechEmbedding: speech,
-      prefill: prefill,
-      decode: decode,
-      head: head,
-    );
   }
 
   /// Embeds a list of text token ids into a `[1, ids.length, 896]`
@@ -154,57 +246,160 @@ final class CosyVoice2LlmDriver {
   /// Embeds a single speech token id into a `[1, 1, 896]` flattened
   /// float32 buffer using the speech-embedding table.
   Float32List embedSpeechToken(int id) {
+    final buffer = embedSpeechTokenBuffer(id);
+    try {
+      return Float32List.fromList(buffer.asFloat32List());
+    } finally {
+      buffer.close();
+    }
+  }
+
+  NativeTensorBuffer embedSpeechTokenBuffer(int id) {
+    return cosyLlmEmbedSpeechToken(
+      token: id,
+      speechEmbedding: speechEmbedding,
+      speechVocabSize: cosyvoice2SpeechVocabSize,
+      dim: cosyvoice2LlmHiddenDim,
+    );
+  }
+
+  NativeTensorBuffer createSpeechTokenEmbeddingBuffer() =>
+      cosyLlmSpeechTokenBuffer(dim: cosyvoice2LlmHiddenDim);
+
+  void fillSpeechTokenEmbeddingBuffer({
+    required int id,
+    required NativeTensorBuffer out,
+  }) {
+    cosyLlmEmbedSpeechTokenInto(
+      token: id,
+      speechEmbedding: speechEmbedding,
+      speechVocabSize: cosyvoice2SpeechVocabSize,
+      dim: cosyvoice2LlmHiddenDim,
+      out: out,
+    );
+  }
+
+  /// Embeds a CosyVoice2 LLM special token row. Row 0 is SOS/EOS and
+  /// row 1 is the task marker used before speech tokens.
+  Float32List embedLlmSpecial(int row) {
     final out = Float32List(cosyvoice2LlmHiddenDim);
-    out.setRange(0, cosyvoice2LlmHiddenDim, speechEmbedding.row(id));
+    out.setRange(0, cosyvoice2LlmHiddenDim, llmEmbedding.row(row));
     return out;
+  }
+
+  /// Builds the upstream unistream CosyVoice2 prompt:
+  /// `[sos, prompt_text + text, task_id, prompt_speech_tokens]`.
+  Float32List buildPrefillEmbeddings({
+    required Object textTokens,
+    Object promptSpeechTokens = const <int>[],
+  }) {
+    final buffer = buildPrefillEmbeddingBuffer(
+      textTokens: textTokens,
+      promptSpeechTokens: promptSpeechTokens,
+    );
+    try {
+      return Float32List.fromList(buffer.asFloat32List());
+    } finally {
+      buffer.close();
+    }
+  }
+
+  NativeTensorBuffer buildPrefillEmbeddingBuffer({
+    required Object textTokens,
+    Object promptSpeechTokens = const <int>[],
+  }) {
+    return cosyLlmBuildPrefillEmbeddings(
+      textTokens: textTokens,
+      promptSpeechTokens: promptSpeechTokens,
+      textEmbedding: textEmbedding,
+      llmEmbedding: llmEmbedding,
+      speechEmbedding: speechEmbedding,
+      textVocabSize: cosyvoice2TextVocabSize,
+      speechVocabSize: cosyvoice2SpeechVocabSize,
+      dim: cosyvoice2LlmHiddenDim,
+    );
+  }
+
+  CosyLlmPrefillTextPlan buildPrefillEmbeddingBufferFromText({
+    required String text,
+    String promptText = '',
+    Object promptSpeechTokens = const <int>[],
+  }) {
+    return cosyLlmBuildPrefillEmbeddingsFromText(
+      tokenizer: tokenizer,
+      text: text,
+      promptText: promptText,
+      promptSpeechTokens: promptSpeechTokens,
+      textEmbedding: textEmbedding,
+      llmEmbedding: llmEmbedding,
+      speechEmbedding: speechEmbedding,
+      textVocabSize: cosyvoice2TextVocabSize,
+      speechVocabSize: cosyvoice2SpeechVocabSize,
+      dim: cosyvoice2LlmHiddenDim,
+    );
   }
 
   /// Runs a prefill pass with `inputsEmbeds` of shape `[1, S, 896]`
   /// (flattened) and returns the initialized state.  `seqLen` must
   /// match `inputsEmbeds.length / 896`.
   CosyVoice2LlmState prefill({
-    required Float32List inputsEmbeds,
+    required Object inputsEmbeds,
     required int seqLen,
   }) {
     final expected = seqLen * cosyvoice2LlmHiddenDim;
-    if (inputsEmbeds.length != expected) {
+    final length = _float32InputLength(inputsEmbeds);
+    if (length != expected) {
       throw ArgumentError(
-        'inputsEmbeds length ${inputsEmbeds.length} != seqLen*$cosyvoice2LlmHiddenDim ($expected)',
+        'inputsEmbeds length $length != seqLen*$cosyvoice2LlmHiddenDim ($expected)',
       );
     }
-    final mask = Int64List(seqLen);
-    for (var i = 0; i < seqLen; i += 1) {
-      mask[i] = 1;
-    }
-    final inputs = <String, Object?>{
-      'inputs_embeds':
-          float32Tensor(inputsEmbeds, [1, seqLen, cosyvoice2LlmHiddenDim]),
-      'attention_mask': int64Tensor(mask, [1, seqLen]),
-    };
-    final result = _prefill.run(inputs);
+    final mask = CosyLlmAttentionMaskCache(seqLen);
+    var keepMask = false;
     try {
-      final hidden = _readFloat32(result, 'hidden');
-      // Last position only (`[1, 1, 896]`) — that's what feeds the head /
-      // first decode step.
-      final lastOff = (seqLen - 1) * cosyvoice2LlmHiddenDim;
-      final lastHidden = Float32List(cosyvoice2LlmHiddenDim);
-      lastHidden.setRange(0, cosyvoice2LlmHiddenDim,
-          hidden.sublist(lastOff, lastOff + cosyvoice2LlmHiddenDim));
-      final keys = <Float32List>[];
-      final values = <Float32List>[];
-      for (var l = 0; l < cosyvoice2LlmNumLayers; l += 1) {
-        keys.add(Float32List.fromList(_readFloat32(result, 'present_key_$l')));
-        values.add(
-            Float32List.fromList(_readFloat32(result, 'present_value_$l')));
+      final inputs = <String, Object?>{
+        'inputs_embeds': _float32InputTensor(inputsEmbeds, [
+          1,
+          seqLen,
+          cosyvoice2LlmHiddenDim,
+        ]),
+        'attention_mask': mask.tensor(seqLen),
+      };
+      final result = _prefill.run(inputs);
+      var keepResult = false;
+      NativeTensorBuffer? lastHidden;
+      try {
+        lastHidden = cosyLlmSliceLastHidden(
+          hidden: _readFloat32Tensor(result, 'hidden'),
+          seqLen: seqLen,
+          dim: cosyvoice2LlmHiddenDim,
+        );
+        final keys = <RuntimeTensor>[];
+        final values = <RuntimeTensor>[];
+        for (var l = 0; l < cosyvoice2LlmNumLayers; l += 1) {
+          keys.add(_readFloat32Tensor(result, 'present_key_$l'));
+          values.add(_readFloat32Tensor(result, 'present_value_$l'));
+        }
+        keepResult = true;
+        keepMask = true;
+        return CosyVoice2LlmState._(
+          totalSeq: seqLen,
+          kvKeys: keys,
+          kvValues: values,
+          lastHidden: lastHidden,
+          owner: result,
+          attentionMask: mask,
+          ownedLastHidden: lastHidden,
+        );
+      } finally {
+        if (!keepResult) {
+          lastHidden?.close();
+          result.close();
+        }
       }
-      return CosyVoice2LlmState._(
-        attentionMask: mask,
-        kvKeys: keys,
-        kvValues: values,
-        lastHidden: lastHidden,
-      );
     } finally {
-      result.close();
+      if (!keepMask) {
+        mask.close();
+      }
     }
   }
 
@@ -213,61 +408,84 @@ final class CosyVoice2LlmDriver {
   /// KV cache and `lastHidden`.
   void decodeStep({
     required CosyVoice2LlmState state,
-    required Float32List nextEmbed,
+    required Object nextEmbed,
   }) {
-    if (nextEmbed.length != cosyvoice2LlmHiddenDim) {
+    final plan = cosyLlmDecodeStepPlan(
+      pastSeq: state.totalSeq,
+      hiddenDim: cosyvoice2LlmHiddenDim,
+      layerCount: cosyvoice2LlmNumLayers,
+    );
+    final nextLength = _float32InputLength(nextEmbed);
+    if (nextLength != plan.expectedEmbedFloats) {
       throw ArgumentError(
-        'nextEmbed length ${nextEmbed.length} != $cosyvoice2LlmHiddenDim',
+        'nextEmbed length $nextLength != ${plan.expectedEmbedFloats}',
       );
     }
-    final past = state.totalSeq;
-    final newMask = Int64List(past + 1);
-    newMask.setRange(0, past, state.attentionMask);
-    newMask[past] = 1;
-
-    final inputs = <String, Object?>{
-      'inputs_embeds': float32Tensor(
-          nextEmbed, [1, 1, cosyvoice2LlmHiddenDim]),
-      'attention_mask': int64Tensor(newMask, [1, past + 1]),
-    };
-    for (var l = 0; l < cosyvoice2LlmNumLayers; l += 1) {
-      inputs['past_key_$l'] = float32Tensor(state.kvKeys[l],
-          [1, cosyvoice2LlmKvHeads, past, cosyvoice2LlmKvHeadDim]);
-      inputs['past_value_$l'] = float32Tensor(state.kvValues[l],
-          [1, cosyvoice2LlmKvHeads, past, cosyvoice2LlmKvHeadDim]);
-    }
+    final inputs = state._decodeInputMap(
+      nextEmbed: _float32InputTensor(nextEmbed, [1, 1, cosyvoice2LlmHiddenDim]),
+      attentionMask: state.attentionMaskTensor(plan.nextSeq),
+    );
     final result = _decode.run(inputs);
+    var keepResult = false;
     try {
-      final hidden = _readFloat32(result, 'hidden');
-      state.lastHidden = Float32List.fromList(hidden);
+      final hidden = _readFloat32Tensor(result, 'hidden');
+      final keys = <RuntimeTensor>[];
+      final values = <RuntimeTensor>[];
       for (var l = 0; l < cosyvoice2LlmNumLayers; l += 1) {
-        state.kvKeys[l] =
-            Float32List.fromList(_readFloat32(result, 'present_key_$l'));
-        state.kvValues[l] =
-            Float32List.fromList(_readFloat32(result, 'present_value_$l'));
+        keys.add(_readFloat32Tensor(result, 'present_key_$l'));
+        values.add(_readFloat32Tensor(result, 'present_value_$l'));
       }
-      state.attentionMask = newMask;
+      if (keys.length + values.length != plan.kvTensorCount) {
+        throw StateError(
+          'llm_decode emitted ${keys.length + values.length} KV tensors, '
+          'expected ${plan.kvTensorCount}',
+        );
+      }
+      state.kvKeys = keys;
+      state.kvValues = values;
+      state.totalSeq = plan.nextSeq;
+      state._refreshDecodeKvInputs();
+      keepResult = true;
+      state._replaceOwner(result, hidden);
     } finally {
-      result.close();
+      if (!keepResult) {
+        result.close();
+      }
     }
   }
 
   /// Projects a `[896]` hidden vector to `[6564]` speech-token logits.
-  Float32List headLogits(Float32List hidden) {
-    if (hidden.length % cosyvoice2LlmHiddenDim != 0) {
+  Float32List headLogits(Object hidden) {
+    final logits = headLogitsTensor(hidden);
+    try {
+      return Float32List.fromList(float32View(logits.tensor));
+    } finally {
+      logits.close();
+    }
+  }
+
+  /// Projects hidden state to native-backed logits. The returned owner must be
+  /// closed after sampling.
+  CosyVoice2LlmHeadLogits headLogitsTensor(Object hidden) {
+    final hiddenLength = _float32InputLength(hidden);
+    if (hiddenLength % cosyvoice2LlmHiddenDim != 0) {
       throw ArgumentError(
-        'hidden length ${hidden.length} not a multiple of $cosyvoice2LlmHiddenDim',
+        'hidden length $hiddenLength not a multiple of $cosyvoice2LlmHiddenDim',
       );
     }
-    final seq = hidden.length ~/ cosyvoice2LlmHiddenDim;
+    final seq = hiddenLength ~/ cosyvoice2LlmHiddenDim;
     final result = _head.run({
-      'hidden':
-          float32Tensor(hidden, [1, seq, cosyvoice2LlmHiddenDim]),
+      'hidden': _float32InputTensor(hidden, [1, seq, cosyvoice2LlmHiddenDim]),
     });
+    var keepResult = false;
     try {
-      return Float32List.fromList(_readFloat32(result, 'logits'));
+      final tensor = _readFloat32Tensor(result, 'logits');
+      keepResult = true;
+      return CosyVoice2LlmHeadLogits._(tensor: tensor, owner: result);
     } finally {
-      result.close();
+      if (!keepResult) {
+        result.close();
+      }
     }
   }
 
@@ -281,7 +499,9 @@ final class CosyVoice2LlmDriver {
 
 void _expectShape(List<int> got, List<int> want, String name) {
   if (got.length != want.length) {
-    throw StateError('$name: expected rank ${want.length}, got rank ${got.length}');
+    throw StateError(
+      '$name: expected rank ${want.length}, got rank ${got.length}',
+    );
   }
   for (var i = 0; i < got.length; i += 1) {
     if (got[i] != want[i]) {
@@ -290,17 +510,81 @@ void _expectShape(List<int> got, List<int> want, String name) {
   }
 }
 
-Float32List _readFloat32(DartOnnxResult result, String name) {
+RuntimeTensor _float32InputTensor(Object value, List<int> shape) {
+  if (value is NativeTensorBuffer) {
+    _checkFloat32Buffer(value);
+    return value.tensorView(shape: shape, byteLength: value.byteLength);
+  }
+  if (value is RuntimeTensor) {
+    if (value.dtype != RuntimeTensorDataType.float32) {
+      throw StateError('Expected float32 tensor, got ${value.dtype.name}.');
+    }
+    return value;
+  }
+  if (value is Float32List) {
+    return float32Tensor(value, shape);
+  }
+  throw ArgumentError.value(
+    value,
+    'value',
+    'expected NativeTensorBuffer/RuntimeTensor/Float32List',
+  );
+}
+
+Map<String, Object?> _newLlmDecodeInputMap(
+  List<RuntimeTensor> keys,
+  List<RuntimeTensor> values,
+) {
+  final inputs = <String, Object?>{
+    'inputs_embeds': null,
+    'attention_mask': null,
+  };
+  for (var l = 0; l < cosyvoice2LlmNumLayers; l += 1) {
+    inputs['past_key_$l'] = keys[l];
+    inputs['past_value_$l'] = values[l];
+  }
+  return inputs;
+}
+
+int _float32InputLength(Object value) {
+  if (value is NativeTensorBuffer) {
+    _checkFloat32Buffer(value);
+    return value.byteLength ~/ 4;
+  }
+  if (value is RuntimeTensor) {
+    if (value.dtype != RuntimeTensorDataType.float32) {
+      throw StateError('Expected float32 tensor, got ${value.dtype.name}.');
+    }
+    return value.bytes.lengthInBytes ~/ 4;
+  }
+  if (value is Float32List) {
+    return value.length;
+  }
+  throw ArgumentError.value(
+    value,
+    'value',
+    'expected NativeTensorBuffer/RuntimeTensor/Float32List',
+  );
+}
+
+void _checkFloat32Buffer(NativeTensorBuffer value) {
+  if (value.dtype != RuntimeTensorDataType.float32) {
+    throw StateError('Expected float32 tensor, got ${value.dtype.name}.');
+  }
+}
+
+RuntimeTensor _readFloat32Tensor(DartOnnxResult result, String name) {
   final value = result.outputs[name];
+  if (value is RuntimeTensor) {
+    if (value.dtype != RuntimeTensorDataType.float32) {
+      throw StateError('LLM session output "$name" has dtype ${value.dtype}');
+    }
+    return value;
+  }
   if (value == null) {
     throw StateError('LLM session output is missing "$name"');
   }
-  if (value is Float32List) return value;
-  if (value is RuntimeTensor) {
-    return float32View(value);
-  }
-  if (value is List<double>) {
-    return Float32List.fromList(value);
-  }
-  throw StateError('LLM session output "$name" has unexpected type: ${value.runtimeType}');
+  throw StateError(
+    'LLM session output "$name" is not native-backed: ${value.runtimeType}',
+  );
 }

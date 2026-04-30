@@ -311,14 +311,25 @@ final class TtsOnnxComponentBundle {
     return blockers;
   }
 
+  List<String> get providerBlockers => [
+    ...blockers,
+    if (!capability.isLocalDartOnnxReady) ...capability.blockers,
+  ];
+
   Map<String, Object?> toJson() => {
     'provider': capability.provider,
     'runtime': 'dart_inference_onnx_components',
+    'catalogRuntime': capability.runtime,
+    'catalogReadiness': capability.readiness.name,
     'python': false,
     'providerDir': providerDir,
-    'readyForSynthesis': !hasRequiredBlockedComponents,
+    'graphReadyForSynthesis': !hasRequiredBlockedComponents,
+    'providerOrchestratorReady': capability.isLocalDartOnnxReady,
+    'readyForSynthesis':
+        capability.isLocalDartOnnxReady && !hasRequiredBlockedComponents,
     'loadedOnnxComponents': loadedComponentNames,
-    'blockers': blockers,
+    'blockers': providerBlockers,
+    'onnxBlockers': blockers,
     'components': [for (final status in statuses) status.toJson()],
   };
 
@@ -502,6 +513,11 @@ String? _findSourcePath(String providerDir, TtsBackendSourceAsset source) {
   final path = source.path;
   if (path != null && File('$providerDir/$path').existsSync()) {
     return path;
+  }
+  for (final candidate in source.paths) {
+    if (File('$providerDir/$candidate').existsSync()) {
+      return candidate;
+    }
   }
   final basename = source.basename;
   if (basename == null) {
@@ -738,7 +754,8 @@ Map<String, Object?> _outputSummary(String name, Object? value) {
       'name': name,
       'dtype': value.dtype.name,
       'shape': value.shape,
-      'byteLength': value.bytes.lengthInBytes,
+      'byteLength': value.byteLength,
+      'memoryKind': value.memoryKind.name,
     };
   }
   if (value is TypedData) {

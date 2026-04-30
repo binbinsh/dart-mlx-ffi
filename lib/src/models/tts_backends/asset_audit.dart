@@ -237,6 +237,11 @@ String? _findSourcePath(
   if (path != null && File('${providerDir.path}/$path').existsSync()) {
     return path;
   }
+  for (final candidate in source.paths) {
+    if (File('${providerDir.path}/$candidate').existsSync()) {
+      return candidate;
+    }
+  }
   final basename = source.basename;
   if (basename == null) {
     return null;

@@ -1,10 +1,9 @@
 library;
 
 import 'dart:ffi' as ffi;
+import 'dart:io';
 
 import 'package:ffi/ffi.dart';
-
-import '../../runtime/native_bindings.dart' as native;
 
 final class EspeakG2p {
   factory EspeakG2p({
@@ -28,66 +27,137 @@ final class EspeakG2p {
     int phonemeMode = cliIpaMode,
     String? separator,
   }) {
-    final mode = _resolvePhonemeMode(phonemeMode, separator);
-    final handle = _openNative(libraryPath, dataPath, voice, mode);
-    return EspeakG2p._(handle, voice: voice);
+    final lib = _openLibrary(libraryPath);
+    final instance = EspeakG2p._(
+      lib,
+      phonemeMode: _resolvePhonemeMode(phonemeMode, separator),
+    );
+    instance._init(_resolveDataPath(dataPath), voice);
+    return instance;
   }
 
-  EspeakG2p._(this._handle, {required String voice}) : _voice = voice;
+  EspeakG2p._(this._lib, {required this.phonemeMode}) {
+    _initialize = _lib
+        .lookupFunction<
+          ffi.Int32 Function(
+            ffi.Int32,
+            ffi.Int32,
+            ffi.Pointer<Utf8>,
+            ffi.Int32,
+          ),
+          int Function(int, int, ffi.Pointer<Utf8>, int)
+        >('espeak_Initialize');
+    _setVoiceByName = _lib
+        .lookupFunction<
+          ffi.Int32 Function(ffi.Pointer<Utf8>),
+          int Function(ffi.Pointer<Utf8>)
+        >('espeak_SetVoiceByName');
+    _textToPhonemes = _lib
+        .lookupFunction<
+          ffi.Pointer<Utf8> Function(
+            ffi.Pointer<ffi.Pointer<Utf8>>,
+            ffi.Int32,
+            ffi.Int32,
+          ),
+          ffi.Pointer<Utf8> Function(ffi.Pointer<ffi.Pointer<Utf8>>, int, int)
+        >('espeak_TextToPhonemes');
+    _terminate = _lib.lookupFunction<ffi.Int32 Function(), int Function()>(
+      'espeak_Terminate',
+    );
+  }
 
   static const int cliIpaMode = 0x02;
+  static const _audioOutputSync = 2;
+  static const _textModeUtf8 = 1;
 
-  final ffi.Pointer<ffi.Void> _handle;
+  final ffi.DynamicLibrary _lib;
+  final int phonemeMode;
   bool _disposed = false;
   String? _voice;
 
+  late final int Function(int, int, ffi.Pointer<Utf8>, int) _initialize;
+  late final int Function(ffi.Pointer<Utf8>) _setVoiceByName;
+  late final ffi.Pointer<Utf8> Function(
+    ffi.Pointer<ffi.Pointer<Utf8>>,
+    int,
+    int,
+  )
+  _textToPhonemes;
+  late final int Function() _terminate;
+
   String textToPhonemes(String text, {String? voice}) {
     _ensureOpen();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    final textPtr = text.toNativeUtf8();
-    final nextVoice = voice != null && voice.isNotEmpty && voice != _voice
-        ? voice
-        : null;
-    final voicePtr = _nativeStringOrNull(nextVoice);
+    if (text.isEmpty) {
+      return '';
+    }
+    if (voice != null && voice.isNotEmpty && voice != _voice) {
+      _setVoice(voice);
+    }
+
+    final inputPtr = text.toNativeUtf8();
+    final cursor = malloc<ffi.Pointer<Utf8>>();
+    cursor.value = inputPtr;
+    final clauses = <String>[];
     try {
-      final out = native.espText(
-        _handle,
-        textPtr.cast<ffi.Char>(),
-        voicePtr.cast<ffi.Char>(),
-        error,
-      );
-      if (out == ffi.nullptr) {
-        throw StateError(_takeNativeError(error));
-      }
-      try {
-        if (nextVoice != null) {
-          _voice = nextVoice;
+      while (cursor.value != ffi.nullptr) {
+        if (cursor.value.cast<ffi.Uint8>().value == 0) {
+          break;
         }
-        return out.cast<Utf8>().toDartString();
-      } finally {
-        native.freeStr(out);
+        final result = _textToPhonemes(
+          cursor,
+          _textModeUtf8,
+          phonemeMode,
+        );
+        if (result != ffi.nullptr) {
+          final clause = result.toDartString();
+          if (clause.isNotEmpty) {
+            clauses.add(clause);
+          }
+        }
       }
     } finally {
-      malloc.free(textPtr);
-      _freeNativeString(voicePtr);
-      calloc.free(error);
+      malloc.free(cursor);
+      malloc.free(inputPtr);
     }
-  }
-
-  String kokoroText(String text, {String language = 'en-us'}) {
-    return _kokoroCall(text, language, native.espKokText);
-  }
-
-  String kokoroSsml(String ssml, {String language = 'en-us'}) {
-    return _kokoroCall(ssml, language, native.espKokSsml);
+    return clauses.join(' ');
   }
 
   void dispose() {
     if (_disposed) {
       return;
     }
-    native.espFree(_handle);
+    _terminate();
     _disposed = true;
+  }
+
+  void _init(String? dataPath, String voice) {
+    final dataPtr = dataPath == null
+        ? ffi.nullptr.cast<Utf8>()
+        : dataPath.toNativeUtf8();
+    try {
+      final sampleRate = _initialize(_audioOutputSync, 0, dataPtr, 0);
+      if (sampleRate <= 0) {
+        throw StateError('eSpeak-NG initialization failed.');
+      }
+    } finally {
+      if (dataPtr != ffi.nullptr) {
+        malloc.free(dataPtr);
+      }
+    }
+    _setVoice(voice);
+  }
+
+  void _setVoice(String voice) {
+    final voicePtr = voice.toNativeUtf8();
+    try {
+      final status = _setVoiceByName(voicePtr);
+      if (status != 0) {
+        throw StateError('eSpeak-NG failed to select voice "$voice".');
+      }
+      _voice = voice;
+    } finally {
+      malloc.free(voicePtr);
+    }
   }
 
   void _ensureOpen() {
@@ -100,98 +170,77 @@ final class EspeakG2p {
     if (separator == null || separator.isEmpty) {
       return phonemeMode;
     }
-    final rune = separator.runes.single;
-    return phonemeMode | (rune << 8);
-  }
-
-  static ffi.Pointer<ffi.Void> _openNative(
-    String? libraryPath,
-    String? dataPath,
-    String voice,
-    int phonemeMode,
-  ) {
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    final libraryPtr = _nativeStringOrNull(libraryPath);
-    final dataPtr = _nativeStringOrNull(dataPath);
-    final voicePtr = voice.toNativeUtf8();
-    try {
-      final handle = native.espNew(
-        libraryPtr.cast<ffi.Char>(),
-        dataPtr.cast<ffi.Char>(),
-        voicePtr.cast<ffi.Char>(),
-        phonemeMode,
-        error,
-      );
-      if (handle == ffi.nullptr) {
-        throw StateError(_takeNativeError(error));
-      }
-      return handle;
-    } finally {
-      _freeNativeString(libraryPtr);
-      _freeNativeString(dataPtr);
-      malloc.free(voicePtr);
-      calloc.free(error);
+    final runes = separator.runes.toList(growable: false);
+    if (runes.length != 1) {
+      throw ArgumentError.value(separator, 'separator', 'must be one rune');
     }
+    return phonemeMode | (runes.single << 8);
   }
 
-  static ffi.Pointer<Utf8> _nativeStringOrNull(String? value) {
-    if (value == null || value.isEmpty) {
-      return ffi.nullptr.cast<Utf8>();
-    }
-    return value.toNativeUtf8();
-  }
-
-  static void _freeNativeString(ffi.Pointer<Utf8> value) {
-    if (value != ffi.nullptr) {
-      malloc.free(value);
-    }
-  }
-
-  String _kokoroCall(
-    String text,
-    String language,
-    ffi.Pointer<ffi.Char> Function(
-      ffi.Pointer<ffi.Void>,
-      ffi.Pointer<ffi.Char>,
-      ffi.Pointer<ffi.Char>,
-      ffi.Pointer<ffi.Pointer<ffi.Char>>,
-    )
-    call,
-  ) {
-    _ensureOpen();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    final textPtr = text.toNativeUtf8();
-    final languagePtr = language.toNativeUtf8();
-    try {
-      final out = call(
-        _handle,
-        textPtr.cast<ffi.Char>(),
-        languagePtr.cast<ffi.Char>(),
-        error,
-      );
-      if (out == ffi.nullptr) {
-        throw StateError(_takeNativeError(error));
-      }
+  static ffi.DynamicLibrary _openLibrary(String? explicit) {
+    final candidates = <String>[
+      if (explicit != null && explicit.isNotEmpty) explicit,
+      ..._libraryCandidates(),
+    ];
+    Object? lastError;
+    for (final candidate in candidates) {
       try {
-        return out.cast<Utf8>().toDartString();
-      } finally {
-        native.freeStr(out);
+        return ffi.DynamicLibrary.open(candidate);
+      } catch (error) {
+        lastError = error;
       }
-    } finally {
-      malloc.free(textPtr);
-      malloc.free(languagePtr);
-      calloc.free(error);
     }
+    throw StateError('eSpeak-NG dynamic library unavailable: $lastError');
   }
-}
 
-String _takeNativeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
-  final value = error.value;
-  if (value == ffi.nullptr) return 'Native eSpeak call failed.';
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
+  static List<String> _libraryCandidates() {
+    if (Platform.isMacOS) {
+      return const [
+        'libespeak-ng.dylib',
+        '/opt/homebrew/lib/libespeak-ng.dylib',
+        '/usr/local/lib/libespeak-ng.dylib',
+      ];
+    }
+    if (Platform.isWindows) {
+      return const ['libespeak-ng.dll', 'espeak-ng.dll'];
+    }
+    return const ['libespeak-ng.so.1', 'libespeak-ng.so'];
+  }
+
+  static String? _resolveDataPath(String? explicit) {
+    if (explicit != null && explicit.isNotEmpty) {
+      return explicit;
+    }
+    for (final name in const ['ESPEAK_DATA_PATH', 'ESPEAKNG_DATA_PATH']) {
+      final value = Platform.environment[name];
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    for (final candidate in _dataCandidates()) {
+      if (Directory(candidate).existsSync()) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  static List<String> _dataCandidates() {
+    if (Platform.isMacOS) {
+      return const [
+        '/opt/homebrew/share/espeak-ng-data',
+        '/usr/local/share/espeak-ng-data',
+        '/usr/share/espeak-ng-data',
+      ];
+    }
+    if (Platform.isWindows) {
+      return const ['espeak-ng-data'];
+    }
+    return const [
+      '/usr/lib/x86_64-linux-gnu/espeak-ng-data',
+      '/usr/lib/aarch64-linux-gnu/espeak-ng-data',
+      '/usr/share/espeak-ng-data',
+      '/usr/local/share/espeak-ng-data',
+    ];
   }
 }

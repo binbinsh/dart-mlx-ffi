@@ -113,7 +113,7 @@ void main() {
     );
   });
 
-  test('composes SSML through Zig with Dart UTF-16 offsets', () {
+  test('composes SSML through native with Dart UTF-16 offsets', () {
     final ir = FrontendIr()
       ..tnZhItems.add(
         TnItem(
@@ -131,7 +131,7 @@ void main() {
     );
   });
 
-  test('decodes native-backed structured logits through Zig helpers', () {
+  test('decodes native-backed structured logits through Dart helpers', () {
     final buffers = <NativeTensorBuffer>[];
     NativeTensorBuffer tensor(List<int> shape, List<double> values) {
       final buffer = NativeTensorBuffer.float32(shape);

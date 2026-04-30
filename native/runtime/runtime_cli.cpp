@@ -226,6 +226,7 @@ DinfNamedTensor make_tensor(
   tensor.tensor.dtype = dtype;
   tensor.tensor.rank = static_cast<int32_t>(shape.size());
   tensor.tensor.byte_length = static_cast<intptr_t>(byte_length);
+  tensor.tensor.memory_kind = DINF_TENSOR_MEMORY_CPU;
   tensor.tensor.shape = static_cast<int64_t*>(
       std::malloc(sizeof(int64_t) * shape.size()));
   if (!shape.empty()) {
@@ -536,7 +537,9 @@ void free_inputs(std::vector<DinfNamedTensor>& tensors) {
   for (auto& tensor : tensors) {
     std::free(tensor.name);
     std::free(tensor.tensor.shape);
-    std::free(tensor.tensor.data);
+    if (tensor.tensor.memory_kind == DINF_TENSOR_MEMORY_CPU) {
+      std::free(tensor.tensor.data);
+    }
   }
   tensors.clear();
 }
@@ -630,6 +633,9 @@ json diagnostics_json(DinfRuntimeSession* session) {
 }
 
 json tensor_values(const DinfTensor& tensor) {
+  if (tensor.memory_kind == DINF_TENSOR_MEMORY_HANDLE) {
+    return json::array();
+  }
   const auto count = static_cast<size_t>(
       tensor.byte_length / static_cast<intptr_t>(dtype_size(tensor.dtype)));
   json values = json::array();

@@ -15,7 +15,7 @@ Use cases:
 1. prepare a local MLX snapshot from a Hugging Face checkpoint
 2. export a reusable next-token MLX function once
 3. run the exported artifact from Dart through `RuntimeEngine.mlx`, which now
-   enters Zig and calls the private `mlx-c` imported-function path
+   enters the Dart FFI/native MLX imported-function path
 4. use `benchmark/` scripts when you want MLX parity or performance reports
 
 For `Gemma 4`, publish-time parity currently uses the official
@@ -46,4 +46,4 @@ uv run python models/text_lm/export_bundle.py \
 
 The exporter writes `function.mlxfn`, `inputs.safetensors`, and `inputs.json`.
 Use `inputs.json` with `benchmark/runtime/dart_runtime_runner.dart` when
-running the bundle through the Dart-facing Zig runtime ABI.
+running the bundle through the Dart-facing native runtime ABI.

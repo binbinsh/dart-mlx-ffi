@@ -7,6 +7,8 @@ export 'catalog.dart'
         TtsBackendSourceAsset;
 export 'asset_audit.dart'
     show TtsBackendAssetAudit, TtsBackendProviderAssetAudit;
+export 'native_plan.dart'
+    show TtsBackendNativeEmbedding, TtsBackendNativePlan, TtsNativeReuseGroup;
 export 'onnx_components.dart'
     show
         TtsLoadedOnnxComponent,
@@ -20,6 +22,7 @@ export 'loader.dart'
     show
         DartTtsRuntimeOptions,
         DartUniFrontendTtsPaths,
+        loadUniFrontendTtsRegistry,
         loadUniFrontendKokoroTtsRegistry;
 export 'runtime.dart'
     show
@@ -27,4 +30,7 @@ export 'runtime.dart'
         DartTtsBackendRegistry,
         DartTtsSynthesisRequest,
         DartTtsSynthesisResult,
-        KokoroTtsBackend;
+        CosyVoice2TtsBackend,
+        KokoroTtsBackend,
+        NeuttsAirTtsBackend,
+        Sarashina2TtsBackend;

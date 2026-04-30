@@ -3,6 +3,7 @@ library;
 
 import 'dart:ffi' as ffi;
 
+import 'native_ffi.dart' as dz;
 import 'package:ffi/ffi.dart';
 
 import 'native_bindings.dart' as native;
@@ -44,10 +45,10 @@ final class CoreMlBundleLayout {
 
   /// Discover a Core ML bundle rooted at [rootPath].
   factory CoreMlBundleLayout.discover(String rootPath) {
-    final path = rootPath.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
+    final path = dz.NativeUtf8CString.utf8(rootPath);
     ffi.Pointer<ffi.Char> result = ffi.nullptr;
     try {
-      result = native.coremlLayout(path);
+      result = native.coremlLayout(path.pointer);
       if (result == ffi.nullptr) {
         return CoreMlBundleLayout(rootPath: rootPath);
       }
@@ -68,7 +69,7 @@ final class CoreMlBundleLayout {
       if (result != ffi.nullptr) {
         native.freeStr(result);
       }
-      calloc.free(path);
+      path.close();
     }
   }
 }

@@ -45,7 +45,7 @@ void main() {
       expect(resolution.accelerators.first, Accelerator.ane);
     });
 
-    test('reports native capabilities from Zig accelerator bitmasks', () {
+    test('reports native capabilities from native accelerator bitmasks', () {
       expect(
         NativeModelRuntime(RuntimeEngine.coreml).capabilities.accelerators,
         [Accelerator.ane, Accelerator.gpu, Accelerator.cpu],
@@ -64,18 +64,54 @@ void main() {
         includeSystemDirs: false,
       );
 
+      expect(audit.cudaRequested, isTrue);
       expect(audit.tensorrtRequested, isTrue);
+      expect(audit.cudaReady, isFalse);
       expect(audit.tensorrtReady, isFalse);
+      expect(audit.runtimeReady, isFalse);
+      expect(audit.skipReason, contains('CUDA missing'));
       expect(audit.skipReason, contains('TensorRT 10 missing'));
+      expect(audit.toJson()['cudaReady'], isFalse);
       expect(audit.toJson()['tensorrtReady'], isFalse);
+      expect(audit.toJson()['runtimeReady'], isFalse);
+    });
+
+    test('audits CUDA runtime dependencies without loading ORT', () {
+      final audit = RuntimeDependencyAudit.inspect(
+        root: '/path/that/does/not/exist',
+        provider: 'cuda',
+        environment: const {},
+        includeSystemDirs: false,
+      );
+
+      expect(audit.cudaRequested, isTrue);
+      expect(audit.tensorrtRequested, isFalse);
+      expect(audit.cudaReady, isFalse);
+      expect(audit.tensorrtReady, isTrue);
+      expect(audit.runtimeReady, isFalse);
+      expect(audit.skipReason, contains('CUDA missing'));
+      expect(audit.toJson()['cudaReady'], isFalse);
+      expect(audit.toJson()['runtimeReady'], isFalse);
+    });
+
+    test('canonicalizes ONNX execution-provider aliases', () {
+      expect(canonicalOnnxExecutionProvider('cuda'), 'CUDAExecutionProvider');
+      expect(
+        canonicalOnnxExecutionProvider('trt'),
+        'TensorrtExecutionProvider',
+      );
+      expect(canonicalOnnxExecutionProvider('npu'), 'QNNExecutionProvider');
+      expect(canonicalOnnxExecutionProvider('custom'), isNull);
     });
 
     test('accepts TensorRT 10 libraries from an explicit runtime dir', () {
       final dir = Directory.systemTemp.createTempSync('runtime-trt-audit-');
       try {
-        for (final name in RuntimeDependencyAudit.tensorRt10Libraries) {
-          File('${dir.path}/$name').writeAsBytesSync(const []);
-        }
+        _writeRuntimeLibraries(
+          dir.path,
+          RuntimeDependencyAudit.tensorRt10Libraries,
+        );
+        _writeRuntimeLibraries(dir.path, RuntimeDependencyAudit.cudaLibraries);
 
         final audit = RuntimeDependencyAudit.inspect(
           root: null,
@@ -85,11 +121,113 @@ void main() {
           includeSystemDirs: false,
         );
 
+        expect(audit.cudaReady, isTrue);
         expect(audit.tensorrtReady, isTrue);
         expect(audit.tensorrt10.ready, isTrue);
+        expect(audit.runtimeReady, isTrue);
+        expect(audit.toJson()['runtimeReady'], isTrue);
         expect(audit.skipReason, isNull);
       } finally {
         dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('does not accept TensorRT 9 for CUDA 12 ORT TensorRT EP', () {
+      final dir = Directory.systemTemp.createTempSync('runtime-trt9-audit-');
+      try {
+        _writeRuntimeLibraries(
+          dir.path,
+          RuntimeDependencyAudit.tensorRt9Libraries,
+        );
+        _writeRuntimeLibraries(dir.path, RuntimeDependencyAudit.cudaLibraries);
+
+        final audit = RuntimeDependencyAudit.inspect(
+          root: null,
+          provider: 'tensorrt',
+          environment: const {},
+          extraSearchDirs: [dir.path],
+          includeSystemDirs: false,
+        );
+
+        expect(audit.cudaReady, isTrue);
+        expect(audit.tensorrt9.ready, isTrue);
+        expect(audit.tensorrtReady, isFalse);
+        expect(audit.runtimeReady, isFalse);
+        expect(audit.skipReason, contains('requires TensorRT 10'));
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('rejects incompatible TensorRT 10.0.1 Python wheel runtime', () {
+      final dir = Directory.systemTemp.createTempSync('runtime-trt-old-');
+      try {
+        _writeRuntimeLibraries(
+          dir.path,
+          RuntimeDependencyAudit.tensorRt10Libraries,
+        );
+        _writeRuntimeLibraries(dir.path, RuntimeDependencyAudit.cudaLibraries);
+        File(
+          '${dir.path}/libnvinfer_builder_resource.so.10.0.1',
+        ).writeAsBytesSync(const []);
+
+        final audit = RuntimeDependencyAudit.inspect(
+          root: null,
+          provider: 'trt',
+          environment: const {},
+          extraSearchDirs: [dir.path],
+          includeSystemDirs: false,
+        );
+
+        expect(audit.cudaReady, isTrue);
+        expect(audit.tensorrtReady, isFalse);
+        expect(audit.runtimeReady, isFalse);
+        expect(audit.tensorRtCompatibilityError, contains('10.0.1'));
+        expect(audit.skipReason, contains('not compatible'));
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('accepts CUDA libraries from a provider Python venv', () {
+      final root = Directory.systemTemp.createTempSync('runtime-cuda-venv-');
+      try {
+        _writeCudaProviderVenvLibraries(root.path);
+
+        final audit = RuntimeDependencyAudit.inspect(
+          root: root.path,
+          provider: 'CUDAExecutionProvider',
+          environment: const {},
+          includeSystemDirs: false,
+        );
+
+        expect(audit.cudaReady, isTrue);
+        expect(audit.runtimeReady, isTrue);
+        expect(audit.skipReason, isNull);
+      } finally {
+        root.deleteSync(recursive: true);
+      }
+    });
+
+    test('accepts TensorRT libraries from a provider Python venv', () {
+      final root = Directory.systemTemp.createTempSync('runtime-trt-venv-');
+      try {
+        _writeCudaProviderVenvLibraries(root.path);
+        _writeTensorRtProviderVenvLibraries(root.path);
+
+        final audit = RuntimeDependencyAudit.inspect(
+          root: root.path,
+          provider: 'TensorrtExecutionProvider',
+          environment: const {},
+          includeSystemDirs: false,
+        );
+
+        expect(audit.cudaReady, isTrue);
+        expect(audit.tensorrtReady, isTrue);
+        expect(audit.runtimeReady, isTrue);
+        expect(audit.skipReason, isNull);
+      } finally {
+        root.deleteSync(recursive: true);
       }
     });
 
@@ -128,7 +266,7 @@ void main() {
       expect(resolver.resolve(mlxFunctionOnly).engine, RuntimeEngine.mlx);
     });
 
-    test('allows explicit preview MLX artifacts through Zig resolver', () {
+    test('allows explicit preview MLX artifacts through native resolver', () {
       final resolver = RuntimeResolver(hostPlatform: RuntimePlatform.macos);
       final resolution = resolver.resolve(
         spec,
@@ -271,7 +409,7 @@ void main() {
       expect(() => registry.load(fallbackSpec), throwsUnsupportedError);
     });
 
-    test('registry fallback accepts preview MLX artifacts through Zig', () {
+    test('registry fallback accepts preview MLX artifacts through native', () {
       final registry = RuntimeRegistry(
         resolver: const RuntimeResolver(hostPlatform: RuntimePlatform.macos),
       )..register(_FakeRuntime(RuntimeEngine.mlx));
@@ -332,7 +470,7 @@ void main() {
       session.close();
     });
 
-    test('native load rejects unresolved remote artifacts through Zig', () {
+    test('native load rejects unresolved remote artifacts through native', () {
       const spec = ModelSpec(
         id: 'remote_demo',
         family: 'Remote demo',
@@ -374,7 +512,7 @@ void main() {
       expect(tensor.nativeData, isNotNull);
     });
 
-    test('allocates Zig-owned native input buffers', () {
+    test('allocates native-backed native input buffers', () {
       final buffer = NativeTensorBuffer.float32([3]);
       try {
         buffer.asFloat32List().setAll(0, [1, 2, 3]);
@@ -388,7 +526,7 @@ void main() {
       }
     });
 
-    test('views a prefix of a Zig-owned native input buffer', () {
+    test('views a prefix of a native-backed native input buffer', () {
       final buffer = NativeTensorBuffer.int64([1, 4]);
       try {
         buffer.asInt64List().setAll(0, [1, 2, 3, 4]);
@@ -402,7 +540,7 @@ void main() {
       }
     });
 
-    test('uses Zig tensor allocation validation', () {
+    test('uses native tensor allocation validation', () {
       final empty = NativeTensorBuffer.float32([0, 3]);
       try {
         expect(empty.byteLength, 0);
@@ -414,11 +552,10 @@ void main() {
       expect(
         () => NativeTensorBuffer.float32([-1]),
         throwsA(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            contains('invalid shape'),
-          ),
+          predicate((Object error) {
+            final message = '$error';
+            return message.contains('invalid') && message.contains('shape');
+          }, 'error message contains "invalid" and "shape"'),
         ),
       );
     });
@@ -563,12 +700,12 @@ void main() {
   });
 
   group('HuggingFaceArtifactCache', () {
-    test('uses Zig-owned default cache root', () {
+    test('uses native-backed default cache root', () {
       final cache = HuggingFaceArtifactCache();
       expect(cache.cacheRoot, isNotEmpty);
     });
 
-    test('uses Zig-owned default auth token lookup', () {
+    test('uses native-backed default auth token lookup', () {
       final cache = HuggingFaceArtifactCache();
       expect(cache.token == null || cache.token!.isNotEmpty, isTrue);
     });
@@ -633,6 +770,42 @@ void main() {
       }
     });
   });
+}
+
+void _writeRuntimeLibraries(String dir, Iterable<String> names) {
+  Directory(dir).createSync(recursive: true);
+  for (final name in names) {
+    File('$dir/$name').writeAsBytesSync(const []);
+  }
+}
+
+void _writeCudaProviderVenvLibraries(String root) {
+  const venvPrefix =
+      'src/ttsbackends/providers/sarashina2-tts/src/.venv/lib/python3.12/'
+      'site-packages/nvidia';
+  for (final name in RuntimeDependencyAudit.cudaLibraries) {
+    final package = switch (name) {
+      'libcudart.so.12' => 'cuda_runtime',
+      'libcublas.so.12' || 'libcublasLt.so.12' => 'cublas',
+      'libcurand.so.10' => 'curand',
+      'libcufft.so.11' => 'cufft',
+      'libcudnn.so.9' => 'cudnn',
+      _ => throw StateError('unmapped CUDA library: $name'),
+    };
+    final dir = Directory('$root/$venvPrefix/$package/lib')
+      ..createSync(recursive: true);
+    File('${dir.path}/$name').writeAsBytesSync(const []);
+  }
+}
+
+void _writeTensorRtProviderVenvLibraries(String root) {
+  const dirPrefix =
+      'src/ttsbackends/providers/sarashina2-tts/src/.venv/lib/python3.12/'
+      'site-packages/tensorrt_libs';
+  final dir = Directory('$root/$dirPrefix')..createSync(recursive: true);
+  for (final name in RuntimeDependencyAudit.tensorRt10Libraries) {
+    File('${dir.path}/$name').writeAsBytesSync(const []);
+  }
 }
 
 final class _FakeRuntime implements ModelRuntime {

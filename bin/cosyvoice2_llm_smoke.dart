@@ -3,7 +3,7 @@
 // Loads the split-LLM ONNX bundle (`llm_prefill`, `llm_decode`,
 // `llm_decoder_head`) plus the embedding NPZ + Qwen2 tokenizer, and
 // drives a short autoregressive decode loop.  The goal is to prove the
-// Dart -> dinf C ABI -> Zig -> ONNX Runtime path is wired correctly for
+// Dart -> native FFI -> ONNX Runtime path is wired correctly for
 // every component the production serving path will need.
 //
 // Usage:
@@ -52,8 +52,8 @@ void main(List<String> args) async {
   }
 
   stdout.writeln('==> constructing CosyVoice2LlmDriver');
-  final driver =
-      await CosyVoice2LlmDriver.load(bundle: bundle, paths: paths);
+  final driver = await CosyVoice2LlmDriver.load(bundle: bundle, paths: paths);
+  CosyVoice2LlmState? state;
   try {
     stdout.writeln('==> tokenizing text: ${jsonEncode(opts.text)}');
     final ids = driver.tokenizer.encode(opts.text);
@@ -61,7 +61,7 @@ void main(List<String> args) async {
 
     final embeds = driver.embedTextTokens(ids);
     final prefillStart = DateTime.now().microsecondsSinceEpoch;
-    final state = driver.prefill(inputsEmbeds: embeds, seqLen: ids.length);
+    state = driver.prefill(inputsEmbeds: embeds, seqLen: ids.length);
     final prefillEnd = DateTime.now().microsecondsSinceEpoch;
     stdout.writeln(
       '==> prefill: ${(prefillEnd - prefillStart) / 1000.0} ms '
@@ -80,8 +80,10 @@ void main(List<String> args) async {
     final sampled = <int>[];
     final t0 = pickToken(logits0, sampled);
     sampled.add(t0);
-    stdout.writeln('   step 0 sampled speech-token id: $t0 '
-        '(sampler=${opts.sampler})');
+    stdout.writeln(
+      '   step 0 sampled speech-token id: $t0 '
+      '(sampler=${opts.sampler})',
+    );
 
     final stepLatencies = <double>[];
     var current = t0;
@@ -107,6 +109,7 @@ void main(List<String> args) async {
     stderr.writeln(stack);
     exitCode = 1;
   } finally {
+    state?.close();
     driver.close();
   }
 }
@@ -189,7 +192,8 @@ _Opts _parseArgs(List<String> argv) {
       case '-h':
       case '--help':
         stdout.writeln(
-            'Usage: cosyvoice2_llm_smoke --model-dir <path> [--text ...] [--steps N] [--provider cuda|cpu] [--device-id N] [--num-threads N] [--sampler greedy|ras] [--seed N]');
+          'Usage: cosyvoice2_llm_smoke --model-dir <path> [--text ...] [--steps N] [--provider cuda|cpu] [--device-id N] [--num-threads N] [--sampler greedy|ras] [--seed N]',
+        );
         exit(0);
       default:
         throw ArgumentError('Unknown flag: $a');

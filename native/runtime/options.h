@@ -11,6 +11,8 @@ bool dinf_option_bool(
     const char* key,
     bool fallback);
 
+bool dinf_option_exists(const DinfOptions* options, const char* key);
+
 std::string dinf_option_string(
     const DinfOptions* options,
     const char* key,

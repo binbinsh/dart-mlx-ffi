@@ -3,7 +3,7 @@ import 'package:test/test.dart';
 import 'package:dart_inference/models.dart';
 
 void main() {
-  test('uses Zig eSpeak phonemization by default', () {
+  test('uses native eSpeak phonemization by default', () {
     final phonemizer = KokoroPhonemizer();
 
     expect(phonemizer.backendName, 'lazy');
@@ -27,7 +27,7 @@ void main() {
     expect(calls, 1);
   });
 
-  test('normalizes English text through Zig before phonemization', () async {
+  test('normalizes English text through native before phonemization', () async {
     final calls = <String>[];
     final phonemizer = KokoroPhonemizer.withBackend((
       text, {
@@ -44,7 +44,7 @@ void main() {
     ]);
   });
 
-  test('post-processes English phoneme output through Zig', () async {
+  test('post-processes English phoneme output through native', () async {
     final phonemizer = KokoroPhonemizer.withBackend((
       text, {
       required language,
@@ -175,7 +175,7 @@ void main() {
       expect(phonemes, isNotEmpty);
       expect(phonemes, isNot(contains('\u200d')));
       expect(phonemes, contains('h'));
-      expect(phonemizer.backendName, 'espeak_zig');
+      expect(phonemizer.backendName, 'espeak_native');
     } catch (error) {
       markTestSkipped('eSpeak-NG FFI library unavailable: $error');
     } finally {
@@ -188,7 +188,7 @@ void main() {
     try {
       final phonemes = await phonemizer.phonemize('Hello 你好', language: 'cmn');
       expect(phonemes, isNot(contains(RegExp(r'\([a-z]{2,3}\)'))));
-      expect(phonemizer.backendName, 'espeak_zig');
+      expect(phonemizer.backendName, 'espeak_native');
     } catch (error) {
       markTestSkipped('eSpeak-NG FFI library unavailable: $error');
     } finally {

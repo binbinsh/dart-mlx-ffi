@@ -1,9 +1,5 @@
 import 'dart:async';
-import 'dart:ffi' as ffi;
 
-import 'package:ffi/ffi.dart';
-
-import '../../runtime/native_bindings.dart' as native;
 import 'espeak.dart';
 
 typedef KokoroPhonemeBackend =
@@ -39,16 +35,13 @@ final class KokoroPhonemizer {
   String get backendName => _backend != null
       ? 'injected'
       : _ffi != null
-      ? 'espeak_zig'
+      ? 'espeak_native'
       : 'lazy';
 
   Future<String> phonemize(String text, {String language = 'en-us'}) async {
     final normalized = text.trim();
     if (normalized.isEmpty) {
       return '';
-    }
-    if (_backend == null) {
-      return _phonemizeNative(normalized, language);
     }
     final requestedLanguage = _canonicalLanguage(language);
     final input = _normalizeTextForLanguage(normalized, requestedLanguage);
@@ -75,9 +68,6 @@ final class KokoroPhonemizer {
     final normalized = ssml.trim();
     if (normalized.isEmpty) {
       return '';
-    }
-    if (_backend == null) {
-      return _phonemizeSsmlNative(normalized, language);
     }
     final chunks = _kokoroSsml(normalized);
     final out = StringBuffer();
@@ -120,33 +110,8 @@ final class KokoroPhonemizer {
     return ffi.textToPhonemes(text, voice: language);
   }
 
-  String _phonemizeNative(String text, String language) {
-    final cacheKey = 'native\u0000${language.trim().toLowerCase()}\u0000$text';
-    final cached = _cache[cacheKey];
-    if (cached != null) {
-      return cached;
-    }
-    final phonemes = _nativeG2p().kokoroText(text, language: language);
-    _cache[cacheKey] = phonemes;
-    return phonemes;
-  }
-
-  String _phonemizeSsmlNative(String ssml, String language) {
-    return _nativeG2p().kokoroSsml(ssml, language: language);
-  }
-
-  EspeakG2p _nativeG2p() {
-    return _ffi ??= EspeakG2p.auto(
-      libraryPath: espeakLibraryPath,
-      dataPath: espeakDataPath,
-      voice: 'en-us',
-      phonemeMode: EspeakG2p.cliIpaMode,
-      separator: null,
-    );
-  }
-
   Future<String> _phonemizePinyinSequence(String pinyin) async {
-    final normalized = _kokoroCall(pinyin, native.kokPinyinNorm);
+    final normalized = _normalizePinyin(pinyin);
     if (normalized.isEmpty) {
       return '';
     }
@@ -166,12 +131,12 @@ final class KokoroPhonemizer {
     String defaultLanguage,
   ) async {
     final runs = _kokoroRuns(text, defaultLanguage);
-    final out = StringBuffer();
+    final out = <String>[];
     for (final run in runs) {
       if (run.language.isEmpty) {
-        out.write(run.text);
+        out.add(run.text);
       } else {
-        out.write(
+        out.add(
           _postProcess(
             await _phonemizeUncached(run.text, run.language),
             run.language,
@@ -179,7 +144,7 @@ final class KokoroPhonemizer {
         );
       }
     }
-    return out.toString();
+    return out.where((value) => value.isNotEmpty).join(' ');
   }
 
   String _canonicalLanguage(String value) {
@@ -193,181 +158,201 @@ final class KokoroPhonemizer {
   }
 
   String _normalizeTextForLanguage(String text, String language) {
-    return _kokoroTextCall(text, language, native.kokNorm);
+    var out = _collapseSpaces(text);
+    if (language == 'en-us' || language == 'en') {
+      out = out.replaceAllMapped(
+        RegExp(r'\bDr\.\s*', caseSensitive: false),
+        (_) => 'Doctor ',
+      );
+      out = out.replaceAllMapped(RegExp(r'\$(\d+)\.(\d{2})'), (match) {
+        final dollars = int.parse(match.group(1)!);
+        final cents = int.parse(match.group(2)!);
+        final dollarWord = dollars == 1 ? 'dollar' : 'dollars';
+        final centWord = cents == 1 ? 'cent' : 'cents';
+        return '$dollars $dollarWord and $cents $centWord';
+      });
+      out = out.replaceAllMapped(
+        RegExp(r'\b(\d{1,2}):0(\d)\b'),
+        (match) => '${match.group(1)} oh ${match.group(2)}',
+      );
+      out = out.replaceAllMapped(
+        RegExp(r'\b20(\d{2})\b'),
+        (match) => '20 ${match.group(1)}',
+      );
+    }
+    return _collapseSpaces(out);
   }
 
   String _postProcess(String value, String language) {
-    return _kokoroTextCall(value, language, native.kokPost);
+    var out = value.replaceAll('\u200d', '');
+    out = out.replaceAll(RegExp(r'\([a-z]{2,3}\)\s*'), ' ');
+    if (language == 'cmn') {
+      return _collapseSpaces(out.replaceAll(RegExp(r'[0-9]'), ''));
+    }
+    out = out
+        .replaceAll('kəkˈoːɹoʊ', 'kˈoʊkəɹoʊ')
+        .replaceAll('nˈaɪnti', 'nˈaɪndi')
+        .replaceAll('ahˈʌndɹɪd', 'a hˈʌndɹɪd')
+        .replaceAll('d z!', 'dz!');
+    return _collapseSpaces(
+      out
+          .split(RegExp(r'\s+'))
+          .map((token) {
+            return switch (token) {
+              'r' => 'ɹ',
+              'x' => 'k',
+              'ɬ' => 'l',
+              'ʲ' => 'j',
+              _ => token,
+            };
+          })
+          .join(' '),
+    );
   }
 
   String _filterKokoroPhonemes(String value) {
-    return _kokoroCall(value, native.kokClean);
-  }
-
-  String _kokoroCall(
-    String value,
-    ffi.Pointer<ffi.Char> Function(
-      ffi.Pointer<ffi.Char>,
-      ffi.Pointer<ffi.Pointer<ffi.Char>>,
-    )
-    call,
-  ) {
-    final text = value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    ffi.Pointer<ffi.Char> out = ffi.nullptr;
-    try {
-      out = call(text, error);
-      if (out == ffi.nullptr) {
-        throw StateError(_takeNativeError(error));
-      }
-      return out.cast<Utf8>().toDartString();
-    } finally {
-      if (out != ffi.nullptr) {
-        native.freeStr(out);
-      }
-      calloc
-        ..free(text)
-        ..free(error);
-    }
-  }
-
-  String _kokoroTextCall(
-    String value,
-    String language,
-    ffi.Pointer<ffi.Char> Function(
-      ffi.Pointer<ffi.Char>,
-      ffi.Pointer<ffi.Char>,
-      ffi.Pointer<ffi.Pointer<ffi.Char>>,
-    )
-    call,
-  ) {
-    final text = value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final lang = language.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    ffi.Pointer<ffi.Char> out = ffi.nullptr;
-    try {
-      out = call(text, lang, error);
-      if (out == ffi.nullptr) {
-        throw StateError(_takeNativeError(error));
-      }
-      return out.cast<Utf8>().toDartString();
-    } finally {
-      if (out != ffi.nullptr) {
-        native.freeStr(out);
-      }
-      calloc
-        ..free(text)
-        ..free(lang)
-        ..free(error);
-    }
+    return _collapseSpaces(
+      value
+          .replaceAll('\u200d', '')
+          .replaceAll(RegExp(r'\([a-z]{2,3}\)\s*'), ' '),
+    );
   }
 
   String _normalizeExplicitPhonemes(String value) {
-    return _kokoroCall(value, native.kokExplicit);
+    return _collapseSpaces(value.replaceAll("'", 'ˈ'));
   }
 
   List<_KokoroRun> _kokoroRuns(String text, String defaultLanguage) {
-    final textPtr = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final languagePtr = defaultLanguage
-        .toNativeUtf8(allocator: calloc)
-        .cast<ffi.Char>();
-    final out = calloc<ffi.Pointer<native.KokoroRunAbi>>();
-    final count = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    ffi.Pointer<native.KokoroRunAbi> items = ffi.nullptr;
-    try {
-      final status = native.kokRuns(textPtr, languagePtr, out, count, error);
-      if (status != 0) {
-        throw StateError(_takeNativeError(error));
+    final runs = <_KokoroRun>[];
+    final current = StringBuffer();
+    String? currentLanguage;
+
+    void flush() {
+      if (current.isEmpty) {
+        return;
       }
-      items = out.value;
-      return [
-        for (var i = 0; i < count.value; i += 1)
-          _KokoroRun(
-            items[i].text.cast<Utf8>().toDartString(),
-            items[i].language.cast<Utf8>().toDartString(),
-          ),
-      ];
-    } finally {
-      if (items != ffi.nullptr) {
-        native.kokFreeRuns(items, count.value);
-      }
-      calloc
-        ..free(textPtr)
-        ..free(languagePtr)
-        ..free(out)
-        ..free(count)
-        ..free(error);
+      runs.add(
+        _KokoroRun(current.toString(), currentLanguage ?? defaultLanguage),
+      );
+      current.clear();
     }
+
+    for (final rune in text.runes) {
+      final char = String.fromCharCode(rune);
+      if (char.trim().isEmpty) {
+        current.write(char);
+        continue;
+      }
+      final language = _isCjkRune(rune) ? 'cmn' : 'en-us';
+      if (currentLanguage != null && language != currentLanguage) {
+        flush();
+      }
+      currentLanguage = language;
+      current.write(char);
+    }
+    flush();
+    return runs;
   }
 
   List<_SsmlChunk> _kokoroSsml(String text) {
-    final textPtr = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final out = calloc<ffi.Pointer<native.KokoroSsmlAbi>>();
-    final count = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    ffi.Pointer<native.KokoroSsmlAbi> items = ffi.nullptr;
-    try {
-      final status = native.kokSsml(textPtr, out, count, error);
-      if (status != 0) {
-        throw StateError(_takeNativeError(error));
-      }
-      items = out.value;
-      return [
-        for (var i = 0; i < count.value; i += 1)
-          _SsmlChunk(
-            items[i].kind,
-            items[i].text.cast<Utf8>().toDartString(),
-            items[i].spaceAfter != 0,
+    var body = text
+        .replaceAll(RegExp(r'</?speak\b[^>]*>', caseSensitive: false), '')
+        .replaceAllMapped(
+          RegExp(
+            r'<sub\b[^>]*\balias="([^"]*)"[^>]*>.*?</sub>',
+            caseSensitive: false,
+            dotAll: true,
           ),
-      ];
-    } finally {
-      if (items != ffi.nullptr) {
-        native.kokFreeSsml(items, count.value);
+          (match) => _xmlUnescape(match.group(1)!),
+        );
+    final chunks = <_SsmlChunk>[];
+
+    void addPlain(String value) {
+      final plain = _xmlUnescape(
+        value.replaceAll(RegExp(r'<[^>]+>', dotAll: true), ''),
+      );
+      if (plain.trim().isNotEmpty) {
+        chunks.add(_SsmlChunk(_ssmlPlain, plain, false));
       }
-      calloc
-        ..free(textPtr)
-        ..free(out)
-        ..free(count)
-        ..free(error);
     }
+
+    final phoneme = RegExp(
+      r'<phoneme\b[^>]*\bph="([^"]*)"[^>]*>.*?</phoneme>',
+      caseSensitive: false,
+      dotAll: true,
+    );
+    var cursor = 0;
+    for (final match in phoneme.allMatches(body)) {
+      addPlain(body.substring(cursor, match.start));
+      final value = _xmlUnescape(match.group(1)!);
+      chunks.add(
+        _SsmlChunk(
+          _looksLikePinyin(value) ? _ssmlPinyin : _ssmlExplicit,
+          value,
+          false,
+        ),
+      );
+      cursor = match.end;
+    }
+    addPlain(body.substring(cursor));
+
+    return [
+      for (var i = 0; i < chunks.length; i += 1)
+        _SsmlChunk(chunks[i].kind, chunks[i].text, i + 1 < chunks.length),
+    ];
   }
 
   _KokoroRoute _kokoroRoute(String text, String requestedLanguage) {
-    final textPtr = text.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    final requestedPtr = requestedLanguage
-        .toNativeUtf8(allocator: calloc)
-        .cast<ffi.Char>();
-    final mixed = calloc<ffi.Int32>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    ffi.Pointer<ffi.Char> out = ffi.nullptr;
-    try {
-      out = native.kokLanguage(textPtr, requestedPtr, mixed, error);
-      if (out == ffi.nullptr) {
-        throw StateError(_takeNativeError(error));
-      }
-      return _KokoroRoute(out.cast<Utf8>().toDartString(), mixed.value != 0);
-    } finally {
-      if (out != ffi.nullptr) {
-        native.freeStr(out);
-      }
-      calloc
-        ..free(textPtr)
-        ..free(requestedPtr)
-        ..free(mixed)
-        ..free(error);
+    final hasCjk = text.runes.any(_isCjkRune);
+    final hasLatin = text.runes.any(_isLatinRune);
+    if (hasCjk && hasLatin) {
+      return _KokoroRoute(requestedLanguage, true);
     }
+    if (hasCjk) {
+      return const _KokoroRoute('cmn', false);
+    }
+    if (hasLatin) {
+      return const _KokoroRoute('en-us', false);
+    }
+    return _KokoroRoute(requestedLanguage, false);
   }
-}
 
-String _takeNativeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
-  final value = error.value;
-  if (value == ffi.nullptr) return 'Native call failed.';
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
+  String _normalizePinyin(String value) {
+    return _collapseSpaces(value.toLowerCase());
+  }
+
+  bool _looksLikePinyin(String value) {
+    return RegExp(
+      r'^[a-züv:]+[1-5](\s+[a-züv:]+[1-5])*$',
+      caseSensitive: false,
+    ).hasMatch(value.trim());
+  }
+
+  String _xmlUnescape(String value) {
+    return value
+        .replaceAll('&quot;', '"')
+        .replaceAll('&apos;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&');
+  }
+
+  String _collapseSpaces(String value) {
+    return value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  bool _isLatinRune(int rune) {
+    return (rune >= 0x41 && rune <= 0x5a) || (rune >= 0x61 && rune <= 0x7a);
+  }
+
+  bool _isCjkRune(int rune) {
+    return (rune >= 0x3400 && rune <= 0x4dbf) ||
+        (rune >= 0x4e00 && rune <= 0x9fff) ||
+        (rune >= 0xf900 && rune <= 0xfaff) ||
+        (rune >= 0x20000 && rune <= 0x2a6df) ||
+        (rune >= 0x2a700 && rune <= 0x2b73f) ||
+        (rune >= 0x2b740 && rune <= 0x2b81f) ||
+        (rune >= 0x2b820 && rune <= 0x2ceaf);
   }
 }
 

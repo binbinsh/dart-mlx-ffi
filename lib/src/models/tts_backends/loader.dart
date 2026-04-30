@@ -1,7 +1,13 @@
 import '../kokoro/kokoro.dart';
+import '../neutts_air/neutts_air.dart';
+import '../neutts_air/neutts_air_runtime.dart';
+import '../sarashina2/sarashina2.dart';
+import '../sarashina2/sarashina2_runtime.dart';
 import '../unifrontend/unifrontend.dart';
 import '../cosyvoice2/cosyvoice2.dart';
+import '../cosyvoice2/cosyvoice2_runtime.dart';
 import '../../runtime/onnx.dart';
+import '../../runtime/runtime_library_dirs.dart';
 import 'runtime.dart';
 
 final class DartUniFrontendTtsPaths {
@@ -10,6 +16,8 @@ final class DartUniFrontendTtsPaths {
     required this.kokoroVoicesPath,
     required this.kokoroConfigPath,
     required this.cosyVoice2Paths,
+    required this.neuttsAirPaths,
+    required this.sarashina2Paths,
     required this.structuredModelPath,
     required this.structuredExportConfigPath,
     required this.structuredConfigPath,
@@ -31,6 +39,8 @@ final class DartUniFrontendTtsPaths {
       kokoroConfigPath:
           '$normalized/src/ttsbackends/providers/kokoro/models/config.json',
       cosyVoice2Paths: CosyVoice2Paths.fromUniFrontendRoot(normalized),
+      neuttsAirPaths: NeuttsAirPaths.fromUniFrontendRoot(normalized),
+      sarashina2Paths: Sarashina2TtsPaths.fromUniFrontendRoot(normalized),
       structuredModelPath:
           '$normalized/artifacts/onnx/structured-mmbert-focus-v2-step-20000.online-multi.fixed8.512x1024.onnx',
       structuredExportConfigPath:
@@ -52,6 +62,8 @@ final class DartUniFrontendTtsPaths {
   final String kokoroVoicesPath;
   final String kokoroConfigPath;
   final CosyVoice2Paths cosyVoice2Paths;
+  final NeuttsAirPaths neuttsAirPaths;
+  final Sarashina2TtsPaths sarashina2Paths;
   final String structuredModelPath;
   final String structuredExportConfigPath;
   final String structuredConfigPath;
@@ -65,6 +77,8 @@ final class DartUniFrontendTtsPaths {
     String? kokoroVoicesPath,
     String? kokoroConfigPath,
     CosyVoice2Paths? cosyVoice2Paths,
+    NeuttsAirPaths? neuttsAirPaths,
+    Sarashina2TtsPaths? sarashina2Paths,
     String? structuredModelPath,
     String? structuredExportConfigPath,
     String? structuredConfigPath,
@@ -78,6 +92,8 @@ final class DartUniFrontendTtsPaths {
       kokoroVoicesPath: kokoroVoicesPath ?? this.kokoroVoicesPath,
       kokoroConfigPath: kokoroConfigPath ?? this.kokoroConfigPath,
       cosyVoice2Paths: cosyVoice2Paths ?? this.cosyVoice2Paths,
+      neuttsAirPaths: neuttsAirPaths ?? this.neuttsAirPaths,
+      sarashina2Paths: sarashina2Paths ?? this.sarashina2Paths,
       structuredModelPath: structuredModelPath ?? this.structuredModelPath,
       structuredExportConfigPath:
           structuredExportConfigPath ?? this.structuredExportConfigPath,
@@ -137,11 +153,58 @@ final class DartTtsRuntimeOptions {
 Future<DartTtsBackendRegistry> loadUniFrontendKokoroTtsRegistry({
   required DartUniFrontendTtsPaths paths,
   DartTtsRuntimeOptions options = const DartTtsRuntimeOptions(),
+  bool includeCosyVoice2 = false,
+  bool includeNeuttsAir = false,
+  bool includeSarashina2 = false,
+  bool loadSarashina2Llm = false,
+  bool loadNeuttsAirTokenizer = true,
+  bool loadNeuttsAirLm = true,
+  bool loadNeuttsAirCodecDecoder = true,
+  bool loadCosyVoice2StreamingHift = true,
+}) {
+  return loadUniFrontendTtsRegistry(
+    paths: paths,
+    options: options,
+    includeKokoro: true,
+    includeCosyVoice2: includeCosyVoice2,
+    includeNeuttsAir: includeNeuttsAir,
+    includeSarashina2: includeSarashina2,
+    loadSarashina2Llm: loadSarashina2Llm,
+    loadNeuttsAirTokenizer: loadNeuttsAirTokenizer,
+    loadNeuttsAirLm: loadNeuttsAirLm,
+    loadNeuttsAirCodecDecoder: loadNeuttsAirCodecDecoder,
+    loadCosyVoice2StreamingHift: loadCosyVoice2StreamingHift,
+  );
+}
+
+Future<DartTtsBackendRegistry> loadUniFrontendTtsRegistry({
+  required DartUniFrontendTtsPaths paths,
+  DartTtsRuntimeOptions options = const DartTtsRuntimeOptions(),
+  bool includeKokoro = true,
+  bool includeCosyVoice2 = false,
+  bool includeNeuttsAir = false,
+  bool includeSarashina2 = false,
+  bool loadSarashina2Llm = false,
+  bool loadNeuttsAirTokenizer = true,
+  bool loadNeuttsAirLm = true,
+  bool loadNeuttsAirCodecDecoder = true,
+  bool loadCosyVoice2StreamingHift = true,
 }) async {
+  if (!includeKokoro &&
+      !includeCosyVoice2 &&
+      !includeNeuttsAir &&
+      !includeSarashina2) {
+    throw ArgumentError(
+      'at least one TTS backend must be requested for the registry',
+    );
+  }
   final preloadLibraries = options.preloadLibraries.isNotEmpty
       ? options.preloadLibraries
       : discoverDefaultOnnxRuntimePreloadLibraries(
           libraryDirectories: _runtimeLibraryDirectories(paths),
+          libraryNames: onnxRuntimePreloadLibraryNamesForProvider(
+            options.provider,
+          ),
           runtimeEnvSearchRoots: _runtimeEnvSearchRoots(paths),
         );
   final backendOptions = {
@@ -151,39 +214,88 @@ Future<DartTtsBackendRegistry> loadUniFrontendKokoroTtsRegistry({
       'preloadLibraries': encodeOnnxRuntimePreloadLibraries(preloadLibraries),
     ...options.backendOptions,
   };
-  final frontend = await DartStructuredFrontendRuntime.load(
-    modelPath: paths.structuredModelPath,
-    exportConfigPath: paths.structuredExportConfigPath,
-    structuredConfigPath: paths.structuredConfigPath,
-    tokenizerJsonPath: paths.structuredTokenizerPath,
-    charVocabPath: paths.structuredCharVocabPath,
-    labelSpacePath: paths.structuredLabelSpacePath,
-    englishTnLexiconPath: paths.structuredEnglishTnLexiconPath,
-    provider: options.provider,
-    deviceId: options.deviceId,
-    requireProvider: options.requireProvider,
-    numThreads: options.numThreads,
-    backendOptions: backendOptions,
-  );
+  final backends = <DartTtsBackend>[];
   try {
-    final kokoro = await KokoroDartRuntime.load(
-      modelPath: paths.kokoroModelPath,
-      voicesPath: paths.kokoroVoicesPath,
-      configPath: paths.kokoroConfigPath,
-      provider: options.provider,
-      deviceId: options.deviceId,
-      requireProvider: options.requireProvider,
-      numThreads: options.numThreads,
-      backendOptions: backendOptions,
-    );
-    final tts = UniFrontendKokoroTtsRuntime(
-      frontend: frontend,
-      kokoro: kokoro,
-      phonemizer: KokoroPhonemizer(),
-    );
-    return DartTtsBackendRegistry(backends: [KokoroTtsBackend(tts)]);
+    if (includeKokoro) {
+      final frontend = await DartStructuredFrontendRuntime.load(
+        modelPath: paths.structuredModelPath,
+        exportConfigPath: paths.structuredExportConfigPath,
+        structuredConfigPath: paths.structuredConfigPath,
+        tokenizerJsonPath: paths.structuredTokenizerPath,
+        charVocabPath: paths.structuredCharVocabPath,
+        labelSpacePath: paths.structuredLabelSpacePath,
+        englishTnLexiconPath: paths.structuredEnglishTnLexiconPath,
+        provider: options.provider,
+        deviceId: options.deviceId,
+        requireProvider: options.requireProvider,
+        numThreads: options.numThreads,
+        backendOptions: backendOptions,
+      );
+      try {
+        final kokoro = await KokoroDartRuntime.load(
+          modelPath: paths.kokoroModelPath,
+          voicesPath: paths.kokoroVoicesPath,
+          configPath: paths.kokoroConfigPath,
+          provider: options.provider,
+          deviceId: options.deviceId,
+          requireProvider: options.requireProvider,
+          numThreads: options.numThreads,
+          backendOptions: backendOptions,
+        );
+        final tts = UniFrontendKokoroTtsRuntime(
+          frontend: frontend,
+          kokoro: kokoro,
+          phonemizer: KokoroPhonemizer(),
+        );
+        backends.add(KokoroTtsBackend(tts));
+      } catch (_) {
+        frontend.close();
+        rethrow;
+      }
+    }
+    if (includeCosyVoice2) {
+      final cosyVoice2 = await CosyVoice2DartRuntime.load(
+        paths: paths.cosyVoice2Paths,
+        provider: options.provider,
+        deviceId: options.deviceId,
+        requireProvider: options.requireProvider,
+        numThreads: options.numThreads,
+        backendOptions: backendOptions,
+        loadStreamingHift: loadCosyVoice2StreamingHift,
+      );
+      backends.add(CosyVoice2TtsBackend(cosyVoice2));
+    }
+    if (includeNeuttsAir) {
+      final neuttsAir = await NeuttsAirDartRuntime.load(
+        paths: paths.neuttsAirPaths,
+        provider: options.provider,
+        deviceId: options.deviceId,
+        requireProvider: options.requireProvider,
+        numThreads: options.numThreads,
+        backendOptions: backendOptions,
+        loadTokenizer: loadNeuttsAirTokenizer,
+        loadLm: loadNeuttsAirLm,
+        loadCodecDecoder: loadNeuttsAirCodecDecoder,
+      );
+      backends.add(NeuttsAirTtsBackend(neuttsAir));
+    }
+    if (includeSarashina2) {
+      final sarashina2 = await Sarashina2DartRuntime.load(
+        paths: paths.sarashina2Paths,
+        provider: options.provider,
+        deviceId: options.deviceId,
+        requireProvider: options.requireProvider,
+        numThreads: options.numThreads,
+        backendOptions: backendOptions,
+        loadLlm: loadSarashina2Llm,
+      );
+      backends.add(Sarashina2TtsBackend(sarashina2));
+    }
+    return DartTtsBackendRegistry(backends: backends);
   } catch (_) {
-    frontend.close();
+    for (final backend in backends.reversed) {
+      backend.close();
+    }
     rethrow;
   }
 }
@@ -201,6 +313,9 @@ List<String> _runtimeEnvSearchRoots(DartUniFrontendTtsPaths paths) {
     paths.kokoroModelPath,
     paths.structuredModelPath,
     paths.structuredConfigPath,
+    paths.cosyVoice2Paths.modelDir,
+    paths.neuttsAirPaths.modelDir,
+    paths.sarashina2Paths.modelDir,
   ]) {
     addRootBefore(path, '/src/ttsbackends/');
     addRootBefore(path, '/artifacts/');
@@ -209,11 +324,5 @@ List<String> _runtimeEnvSearchRoots(DartUniFrontendTtsPaths paths) {
 }
 
 List<String> _runtimeLibraryDirectories(DartUniFrontendTtsPaths paths) {
-  return [
-    for (final root in _runtimeEnvSearchRoots(paths)) ...[
-      '$root/artifacts/runtime/onnxruntime/lib',
-      '$root/artifacts/runtime/cuda/lib',
-      '$root/artifacts/runtime/tensorrt/lib',
-    ],
-  ];
+  return runtimeLibraryDirectories(_runtimeEnvSearchRoots(paths));
 }

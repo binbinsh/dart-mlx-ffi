@@ -4,20 +4,19 @@ library;
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
+import 'native_ffi.dart' as dz;
 import 'package:ffi/ffi.dart';
 
 import '../models/shared/runtime_metadata.dart';
+import 'native_ffi_types.dart';
 import 'native_bindings.dart' as native;
+import 'native_byte_buffer.dart';
+import 'native_tensor_allocation.dart';
 import 'runtime.dart';
 
 final _nativeRuntimeTensorBuffers = Expando<NativeTensorBuffer>(
   'NativeTensorBuffer',
 );
-final _nativeInputFinalizer = Finalizer<ffi.Pointer<ffi.Void>>((pointer) {
-  if (pointer != ffi.nullptr) {
-    native.freeBuf(pointer);
-  }
-});
 const _infoListSep = '\x1e';
 const _entryPathSep = '\x1f';
 const _entryString = 1;
@@ -27,6 +26,9 @@ const _entryMap = 4;
 const _entryList = 5;
 const _entryDouble = 6;
 const _entryNull = 7;
+const _tensorMemoryCpu = 0;
+const _tensorMemoryNativeHandle = 1;
+const _tensorMemoryCpuView = 2;
 
 /// Native runtime implementation metadata.
 abstract final class NativeRuntimeBackend {
@@ -39,7 +41,7 @@ abstract final class NativeRuntimeBackend {
       final value = out.ref;
       return <String, Object?>{
         'native_backend': _staticText(value.nativeBackend),
-        'zig_version': _staticText(value.zigVersion),
+        'runtime_version': _staticText(value.runtimeVersion),
         'async_model': _staticText(value.asyncModel),
         'abi': _staticText(value.abi),
         'mlx_backend': <String, Object?>{
@@ -126,7 +128,7 @@ void _putNonZero(Map<String, Object?> map, String key, int value) {
   if (value != 0) map[key] = value;
 }
 
-/// Zig-owned native tensor input buffer.
+/// native-backed native tensor input buffer.
 ///
 /// Use this for hot paths that should avoid copying Dart heap typed data into
 /// native scratch memory before each inference call. Call [close] when the
@@ -136,12 +138,13 @@ final class NativeTensorBuffer {
     this.dtype,
     List<int> shape,
     this.byteLength,
-    ffi.Pointer<ffi.Void> pointer,
+    NativeTensorAllocation allocation,
   ) : shape = List<int>.unmodifiable(shape),
-      _pointer = pointer,
-      _bytes = _nativeBytes(pointer, byteLength) {
+      _allocation = allocation,
+      _pointer = allocation.pointer,
+      _bytes = _nativeBytes(allocation.pointer, byteLength) {
     if (_pointer != ffi.nullptr) {
-      _nativeInputFinalizer.attach(this, _pointer, detach: this);
+      nativeTensorAllocationFinalizer.attach(this, _allocation, detach: this);
     }
   }
 
@@ -153,43 +156,50 @@ final class NativeTensorBuffer {
       throw RangeError.value(shape.length, 'shape', 'Rank must fit int32');
     }
     final rank = shape.length;
-    final shapePointer = rank == 0 ? ffi.nullptr : calloc<ffi.Int64>(rank);
-    final byteLength = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
+    final shapeBuffer = rank == 0
+        ? null
+        : dz.NativeInt64Array.fromValues(shape);
+    final byteLength = dz.NativeIntPtrArray.allocate(1);
+    final error = _nativeErrorSlot();
     try {
-      if (rank > 0) {
-        shapePointer.asTypedList(rank).setAll(0, shape);
-      }
       final pointer = native.allocTensor(
         _dtypeId(dtype),
-        shapePointer,
+        shapeBuffer?.pointer ?? ffi.nullptr,
         rank,
-        byteLength,
-        error,
+        byteLength.pointer,
+        error.pointer,
       );
-      final resolvedByteLength = byteLength.value;
+      final resolvedByteLength = byteLength[0];
       if (pointer == ffi.nullptr) {
         if (error.value != ffi.nullptr) {
-          throw StateError(_takeError(error));
+          throw StateError(error.take());
         }
         if (resolvedByteLength == 0) {
-          return NativeTensorBuffer._(dtype, shape, 0, ffi.nullptr);
+          return NativeTensorBuffer._(
+            dtype,
+            shape,
+            0,
+            NativeTensorAllocation.runtime(ffi.nullptr),
+          );
         }
       }
       if (pointer == ffi.nullptr) {
         throw StateError('Failed to allocate native tensor buffer.');
       }
-      return NativeTensorBuffer._(dtype, shape, resolvedByteLength, pointer);
+      return NativeTensorBuffer._(
+        dtype,
+        shape,
+        resolvedByteLength,
+        NativeTensorAllocation.runtime(pointer),
+      );
     } finally {
-      if (shapePointer != ffi.nullptr) {
-        calloc.free(shapePointer);
-      }
-      calloc.free(byteLength);
-      calloc.free(error);
+      shapeBuffer?.close();
+      byteLength.close();
+      error.close();
     }
   }
 
-  /// Adopts memory returned by the Zig runtime and releases it with
+  /// Adopts memory returned by the native runtime and releases it with
   /// `dinf_free_buf` when this buffer closes.
   factory NativeTensorBuffer.adopt({
     required RuntimeTensorDataType dtype,
@@ -201,59 +211,82 @@ final class NativeTensorBuffer {
       throw RangeError.value(byteLength, 'byteLength');
     }
     if (byteLength == 0) {
-      return NativeTensorBuffer._(dtype, shape, 0, ffi.nullptr);
+      return NativeTensorBuffer._(
+        dtype,
+        shape,
+        0,
+        NativeTensorAllocation.runtime(ffi.nullptr),
+      );
     }
     if (pointer == ffi.nullptr) {
       throw ArgumentError.value(pointer, 'pointer', 'must not be null');
     }
-    return NativeTensorBuffer._(dtype, shape, byteLength, pointer);
+    return NativeTensorBuffer._(
+      dtype,
+      shape,
+      byteLength,
+      NativeTensorAllocation.runtime(pointer),
+    );
   }
 
-  factory NativeTensorBuffer.float32(List<int> shape) =>
-      NativeTensorBuffer.allocate(
-        dtype: RuntimeTensorDataType.float32,
-        shape: shape,
-      );
+  factory NativeTensorBuffer.nativeFfi({
+    required RuntimeTensorDataType dtype,
+    required List<int> shape,
+    dz.NativeFfi? ffiRuntime,
+  }) {
+    final runtime = ffiRuntime ?? dz.NativeFfi.shared;
+    final allocated = allocateNativeFfiTensor(
+      runtime: runtime,
+      dtype: nativeFfiDtype(dtype),
+      shape: shape,
+    );
+    return NativeTensorBuffer._(
+      dtype,
+      shape,
+      allocated.byteLength,
+      allocated.allocation,
+    );
+  }
 
-  factory NativeTensorBuffer.int32(List<int> shape) =>
-      NativeTensorBuffer.allocate(
-        dtype: RuntimeTensorDataType.int32,
-        shape: shape,
-      );
+  factory NativeTensorBuffer.float32(
+    List<int> shape, {
+    dz.NativeFfi? ffiRuntime,
+  }) => _nativeFfiBuffer(RuntimeTensorDataType.float32, shape, ffiRuntime);
 
-  factory NativeTensorBuffer.int64(List<int> shape) =>
-      NativeTensorBuffer.allocate(
-        dtype: RuntimeTensorDataType.int64,
-        shape: shape,
-      );
+  factory NativeTensorBuffer.int32(
+    List<int> shape, {
+    dz.NativeFfi? ffiRuntime,
+  }) => _nativeFfiBuffer(RuntimeTensorDataType.int32, shape, ffiRuntime);
 
-  factory NativeTensorBuffer.float64(List<int> shape) =>
-      NativeTensorBuffer.allocate(
-        dtype: RuntimeTensorDataType.float64,
-        shape: shape,
-      );
+  factory NativeTensorBuffer.int64(
+    List<int> shape, {
+    dz.NativeFfi? ffiRuntime,
+  }) => _nativeFfiBuffer(RuntimeTensorDataType.int64, shape, ffiRuntime);
 
-  factory NativeTensorBuffer.uint8(List<int> shape) =>
-      NativeTensorBuffer.allocate(
-        dtype: RuntimeTensorDataType.uint8,
-        shape: shape,
-      );
+  factory NativeTensorBuffer.float64(
+    List<int> shape, {
+    dz.NativeFfi? ffiRuntime,
+  }) => _nativeFfiBuffer(RuntimeTensorDataType.float64, shape, ffiRuntime);
 
-  factory NativeTensorBuffer.boolean(List<int> shape) =>
-      NativeTensorBuffer.allocate(
-        dtype: RuntimeTensorDataType.boolean,
-        shape: shape,
-      );
+  factory NativeTensorBuffer.uint8(
+    List<int> shape, {
+    dz.NativeFfi? ffiRuntime,
+  }) => _nativeFfiBuffer(RuntimeTensorDataType.uint8, shape, ffiRuntime);
 
-  factory NativeTensorBuffer.float16(List<int> shape) =>
-      NativeTensorBuffer.allocate(
-        dtype: RuntimeTensorDataType.float16,
-        shape: shape,
-      );
+  factory NativeTensorBuffer.boolean(
+    List<int> shape, {
+    dz.NativeFfi? ffiRuntime,
+  }) => _nativeFfiBuffer(RuntimeTensorDataType.boolean, shape, ffiRuntime);
+
+  factory NativeTensorBuffer.float16(
+    List<int> shape, {
+    dz.NativeFfi? ffiRuntime,
+  }) => _nativeFfiBuffer(RuntimeTensorDataType.float16, shape, ffiRuntime);
 
   final RuntimeTensorDataType dtype;
   final List<int> shape;
   final int byteLength;
+  final NativeTensorAllocation _allocation;
   ffi.Pointer<ffi.Void> _pointer;
   final Uint8List _bytes;
 
@@ -358,8 +391,8 @@ final class NativeTensorBuffer {
       return;
     }
     _pointer = ffi.nullptr;
-    _nativeInputFinalizer.detach(this);
-    native.freeBuf(pointer);
+    nativeTensorAllocationFinalizer.detach(this);
+    _allocation.release();
   }
 
   void _checkOpen() {
@@ -376,10 +409,23 @@ final class NativeTensorBuffer {
   }
 }
 
+NativeTensorBuffer _nativeFfiBuffer(
+  RuntimeTensorDataType dtype,
+  List<int> shape,
+  dz.NativeFfi? ffiRuntime,
+) => NativeTensorBuffer.nativeFfi(
+  dtype: dtype,
+  shape: shape,
+  ffiRuntime: ffiRuntime,
+);
+
 final class _ValueEntryArena {
   _ValueEntryArena(Map<String, Object?> values) {
     count = _countMap(values);
-    pointer = count == 0 ? ffi.nullptr : calloc<native.ValueEntryAbi>(count);
+    _buffer = NativeByteBuffer.allocate(
+      ffi.sizeOf<native.ValueEntryAbi>() * count,
+    );
+    pointer = _buffer.pointer.cast<native.ValueEntryAbi>();
     try {
       var index = 0;
       for (final entry in values.entries) {
@@ -393,7 +439,8 @@ final class _ValueEntryArena {
 
   late final ffi.Pointer<native.ValueEntryAbi> pointer;
   late final int count;
-  final List<ffi.Pointer<ffi.Char>> _strings = [];
+  late final NativeByteBuffer _buffer;
+  final List<dz.NativeUtf8CString> _strings = [];
 
   int _write(
     ffi.Pointer<native.ValueEntryAbi> target,
@@ -426,19 +473,17 @@ final class _ValueEntryArena {
   }
 
   ffi.Pointer<ffi.Char> _own(String value) {
-    final pointer = value.toNativeUtf8(allocator: calloc).cast<ffi.Char>();
-    _strings.add(pointer);
-    return pointer;
+    final string = dz.NativeUtf8CString.utf8(value);
+    _strings.add(string);
+    return string.pointer;
   }
 
   void close() {
     for (final value in _strings) {
-      calloc.free(value);
+      value.close();
     }
     _strings.clear();
-    if (pointer != ffi.nullptr) {
-      calloc.free(pointer);
-    }
+    _buffer.close();
   }
 }
 
@@ -496,14 +541,14 @@ final class NativeModelRuntime implements ModelRuntime {
         'runtime ${engine.name}.',
       );
     }
-    final error = calloc<ffi.Pointer<ffi.Char>>();
-    final path = bundle.artifactPath.toNativeUtf8().cast<ffi.Char>();
+    final error = _nativeErrorSlot();
+    final path = dz.NativeUtf8CString.utf8(bundle.artifactPath);
     final metadata = _ValueEntryArena(bundle.artifact.metadata);
     final backend = _ValueEntryArena(options.backendOptions);
     try {
       final handle = native.open(
         _engineId(engine),
-        path,
+        path.pointer,
         _preferMask(options.prefer),
         options.diagnostics ? 1 : 0,
         options.numThreads ?? 0,
@@ -511,20 +556,20 @@ final class NativeModelRuntime implements ModelRuntime {
         metadata.count,
         backend.pointer,
         backend.count,
-        error,
+        error.pointer,
       );
       if (handle == ffi.nullptr) {
-        throw StateError(_takeError(error));
+        throw StateError(error.take());
       }
       return _NativeModelSession(
         handle,
         diagnosticsEnabled: options.diagnostics,
       );
     } finally {
-      calloc.free(path);
+      path.close();
       metadata.close();
       backend.close();
-      calloc.free(error);
+      error.close();
     }
   }
 }
@@ -535,7 +580,7 @@ final class _NativeModelSession implements ModelSession {
 
   ffi.Pointer<ffi.Void> _handle;
   final bool _diagnosticsEnabled;
-  final Map<String, ffi.Pointer<ffi.Char>> _namePointers = {};
+  final Map<String, dz.NativeUtf8CString> _namePointers = {};
   final Map<String, _ShapeBuffer> _shapePointers = {};
   final Map<int, _ShapeBuffer> _vectorShapePointers = {};
   final Map<String, _NativeByteBuffer> _inputBuffers = {};
@@ -551,27 +596,30 @@ final class _NativeModelSession implements ModelSession {
   ModelOutputs run(ModelInputs inputs) {
     _checkOpen();
     final tensors = _encodeInputs(inputs.values);
-    final outputPtr = calloc<ffi.Pointer<native.NamedTensorAbi>>();
-    final outputCount = calloc<ffi.IntPtr>();
-    final error = calloc<ffi.Pointer<ffi.Char>>();
+    final outputPtr = dz.NativePointerArray<native.NamedTensorAbi>.allocate(1);
+    outputPtr[0] = ffi.nullptr;
+    final outputCount = dz.NativeIntPtrArray.allocate(1);
+    final error = _nativeErrorSlot();
     var outputTransferred = false;
     try {
       final status = native.run(
         _handle,
         tensors.pointer,
         tensors.count,
-        outputPtr,
-        outputCount,
-        error,
+        outputPtr.pointer,
+        outputCount.pointer,
+        error.pointer,
       );
       if (status != 0) {
-        throw StateError(_takeError(error));
+        throw StateError(error.take());
       }
-      final owner = outputPtr.value == ffi.nullptr
+      final count = outputCount[0];
+      final pointer = outputPtr[0];
+      final owner = pointer == ffi.nullptr
           ? null
-          : _NativeOutputOwner(outputPtr.value, outputCount.value);
+          : _NativeOutputOwner(pointer, count);
       outputTransferred = owner != null;
-      final outputs = _decodeOutputs(outputPtr.value, outputCount.value, owner);
+      final outputs = _decodeOutputs(pointer, count, owner);
       return ModelOutputs(
         outputs,
         diagnostics: _diagnosticsEnabled
@@ -580,12 +628,12 @@ final class _NativeModelSession implements ModelSession {
         release: owner?.close,
       );
     } finally {
-      if (!outputTransferred && outputPtr.value != ffi.nullptr) {
-        native.freeTensors(outputPtr.value, outputCount.value);
+      if (!outputTransferred && outputPtr[0] != ffi.nullptr) {
+        native.freeTensors(outputPtr[0], outputCount[0]);
       }
-      calloc.free(outputPtr);
-      calloc.free(outputCount);
-      calloc.free(error);
+      outputPtr.close();
+      outputCount.close();
+      error.close();
     }
   }
 
@@ -613,7 +661,7 @@ final class _NativeModelSession implements ModelSession {
     }
     _vectorShapePointers.clear();
     for (final name in _namePointers.values) {
-      calloc.free(name);
+      name.close();
     }
     _namePointers.clear();
   }
@@ -625,11 +673,11 @@ final class _NativeModelSession implements ModelSession {
   }
 
   Map<String, Object?> _diagnostics() {
-    final count = calloc<ffi.IntPtr>();
+    final count = dz.NativeIntPtrArray.allocate(1);
     ffi.Pointer<native.ValueEntryAbi> entries = ffi.nullptr;
     try {
-      entries = native.diag(_handle, count);
-      final length = count.value;
+      entries = native.diag(_handle, count.pointer);
+      final length = count[0];
       if (entries == ffi.nullptr || length <= 0) {
         return const <String, Object?>{};
       }
@@ -641,17 +689,16 @@ final class _NativeModelSession implements ModelSession {
       return diagnostics;
     } finally {
       if (entries != ffi.nullptr) {
-        native.freeDiag(entries, count.value);
+        native.freeDiag(entries, count[0]);
       }
-      calloc.free(count);
+      count.close();
     }
   }
 
   ffi.Pointer<ffi.Char> _namePointer(String name) {
-    return _namePointers.putIfAbsent(
-      name,
-      () => name.toNativeUtf8().cast<ffi.Char>(),
-    );
+    return _namePointers
+        .putIfAbsent(name, () => dz.NativeUtf8CString.utf8(name))
+        .pointer;
   }
 
   ffi.Pointer<ffi.Int64> _shapePointer(List<int> shape) {
@@ -666,6 +713,11 @@ final class _NativeModelSession implements ModelSession {
   }
 
   ffi.Pointer<ffi.Void> _inputDataPointer(String name, RuntimeTensor tensor) {
+    if (tensor.isNativeHandle) {
+      throw StateError(
+        'Native runtime tensor "$name" has no CPU data pointer.',
+      );
+    }
     final nativeBuffer = _nativeRuntimeTensorBuffers[tensor];
     if (nativeBuffer != null) {
       return nativeBuffer._pointerForRun(tensor.bytes.lengthInBytes);
@@ -780,8 +832,15 @@ final class _NativeModelSession implements ModelSession {
       ..tensor.dtype = _dtypeId(value.dtype)
       ..tensor.rank = value.shape.length
       ..tensor.shape = _shapePointer(value.shape)
-      ..tensor.byteLength = value.bytes.lengthInBytes
-      ..tensor.data = _inputDataPointer(name, value);
+      ..tensor.byteLength = value.byteLength
+      ..tensor.data = value.isNativeHandle
+          ? ffi.nullptr
+          : _inputDataPointer(name, value)
+      ..tensor.handle = _nativeTensorHandle(name, value)
+      ..tensor.memoryKind = value.isNativeHandle
+          ? _tensorMemoryNativeHandle
+          : _tensorMemoryCpu
+      ..tensor.reserved = 0;
   }
 
   void _writeTypedList(
@@ -799,8 +858,22 @@ final class _NativeModelSession implements ModelSession {
       ..tensor.rank = 1
       ..tensor.shape = _vectorShapePointer(length)
       ..tensor.byteLength = bytes.lengthInBytes
-      ..tensor.data = _inputBytesPointer(name, bytes);
+      ..tensor.data = _inputBytesPointer(name, bytes)
+      ..tensor.handle = ffi.nullptr
+      ..tensor.memoryKind = _tensorMemoryCpu
+      ..tensor.reserved = 0;
   }
+}
+
+ffi.Pointer<ffi.Void> _nativeTensorHandle(String name, RuntimeTensor value) {
+  if (!value.isNativeHandle) {
+    return ffi.nullptr;
+  }
+  final handle = value.nativeHandle;
+  if (handle == null || handle == ffi.nullptr) {
+    throw StateError('Native runtime tensor "$name" has a null handle.');
+  }
+  return handle;
 }
 
 List<String> _diagPath(native.ValueEntryAbi entry) {
@@ -883,6 +956,7 @@ final class _EncodedInputs {
 final class _InputTensorArena {
   ffi.Pointer<native.NamedTensorAbi> pointer = ffi.nullptr;
   int capacity = 0;
+  NativeByteBuffer? _buffer;
 
   ffi.Pointer<native.NamedTensorAbi> pointerFor(int count) {
     if (count == 0) {
@@ -892,7 +966,11 @@ final class _InputTensorArena {
       return pointer;
     }
     close();
-    pointer = calloc<native.NamedTensorAbi>(count);
+    final buffer = NativeByteBuffer.allocate(
+      ffi.sizeOf<native.NamedTensorAbi>() * count,
+    );
+    _buffer = buffer;
+    pointer = buffer.pointer.cast<native.NamedTensorAbi>();
     capacity = count;
     return pointer;
   }
@@ -901,7 +979,8 @@ final class _InputTensorArena {
     if (pointer == ffi.nullptr) {
       return;
     }
-    calloc.free(pointer);
+    _buffer?.close();
+    _buffer = null;
     pointer = ffi.nullptr;
     capacity = 0;
   }
@@ -918,14 +997,20 @@ Map<String, Object?> _decodeOutputs(
     final name = named.name.cast<Utf8>().toDartString();
     final tensor = named.tensor;
     final shape = tensor.shape.asTypedList(tensor.rank).toList();
-    final bytes = tensor.byteLength == 0 || tensor.data == ffi.nullptr
+    final memoryKind = _tensorMemoryKind(tensor.memoryKind);
+    final isHandle = memoryKind == RuntimeTensorMemoryKind.nativeHandle;
+    final bytes =
+        isHandle || tensor.byteLength == 0 || tensor.data == ffi.nullptr
         ? Uint8List(0)
         : tensor.data.cast<ffi.Uint8>().asTypedList(tensor.byteLength);
     outputs[name] = RuntimeTensor(
       dtype: _dtypeFromId(tensor.dtype),
       shape: shape,
       bytes: bytes,
-      nativeData: tensor.data,
+      byteLength: tensor.byteLength,
+      nativeData: isHandle ? null : tensor.data,
+      nativeHandle: isHandle ? tensor.handle : null,
+      memoryKind: memoryKind,
       owner: owner,
     );
   }
@@ -934,22 +1019,23 @@ Map<String, Object?> _decodeOutputs(
 
 final class _ShapeBuffer {
   _ShapeBuffer(List<int> shape)
-    : pointer = calloc<ffi.Int64>(shape.length),
-      length = shape.length {
-    pointer.asTypedList(length).setAll(0, shape);
-  }
+    : _buffer = dz.NativeInt64Array.fromValues(shape),
+      length = shape.length;
 
-  final ffi.Pointer<ffi.Int64> pointer;
+  final dz.NativeInt64Array _buffer;
   final int length;
 
+  ffi.Pointer<ffi.Int64> get pointer => _buffer.pointer;
+
   void close() {
-    calloc.free(pointer);
+    _buffer.close();
   }
 }
 
 final class _NativeByteBuffer {
   ffi.Pointer<ffi.Uint8> pointer = ffi.nullptr;
   int capacity = 0;
+  NativeByteBuffer? _buffer;
 
   ffi.Pointer<ffi.Void> copyFrom(Uint8List bytes) {
     _ensureCapacity(bytes.lengthInBytes);
@@ -962,11 +1048,9 @@ final class _NativeByteBuffer {
       return;
     }
     close();
-    final allocated = native.alloc(byteLength);
-    if (allocated == ffi.nullptr) {
-      throw StateError('Failed to allocate native input buffer.');
-    }
-    pointer = allocated.cast<ffi.Uint8>();
+    final buffer = NativeByteBuffer.allocate(byteLength);
+    _buffer = buffer;
+    pointer = buffer.pointer;
     capacity = byteLength;
   }
 
@@ -974,7 +1058,8 @@ final class _NativeByteBuffer {
     if (pointer == ffi.nullptr) {
       return;
     }
-    native.freeBuf(pointer.cast<ffi.Void>());
+    _buffer?.close();
+    _buffer = null;
     pointer = ffi.nullptr;
     capacity = 0;
   }
@@ -1020,15 +1105,11 @@ final class _NativeOutputLease {
   }
 }
 
-String _takeError(ffi.Pointer<ffi.Pointer<ffi.Char>> error) {
-  final value = error.value;
-  if (value == ffi.nullptr) return 'Native runtime call failed.';
-  try {
-    return value.cast<Utf8>().toDartString();
-  } finally {
-    native.freeStr(value);
-    error.value = ffi.nullptr;
-  }
+dz.NativeUtf8ErrorSlot _nativeErrorSlot() {
+  return dz.NativeUtf8ErrorSlot(
+    free: native.freeStr,
+    fallbackMessage: 'Native runtime call failed.',
+  );
 }
 
 int _engineId(RuntimeEngine engine) => switch (engine) {
@@ -1057,7 +1138,7 @@ RuntimeCapabilities _caps(RuntimeEngine engine) {
     engine: engine,
     platform: RuntimePlatformCurrent.current(),
     accelerators: _accelerators(mask),
-    details: const {'nativeBackend': 'zig'},
+    details: const {'nativeBackend': 'cpp'},
   );
 }
 
@@ -1087,6 +1168,13 @@ RuntimeTensorDataType _dtypeFromId(int id) => switch (id) {
   6 => RuntimeTensorDataType.float16,
   7 => RuntimeTensorDataType.boolean,
   _ => throw StateError('Unsupported native tensor dtype: $id'),
+};
+
+RuntimeTensorMemoryKind _tensorMemoryKind(int id) => switch (id) {
+  _tensorMemoryCpu => RuntimeTensorMemoryKind.cpu,
+  _tensorMemoryNativeHandle => RuntimeTensorMemoryKind.nativeHandle,
+  _tensorMemoryCpuView => RuntimeTensorMemoryKind.cpu,
+  _ => throw StateError('Unsupported native tensor memory kind: $id'),
 };
 
 Uint8List _nativeBytes(ffi.Pointer<ffi.Void> pointer, int byteLength) {

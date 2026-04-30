@@ -36,24 +36,35 @@ final class TtsBackendSourceAsset {
     required this.role,
     required this.format,
     this.path,
+    this.paths = const [],
     this.basename,
     this.requiredForExport = true,
-  }) : assert(path != null || basename != null);
+  });
 
   final String name;
   final String role;
   final String format;
   final String? path;
+  final List<String> paths;
   final String? basename;
   final bool requiredForExport;
 
-  String get locator => path ?? basename!;
+  String get locator {
+    if (path != null) {
+      return path!;
+    }
+    if (paths.isNotEmpty) {
+      return paths.join('|');
+    }
+    return basename!;
+  }
 
   Map<String, Object?> toJson() => {
     'name': name,
     'role': role,
     'format': format,
     if (path != null) 'path': path,
+    if (paths.isNotEmpty) 'paths': paths,
     if (basename != null) 'basename': basename,
     'requiredForExport': requiredForExport,
   };
@@ -95,7 +106,10 @@ final class TtsBackendCapability {
   final List<String> notes;
 
   bool get isLocalDartOnnxReady =>
-      readiness == TtsBackendReadiness.ready && runtime == 'dart_onnx';
+      readiness == TtsBackendReadiness.ready &&
+      (runtime == 'dart_onnx' ||
+          runtime == 'dart_ffi_onnx' ||
+          runtime == 'dart_ffi_onnx_decoder');
 
   Map<String, Object?> toJson() => {
     'provider': provider,
@@ -156,8 +170,8 @@ final class TtsBackendCatalog {
       provider: 'cosyvoice2',
       label: 'CosyVoice2-0.5B',
       defaultFormat: 'wav',
-      readiness: TtsBackendReadiness.partial,
-      runtime: 'dart_onnx_partial',
+      readiness: TtsBackendReadiness.ready,
+      runtime: 'dart_onnx',
       supportsAudioPrompt: true,
       supportsStreaming: true,
       supportsTextInstructions: true,
@@ -173,6 +187,7 @@ final class TtsBackendCatalog {
         'llm_embeddings.npz',
         'hift.onnx',
         'hift_streaming.onnx',
+        'CosyVoice-BlankEN/tokenizer.qwen2bpe',
       ],
       onnxTargets: [
         TtsBackendOnnxTarget(
@@ -246,9 +261,165 @@ final class TtsBackendCatalog {
           format: 'torch_checkpoint',
           path: 'models/CosyVoice2-0.5B/hift.pt',
         ),
+        TtsBackendSourceAsset(
+          name: 'flow_support',
+          role: 'flow_runtime_sidecar',
+          format: 'npz',
+          path: 'models/CosyVoice2-0.5B/flow_support.npz',
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_sidecar',
+          role: 'qwen2_bpe_tokenizer_sidecar',
+          format: 'qwen2bpe',
+          path: 'models/CosyVoice2-0.5B/CosyVoice-BlankEN/tokenizer.qwen2bpe',
+          requiredForExport: false,
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_vocab',
+          role: 'qwen2_bpe_vocab',
+          format: 'json',
+          path: 'models/CosyVoice2-0.5B/CosyVoice-BlankEN/vocab.json',
+          requiredForExport: false,
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_merges',
+          role: 'qwen2_bpe_merges',
+          format: 'text',
+          path: 'models/CosyVoice2-0.5B/CosyVoice-BlankEN/merges.txt',
+          requiredForExport: false,
+        ),
       ],
-      blockers: [
-        'All ONNX graphs are exported (campplus, speech_tokenizer_v2, flow.decoder.estimator, flow.encoder, llm_prefill, llm_decode, llm_decoder_head, hift, hift_streaming) plus llm_embeddings.npz for token-table lookups. Remaining work: Zig glue for the autoregressive decode loop (prefill -> head -> sample -> embed -> decode -> head -> sample -> ...) using ras_sampling, then wire hift_streaming for cross-chunk streaming.',
+      notes: [
+        'Provider-level Dart synthesis is wired end-to-end through Qwen2 native tokenization, split LLM ONNX, RAS sampling, flow decoding, HiFT, and shared WAV output. CUDA smoke passes for short no-prompt synthesis with both hift.onnx and hift_streaming.onnx. Remaining work is parity/performance hardening, not Python runtime dependency removal.',
+      ],
+    ),
+    TtsBackendCapability(
+      provider: 'sarashina2-tts',
+      label: 'sarashina2.2-tts',
+      defaultFormat: 'wav',
+      readiness: TtsBackendReadiness.ready,
+      runtime: 'dart_ffi_onnx_decoder',
+      supportsAudioPrompt: true,
+      supportsStreaming: false,
+      languages: ['ja', 'en', 'mix'],
+      localOnnxAssets: [
+        'speech_tokenizer_v2.onnx',
+        'campplus.onnx',
+        'llm_prefill.onnx',
+        'llm_decode.onnx',
+        'llm_decoder_head.onnx',
+        'llm_embeddings.npz',
+        'flow.encoder.fp32.onnx',
+        'flow.decoder.estimator.fp32.onnx',
+        'flow.decoder.step.fp32.onnx',
+        'flow_support.npz',
+        'hift.onnx',
+      ],
+      onnxTargets: [
+        TtsBackendOnnxTarget(
+          name: 'speech_tokenizer_v2',
+          role: 'prompt_speech_tokenizer',
+          path: 'models/sarashina2.2-tts/speech_tokenizer_v2.onnx',
+        ),
+        TtsBackendOnnxTarget(
+          name: 'campplus',
+          role: 'speaker_embedding',
+          path: 'models/sarashina2.2-tts/campplus.onnx',
+        ),
+        TtsBackendOnnxTarget(
+          name: 'llm_prefill',
+          role: 'semantic_speech_token_generator_prefill',
+          path: 'models/sarashina2.2-tts/llm_prefill.onnx',
+          sourceNames: ['llm'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'llm_decode',
+          role: 'semantic_speech_token_generator_decode',
+          path: 'models/sarashina2.2-tts/llm_decode.onnx',
+          sourceNames: ['llm'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'llm_decoder_head',
+          role: 'semantic_speech_token_generator_head',
+          path: 'models/sarashina2.2-tts/llm_decoder_head.onnx',
+          sourceNames: ['llm'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'flow_encoder_fp32',
+          role: 'flow_token_encoder',
+          path: 'models/sarashina2.2-tts/flow.encoder.fp32.onnx',
+          sourceNames: ['flow'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'flow_decoder_estimator_fp32',
+          role: 'diffusion_flow_decoder_estimator',
+          path: 'models/sarashina2.2-tts/flow.decoder.estimator.fp32.onnx',
+          sourceNames: ['flow'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'flow_decoder_step_fp32',
+          role: 'diffusion_flow_decoder_guidance_step',
+          path: 'models/sarashina2.2-tts/flow.decoder.step.fp32.onnx',
+          requiredForSynthesis: false,
+          sourceNames: ['flow_decoder_estimator_fp32'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'flow_decoder_step_final_fp32',
+          role: 'diffusion_flow_decoder_guidance_final_step',
+          path: 'models/sarashina2.2-tts/flow.decoder.step.fp32.onnx',
+          requiredForSynthesis: false,
+          sourceNames: ['flow_decoder_estimator_fp32'],
+        ),
+        TtsBackendOnnxTarget(
+          name: 'hift',
+          role: 'vocoder',
+          path: 'models/sarashina2.2-tts/hift.onnx',
+          sourceNames: ['hift'],
+        ),
+      ],
+      sourceAssets: [
+        TtsBackendSourceAsset(
+          name: 'llm',
+          role: 'llama_semantic_speech_token_generator_source',
+          format: 'safetensors',
+          path: 'models/sarashina2.2-tts/model.safetensors',
+        ),
+        TtsBackendSourceAsset(
+          name: 'flow',
+          role: 'flow_decoder_source',
+          format: 'torch_checkpoint',
+          path: 'models/sarashina2.2-tts/flow.pt',
+        ),
+        TtsBackendSourceAsset(
+          name: 'hift',
+          role: 'vocoder_source',
+          format: 'torch_checkpoint',
+          path: 'models/sarashina2.2-tts/hift.pt',
+        ),
+        TtsBackendSourceAsset(
+          name: 'campplus',
+          role: 'speaker_embedding_source',
+          format: 'torch_binary',
+          path: 'models/sarashina2.2-tts/campplus_cn_common.bin',
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_json',
+          role: 'llama_tokenizer',
+          format: 'json',
+          path: 'models/sarashina2.2-tts/tokenizer.json',
+          requiredForExport: false,
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_model',
+          role: 'llama_sentencepiece_tokenizer',
+          format: 'sentencepiece',
+          path: 'models/sarashina2.2-tts/tokenizer.model',
+          requiredForExport: false,
+        ),
+      ],
+      notes: [
+        'Provider-level Dart synthesis is wired through the Sarashina Dart tokenizer, native-backed Llama prefill/decode/head ONNX graphs, native semantic sampling, CosyVoice2-style flow decoding, HiFT, and shared WAV output. CUDA smoke passes for external semantic tokens, text-generated semantic tokens, and prompt-conditioned text generation. Remaining work is Python parity, long-form quality/performance measurement, and optional SilentCipher watermark embedding.',
+        'The upstream model is a Japanese/English zero-shot TTS Llama checkpoint that emits <|semantic_N|> speech tokens and uses CosyVoice2-style flow + HiFT decoding.',
       ],
     ),
     TtsBackendCapability(
@@ -285,37 +456,48 @@ final class TtsBackendCatalog {
           name: 't3_mtl23ls_v2',
           role: 'text_to_speech_token_generator_source',
           format: 'safetensors',
-          basename: 't3_mtl23ls_v2.safetensors',
+          paths: [
+            'models/models--ResembleAI--chatterbox/snapshots/05e904af2b5c7f8e482687a9d7336c5c824467d9/t3_mtl23ls_v2.safetensors',
+          ],
         ),
         TtsBackendSourceAsset(
           name: 's3gen',
           role: 'speech_token_to_waveform_generator_source',
           format: 'torch_checkpoint',
-          basename: 's3gen.pt',
+          paths: [
+            'models/models--ResembleAI--chatterbox/snapshots/05e904af2b5c7f8e482687a9d7336c5c824467d9/s3gen.pt',
+          ],
         ),
         TtsBackendSourceAsset(
           name: 've',
           role: 'voice_encoder_source',
-          format: 'torch_checkpoint',
-          basename: 've.pt',
+          format: 'safetensors',
+          paths: [
+            'models/models--ResembleAI--chatterbox/snapshots/05e904af2b5c7f8e482687a9d7336c5c824467d9/ve.safetensors',
+            'models/models--ResembleAI--chatterbox/snapshots/05e904af2b5c7f8e482687a9d7336c5c824467d9/ve.pt',
+          ],
         ),
         TtsBackendSourceAsset(
           name: 'conds',
           role: 'built_in_conditionals',
           format: 'torch_checkpoint',
-          basename: 'conds.pt',
+          paths: [
+            'models/models--ResembleAI--chatterbox/snapshots/05e904af2b5c7f8e482687a9d7336c5c824467d9/conds.pt',
+          ],
           requiredForExport: false,
         ),
         TtsBackendSourceAsset(
           name: 'grapheme_tokenizer',
           role: 'text_tokenizer',
           format: 'json',
-          basename: 'grapheme_mtl_merged_expanded_v1.json',
+          paths: [
+            'models/models--ResembleAI--chatterbox/snapshots/05e904af2b5c7f8e482687a9d7336c5c824467d9/grapheme_mtl_merged_expanded_v1.json',
+          ],
           requiredForExport: false,
         ),
       ],
       blockers: [
-        'Dart/Zig ONNX targets are defined for the Chatterbox T3 generator, S3Gen decoder, and voice encoder, but the local provider still only has PyTorch/Hugging Face source weights.',
+        'Chatterbox ONNX targets can be exported with egs/chatterbox/setup/export_onnx.sh --component ve|t3|s3gen, but provider-level Dart synthesis is not wired yet. T3 is currently a no-cache prefix-logits graph, and S3Gen is a fixed 4-token chunk graph with an ONNX-only real-valued HiFT export patch that simplifies the source-fusion STFT branch for export; tokenizer, CFG sampling, chunk orchestration, WAV assembly, and S3Gen parity hardening still need a Dart/FFI provider backend before marking ready.',
       ],
     ),
     TtsBackendCapability(
@@ -363,7 +545,7 @@ final class TtsBackendCatalog {
           name: 'model',
           role: 'streaming_text_to_audio_token_generator_source',
           format: 'safetensors',
-          basename: 'model.safetensors',
+          path: 'models/VibeVoice-Realtime-0.5B/model.safetensors',
         ),
       ],
       blockers: ['No local complete ONNX runtime assets are present.'],
@@ -403,12 +585,13 @@ final class TtsBackendCatalog {
           name: 'mimi',
           role: 'audio_codec_source',
           format: 'safetensors',
-          basename: 'model.safetensors',
+          path:
+              'models/models--kyutai--mimi/snapshots/89091b3e466eb6a9d11e537bf26b144f194978f7/model.safetensors',
           requiredForExport: false,
         ),
       ],
       blockers: [
-        'Dart/Zig ONNX targets are defined for the Dia2 model and audio codec, but the local provider still only has safetensors source weights.',
+        'Dart/FFI ONNX targets are defined for the Dia2 model and audio codec, but the local provider still only has safetensors source weights.',
       ],
     ),
     TtsBackendCapability(
@@ -490,19 +673,22 @@ final class TtsBackendCatalog {
           name: 'campplus',
           role: 'speaker_embedding_source',
           format: 'torch_binary',
-          basename: 'campplus_cn_common.bin',
+          path:
+              'models/models--funasr--campplus/snapshots/fb71fe990cbf6031ae6987a2d76fe64f94377b7e/campplus_cn_common.bin',
         ),
         TtsBackendSourceAsset(
           name: 'semantic_codec',
           role: 'prompt_semantic_codec_source',
           format: 'safetensors',
-          basename: 'model.safetensors',
+          path:
+              'models/models--amphion--MaskGCT/snapshots/265c6cef07625665d0c28d2faafb1415562379dc/semantic_codec/model.safetensors',
         ),
         TtsBackendSourceAsset(
           name: 'bigvgan',
           role: 'vocoder_source',
           format: 'torch_checkpoint',
-          basename: 'bigvgan_generator.pt',
+          path:
+              'models/models--nvidia--bigvgan_v2_22khz_80band_256x/snapshots/633ff708ed5b74903e86ff1298cf4a98e921c513/bigvgan_generator.pt',
         ),
         TtsBackendSourceAsset(
           name: 'qwen0_6b_emo',
@@ -513,15 +699,15 @@ final class TtsBackendCatalog {
         ),
       ],
       blockers: [
-        'Dart/Zig ONNX targets are defined for IndexTTS2 GPT, S2Mel, speaker encoder, semantic codec, and vocoder, but the local provider still only has PyTorch/safetensors source weights.',
+        'Dart/FFI ONNX targets are defined for IndexTTS2 GPT, S2Mel, speaker encoder, semantic codec, and vocoder, but the local provider still only has PyTorch/safetensors source weights.',
       ],
     ),
     TtsBackendCapability(
       provider: 'neutts-air',
       label: 'NeuTTS Air',
       defaultFormat: 'wav',
-      readiness: TtsBackendReadiness.blocked,
-      runtime: 'not_migrated',
+      readiness: TtsBackendReadiness.ready,
+      runtime: 'dart_ffi_onnx',
       supportsAudioPrompt: true,
       supportsStreaming: true,
       languages: ['en'],
@@ -557,13 +743,39 @@ final class TtsBackendCatalog {
         TtsBackendSourceAsset(
           name: 'neucodec_decoder',
           role: 'codec_token_to_waveform_decoder_source',
-          format: 'safetensors',
-          basename: 'pytorch_model.bin',
+          format: 'torch_binary',
+          path:
+              'models/models--neuphonic--neucodec/snapshots/c92ba97d538f2a0baa9118c21ea5de4cdad4e02a/pytorch_model.bin',
+          requiredForExport: false,
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_json',
+          role: 'qwen2_bpe_tokenizer',
+          format: 'json',
+          path: 'models/tokenizer.json',
+          requiredForExport: false,
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_config',
+          role: 'qwen2_added_tokens',
+          format: 'json',
+          path: 'models/tokenizer_config.json',
+          requiredForExport: false,
+        ),
+        TtsBackendSourceAsset(
+          name: 'tokenizer_sidecar',
+          role: 'qwen2_bpe_tokenizer_sidecar',
+          format: 'qwen2bpe',
+          path: 'models/tokenizer.qwen2bpe',
           requiredForExport: false,
         ),
       ],
-      blockers: [
-        'Dart/Zig ONNX targets are defined for the NeuTTS LM and NeuCodec decoder, but the local provider still only has safetensors/GGUF/source codec assets.',
+      blockers: [],
+      notes: [
+        'Dart/FFI prompt/token helpers, tokenizer.json loading, registry opt-in, and the NeuCodec decoder wrapper are in place.',
+        'neucodec_decoder.onnx exports from the local NeuCodec checkpoint with egs/neutts_air/setup/export_decoder_onnx.sh; current exporter supports fixed-frame decoder graphs.',
+        'neutts_air_lm.onnx exports from the local Qwen2 checkpoint with egs/neutts_air/setup/export_lm_onnx.sh as a functional no-cache input_ids-to-logits graph; split prefill/decode KV graphs remain the performance target.',
+        'Provider-level text synthesis is wired through Dart/FFI prompt/token helpers, native int64 decode-token buffers, no-cache Qwen2 ONNX logits, native top-k/top-p speech-token sampling, NeuCodec ONNX, and shared WAV output. CUDA smoke passes with the current 4-frame decoder export; parity and split-KV performance hardening remain.',
       ],
     ),
     TtsBackendCapability(
@@ -596,13 +808,15 @@ final class TtsBackendCatalog {
           name: 'qwen3_tts',
           role: 'text_to_speech_token_generator_source',
           format: 'safetensors',
-          basename: 'model.safetensors',
+          path:
+              'models/models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice/snapshots/0c0e3051f131929182e2c023b9537f8b1c68adfe/model.safetensors',
         ),
         TtsBackendSourceAsset(
           name: 'speech_tokenizer',
           role: 'speech_tokenizer_source',
           format: 'safetensors',
-          basename: 'model.safetensors',
+          path:
+              'models/models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice/snapshots/0c0e3051f131929182e2c023b9537f8b1c68adfe/speech_tokenizer/model.safetensors',
           requiredForExport: false,
         ),
       ],

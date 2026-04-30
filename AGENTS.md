@@ -25,16 +25,19 @@
 
 ## Native Runtime Workflow
 
-- Dart must call native providers only through the Zig runtime ABI:
-  - `Dart API -> dinf_* -> Zig -> private C/C++/ObjC++ libs`
-- Do not reintroduce public raw `mlx-c` bindings or Dart-side per-op MLX FFI.
+- Dart native providers must use Dart helpers and the Dart FFI/C++ runtime ABI:
+  - `Dart API -> Dart FFI/dinf_* -> C/C++/ObjC++ libs`
+- Do not add Zig source or Zig build steps back to the package.
+- Public MLX stable/raw APIs are part of this package surface. Keep them routed
+  through the package-owned Dart FFI/native MLX bridge and avoid ad-hoc external
+  converter or runtime paths.
 - For MLX snapshot preparation and benchmark inputs, use the repository's canonical conversion wrapper:
   - [`models/text_lm/convert_unsloth_mlx.py`](models/text_lm/convert_unsloth_mlx.py)
 - Treat that wrapper as the default path for:
   - benchmark runs
   - parity checks
   - reproducible local evaluation
-- MLX execution belongs behind Zig. Do not introduce alternative MLX conversion flows or ad-hoc manual converter invocations unless there is an explicit reason and that reason is documented in the change.
+- Do not introduce alternative MLX conversion flows or ad-hoc manual converter invocations unless there is an explicit reason and that reason is documented in the change.
 
 ## Publishing
 

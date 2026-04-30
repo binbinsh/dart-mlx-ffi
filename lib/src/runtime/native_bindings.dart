@@ -18,6 +18,14 @@ final class TensorAbi extends ffi.Struct {
   external int byteLength;
 
   external ffi.Pointer<ffi.Void> data;
+
+  external ffi.Pointer<ffi.Void> handle;
+
+  @ffi.Int32()
+  external int memoryKind;
+
+  @ffi.Int32()
+  external int reserved;
 }
 
 final class NamedTensorAbi extends ffi.Struct {
@@ -51,7 +59,7 @@ final class ResolveResultAbi extends ffi.Struct {
 final class InfoAbi extends ffi.Struct {
   external ffi.Pointer<ffi.Char> nativeBackend;
 
-  external ffi.Pointer<ffi.Char> zigVersion;
+  external ffi.Pointer<ffi.Char> runtimeVersion;
 
   external ffi.Pointer<ffi.Char> asyncModel;
 
@@ -135,128 +143,6 @@ final class ValueEntryAbi extends ffi.Struct {
 
   @ffi.Int32()
   external int boolValue;
-}
-
-final class VecResultAbi extends ffi.Struct {
-  external ffi.Pointer<ffi.Char> id;
-
-  @ffi.Double()
-  external double score;
-}
-
-final class KokoroPlanAbi extends ffi.Struct {
-  external ffi.Pointer<ffi.Int64> tokens;
-
-  @ffi.IntPtr()
-  external int tokenCount;
-
-  external ffi.Pointer<ffi.IntPtr> lengths;
-
-  @ffi.IntPtr()
-  external int chunkCount;
-
-  external ffi.Pointer<ffi.Uint8> text;
-
-  @ffi.IntPtr()
-  external int textLength;
-
-  external ffi.Pointer<ffi.IntPtr> starts;
-
-  external ffi.Pointer<ffi.IntPtr> byteLengths;
-}
-
-final class NpyAbi extends ffi.Struct {
-  external ffi.Pointer<ffi.Char> name;
-
-  external ffi.Pointer<ffi.Int64> shape;
-
-  @ffi.IntPtr()
-  external int rank;
-
-  external ffi.Pointer<ffi.Void> data;
-
-  @ffi.IntPtr()
-  external int byteLength;
-}
-
-final class KokoroVocabAbi extends ffi.Struct {
-  external ffi.Pointer<ffi.Int32> codes;
-
-  external ffi.Pointer<ffi.Int64> ids;
-
-  @ffi.IntPtr()
-  external int count;
-}
-
-final class KokoroRunAbi extends ffi.Struct {
-  external ffi.Pointer<ffi.Char> text;
-
-  external ffi.Pointer<ffi.Char> language;
-}
-
-final class KokoroSsmlAbi extends ffi.Struct {
-  @ffi.Int32()
-  external int kind;
-
-  @ffi.Int32()
-  external int spaceAfter;
-
-  external ffi.Pointer<ffi.Char> text;
-}
-
-final class StructConfigAbi extends ffi.Struct {
-  @ffi.IntPtr()
-  external int batchSize;
-
-  @ffi.IntPtr()
-  external int tokenLength;
-
-  @ffi.IntPtr()
-  external int charLength;
-
-  @ffi.IntPtr()
-  external int homographTargets;
-
-  @ffi.IntPtr()
-  external int polyphoneTargets;
-
-  @ffi.IntPtr()
-  external int homographClasses;
-
-  @ffi.IntPtr()
-  external int polyphoneClasses;
-
-  @ffi.Double()
-  external double emphasisThreshold;
-}
-
-final class TargetMatchAbi extends ffi.Struct {
-  @ffi.Int32()
-  external int start;
-
-  @ffi.Int32()
-  external int end;
-
-  @ffi.Int32()
-  external int index;
-
-  external ffi.Pointer<ffi.Int32> ids;
-
-  @ffi.IntPtr()
-  external int idCount;
-}
-
-final class TextTagAbi extends ffi.Struct {
-  @ffi.Int32()
-  external int start;
-
-  @ffi.Int32()
-  external int end;
-
-  @ffi.Int32()
-  external int kind;
-
-  external ffi.Pointer<ffi.Char> value;
 }
 
 @ffi.Native<

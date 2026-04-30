@@ -57,7 +57,7 @@ void main() {
     }
   });
 
-  test('parses npy voice arrays through Zig', () {
+  test('parses npy voice arrays through native', () {
     final voice = parseNpy(_npyBytes(const [2, 3], const [1, 2, 3, 4, 5, 6]));
     try {
       expect(voice.shape, const [2, 3]);
@@ -67,7 +67,7 @@ void main() {
     }
   });
 
-  test('loads npz voice archives through Zig', () async {
+  test('loads npz voice archives through native', () async {
     final dir = await Directory.systemTemp.createTemp('dart_inference_kokoro_');
     final path = '${dir.path}/voices.npz';
     await File(path).writeAsBytes(
@@ -108,7 +108,7 @@ void main() {
     expect(out, isEmpty);
   });
 
-  test('encodes float32 audio as Zig-owned PCM16 WAV bytes', () {
+  test('encodes float32 audio as native-backed PCM16 WAV bytes', () {
     final wav = encodeWavPcm16(Float32List.fromList([-1.0, 0.0, 1.0]), 24000);
 
     expect(String.fromCharCodes(wav.sublist(0, 4)), 'RIFF');
