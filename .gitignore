@@ -43,8 +43,18 @@ __pycache__/
 # Benchmark outputs
 /benchmark/out
 /benchmark/artifacts
+/benchmark/out_local
+/benchmark/artifacts_local
+/benchmark/.hf_home
+/benchmark/runtime/*.local.yaml
+/.cache
 /output
 /tmp
+
+# Local vendor checkouts
+/vendors/CoreML-*
+/vendors/mlx-audio
+/vendors/mlx-vlm
 
 # Native build outputs
 **/build/
