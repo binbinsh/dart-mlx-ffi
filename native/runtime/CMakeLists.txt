@@ -13,6 +13,7 @@ set(RUNTIME_SRC
     ${CMAKE_CURRENT_LIST_DIR}/runtime_bridge.cpp
     ${CMAKE_CURRENT_LIST_DIR}/memory_bridge.cpp
     ${CMAKE_CURRENT_LIST_DIR}/options.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/runtime_pipeline.cpp
     ${CMAKE_CURRENT_LIST_DIR}/litert_backend.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ort_pipeline.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ort_session.cpp
@@ -20,7 +21,8 @@ set(RUNTIME_SRC
 
 if(APPLE)
   enable_language(OBJCXX)
-  list(APPEND RUNTIME_SRC ${CMAKE_CURRENT_LIST_DIR}/coreml_backend.mm)
+  list(APPEND RUNTIME_SRC ${CMAKE_CURRENT_LIST_DIR}/coreml_backend.mm
+                          ${CMAKE_CURRENT_LIST_DIR}/coreml_stateful.mm)
 else()
   list(APPEND RUNTIME_SRC ${CMAKE_CURRENT_LIST_DIR}/coreml_stub.cpp)
 endif()
@@ -48,6 +50,7 @@ if(APPLE)
   target_link_libraries(${PROJECT_NAME} PRIVATE "-framework Foundation"
                                                 "-framework CoreML")
   set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/coreml_backend.mm
+                              ${CMAKE_CURRENT_LIST_DIR}/coreml_stateful.mm
                               PROPERTIES COMPILE_FLAGS "-fobjc-arc")
   set(_dart_inference_runtime_rpath "@loader_path")
   set(_dart_inference_exports

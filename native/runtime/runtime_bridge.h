@@ -201,6 +201,18 @@ DINF_RUNTIME_EXPORT DinfOptionEntry* dinf_cpp_diag(
 DINF_RUNTIME_EXPORT void dinf_cpp_free_options(
     DinfOptionEntry* entries,
     intptr_t count);
+
+// Reset the iOS17+/macOS14+ MLState held by a Core ML pipeline session.
+//
+// `session` must have been created via `dinf_cpp_open` with
+// `engine == DINF_ENGINE_COREML`. After this call the next stateful
+// stage executed by `dinf_cpp_run` will allocate a fresh MLState. On
+// success returns 0; on failure returns non-zero and writes an error
+// string into `*error` (release with `dinf_cpp_free_str`). Implemented
+// in `coreml_stateful.mm` (Apple) and `coreml_stub.cpp` (others).
+DINF_RUNTIME_EXPORT int32_t dinf_coreml_reset_state(
+    DinfRuntimeSession* session,
+    char** error);
 }
 
 DinfNamedTensor dinf_make_tensor(

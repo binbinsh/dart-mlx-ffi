@@ -175,6 +175,22 @@ external ffi.Pointer<ffi.Void> open(
 @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.Void>)>(symbol: 'dinf_close')
 external void close(ffi.Pointer<ffi.Void> session);
 
+// Reset the iOS17+/macOS14+ MLState held by a Core ML pipeline session.
+// Returns 0 on success; non-zero codes write a heap-allocated error
+// string into [error] which the caller must release with [freeStr].
+//
+// See `native/runtime/coreml_stateful.h` and ADR §6 for the contract.
+@ffi.Native<
+  ffi.Int32 Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<ffi.Pointer<ffi.Char>>,
+  )
+>(symbol: 'dinf_coreml_reset_state')
+external int coremlResetState(
+  ffi.Pointer<ffi.Void> session,
+  ffi.Pointer<ffi.Pointer<ffi.Char>> error,
+);
+
 @ffi.Native<
   ffi.Int32 Function(
     ffi.Pointer<ffi.Void>,

@@ -1,5 +1,6 @@
 #include "runtime_bridge.h"
 #include "options.h"
+#include "coreml_stateful.h"
 
 #import <CoreML/CoreML.h>
 #import <Foundation/Foundation.h>
@@ -603,8 +604,18 @@ struct CoreMlStage {
   std::string op;
   std::string path;
   MLModel* model = nil;
+  MLModelConfiguration* config = nil;
   StringMap inputs;
   StringMap outputs;
+  // Schema v2 (pipeline.json): per-stage compute units. When the stage
+  // does not specify `compute_units` we keep the session-wide default
+  // (set in dinf_create_coreml_session) so legacy pipelines behave
+  // identically.
+  MLComputeUnits compute_units = MLComputeUnitsCPUAndNeuralEngine;
+  bool compute_units_explicit = false;
+  // Schema v2: stateful stages drive the iOS17+/macOS14+ MLState path.
+  // Defaults to false so non-stateful pipelines remain bit-identical.
+  bool stateful = false;
 };
 
 std::string mapped_name(
@@ -732,7 +743,8 @@ bool scatter_embeddings(
   return true;
 }
 
-class CoreMlSession final : public DinfRuntimeSession {
+class CoreMlSession final : public DinfRuntimeSession,
+                            public DinfCoreMlResettable {
  public:
   CoreMlSession(
       std::vector<CoreMlStage> stages,
@@ -750,7 +762,38 @@ class CoreMlSession final : public DinfRuntimeSession {
         input_names_(std::move(input_names)),
         output_names_(std::move(output_names)),
         compute_plan_audit_(std::move(compute_plan_audit)),
-        requested_outputs_(std::move(requested_outputs)) {}
+        requested_outputs_(std::move(requested_outputs)) {
+    has_stateful_stage_ = false;
+    for (const auto& stage : stages_) {
+      if (stage.stateful) {
+        has_stateful_stage_ = true;
+        break;
+      }
+    }
+    if (has_stateful_stage_) {
+      if (@available(macOS 15.0, iOS 18.0, *)) {
+        stateful_store_ = [[DinfCoreMlStatefulStore alloc] init];
+      } else {
+        stateful_store_ = nil;
+      }
+    }
+  }
+
+  int ResetCoremlState(std::string* error) override {
+    if (!has_stateful_stage_) {
+      // No-op: pipelines without stateful stages cannot leak KV across
+      // calls, so reset is meaningless but not an error.
+      return 0;
+    }
+    if (@available(macOS 15.0, iOS 18.0, *)) {
+      [stateful_store_ reset];
+      return 0;
+    }
+    if (error != nullptr) {
+      *error = "Stateful Core ML reset requires iOS 18+/macOS 15+";
+    }
+    return 3;
+  }
 
   int Run(
       const DinfNamedTensor* inputs,
@@ -806,12 +849,30 @@ class CoreMlSession final : public DinfRuntimeSession {
       if (provider == nil) {
         return 1;
       }
-      NSError* ns_error = nil;
-      id<MLFeatureProvider> prediction =
-          [stage.model predictionFromFeatures:provider error:&ns_error];
-      if (prediction == nil) {
-        *error = ns_error.localizedDescription.UTF8String;
-        return 1;
+      id<MLFeatureProvider> prediction = nil;
+      if (stage.stateful) {
+        if (stateful_store_ == nil) {
+          *error = "Stateful Core ML stage '" + stage.name +
+                   "' requires iOS 17+/macOS 14+";
+          return 1;
+        }
+        prediction = dinf_coreml_predict_with_state(
+            stage.model,
+            provider,
+            stateful_store_,
+            ns_string(stage.name.c_str()),
+            error);
+        if (prediction == nil) {
+          return 1;
+        }
+      } else {
+        NSError* ns_error = nil;
+        prediction =
+            [stage.model predictionFromFeatures:provider error:&ns_error];
+        if (prediction == nil) {
+          *error = ns_error.localizedDescription.UTF8String;
+          return 1;
+        }
       }
       produced_outputs = true;
       [last_outputs removeAllObjects];
@@ -924,6 +985,11 @@ class CoreMlSession final : public DinfRuntimeSession {
   std::vector<std::string> output_names_;
   ComputePlanAudit compute_plan_audit_;
   StringMap requested_outputs_;
+  // Stateful pipeline support (schema v2). `stateful_store_` is nil on
+  // pipelines without any stateful stages and on OS versions older than
+  // iOS17/macOS14 (the constructor verifies the latter via @available).
+  DinfCoreMlStatefulStore* stateful_store_ = nil;
+  bool has_stateful_stage_ = false;
 };
 
 }  // namespace
@@ -960,6 +1026,27 @@ DinfRuntimeSession* dinf_create_coreml_session(
             std::string("stage_") + std::to_string(stages.size()));
         stage.inputs = string_map_from_json(item.value("inputs", json::object()));
         stage.outputs = string_map_from_json(item.value("outputs", json::object()));
+        // pipeline.json schema v2: per-stage compute placement +
+        // stateful flag. Both are optional; absent fields preserve the
+        // legacy session-wide behaviour.
+        if (item.is_object() && item.contains("compute_units")) {
+          stage.compute_units =
+              dinf_coreml_parse_compute_units(item, config.computeUnits);
+          stage.compute_units_explicit = true;
+        } else {
+          stage.compute_units = config.computeUnits;
+        }
+        stage.stateful = dinf_coreml_stage_is_stateful(item);
+        if (stage.stateful) {
+          if (@available(macOS 15.0, iOS 18.0, *)) {
+            // OK: real MLState path will be exercised at run() time.
+          } else {
+            *error = "Core ML pipeline stage '" + stage.name +
+                     "' is marked stateful but the deployment target is "
+                     "older than iOS 18 / macOS 15";
+            return nullptr;
+          }
+        }
         if (item.contains("op")) {
           if (item.contains("model")) {
             *error = "Core ML pipeline stage must contain either op or model, not both.";
@@ -1019,8 +1106,17 @@ DinfRuntimeSession* dinf_create_coreml_session(
       }
       NSError* ns_error = nil;
       NSURL* url = [NSURL fileURLWithPath:ns_string(stage.path.c_str())];
+      // Per-stage config: only allocate a new MLModelConfiguration when
+      // schema v2 explicitly overrides compute units; otherwise reuse
+      // the session-wide one for legacy parity.
+      MLModelConfiguration* stage_config = config;
+      if (stage.compute_units_explicit) {
+        stage_config = [[MLModelConfiguration alloc] init];
+        stage_config.computeUnits = stage.compute_units;
+      }
+      stage.config = stage_config;
       MLModel* model = [MLModel modelWithContentsOfURL:url
-                                        configuration:config
+                                        configuration:stage_config
                                                 error:&ns_error];
       if (model == nil) {
         *error = ns_error.localizedDescription.UTF8String;
