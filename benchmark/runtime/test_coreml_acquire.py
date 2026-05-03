@@ -90,6 +90,46 @@ class CoreMlAcquireTest(unittest.TestCase):
         self.assertNotIn("metadata", compact)
         self.assertEqual(compact["source_model"], "org/model")
 
+    def test_coreml_search_retries_rate_limit_on_fallback_endpoint(self) -> None:
+        created = []
+
+        class FakeModel:
+            modelId = "org/model-coreml"
+
+        class FakeTreeItem:
+            path = "model.mlmodelc/Manifest.json"
+
+        class FakeApi:
+            def __init__(self, endpoint=None) -> None:
+                self.endpoint = endpoint or "https://huggingface.co"
+                created.append(self.endpoint)
+
+            def list_models(self, *, search, limit):
+                del search, limit
+                if self.endpoint == "https://huggingface.co":
+                    raise RuntimeError("429 Too Many Requests")
+                return [FakeModel()]
+
+            def list_repo_tree(self, repo, *, recursive):
+                del repo, recursive
+                return [FakeTreeItem()]
+
+        original = coreml_acquire.HfApi
+        try:
+            coreml_acquire.HfApi = FakeApi
+            candidates = coreml_acquire.search_existing_coreml(
+                "org/model",
+                limit=1,
+                tree_limit=10,
+                fallback_endpoint="https://hf-mirror.com",
+            )
+        finally:
+            coreml_acquire.HfApi = original
+
+        self.assertIn("https://hf-mirror.com", created)
+        self.assertEqual(candidates[0]["repo"], "org/model-coreml")
+        self.assertEqual(candidates[0]["endpoint"], "https://hf-mirror.com")
+
 
 if __name__ == "__main__":
     unittest.main()

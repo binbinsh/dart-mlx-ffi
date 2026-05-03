@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
-from huggingface_hub import snapshot_download
+from converters.hf_download import DEFAULT_FALLBACK_ENDPOINT, snapshot_download_with_fallback
 
-from matrix_config import blocked_platform_reason, blocked_platforms
+from matrix_config import (
+    blocked_engine_reason,
+    blocked_platform_reason,
+    blocked_platforms,
+    engine_order_for_platform,
+    production_platforms,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +36,11 @@ def main() -> None:
     parser.add_argument("--cache-root", type=Path)
     parser.add_argument("--model-id", action="append")
     parser.add_argument("--platform", action="append")
+    parser.add_argument("--endpoint", default=os.environ.get("HF_ENDPOINT"))
+    parser.add_argument(
+        "--fallback-endpoint",
+        default=os.environ.get("HF_FALLBACK_ENDPOINT") or DEFAULT_FALLBACK_ENDPOINT,
+    )
     parser.add_argument(
         "--engine",
         action="append",
@@ -63,6 +75,8 @@ def main() -> None:
         engine_filter=set(args.engine or []),
         local_files_only=args.local_files_only,
         allow_missing=args.allow_missing,
+        endpoint=args.endpoint,
+        fallback_endpoint=args.fallback_endpoint,
     )
     if args.dry_run:
         print(json.dumps(resolver.plan(), indent=2, ensure_ascii=False))
@@ -90,6 +104,8 @@ class HuggingFaceArtifactResolver:
         engine_filter: set[str],
         local_files_only: bool,
         allow_missing: bool,
+        endpoint: str | None = None,
+        fallback_endpoint: str | None = None,
     ) -> None:
         self.catalog = catalog
         self.catalog_path = catalog_path
@@ -102,6 +118,8 @@ class HuggingFaceArtifactResolver:
         self.engine_filter = engine_filter
         self.local_files_only = local_files_only
         self.allow_missing = allow_missing
+        self.endpoint = endpoint
+        self.fallback_endpoint = fallback_endpoint
 
     def plan(self) -> dict[str, Any]:
         cells = []
@@ -172,6 +190,7 @@ class HuggingFaceArtifactResolver:
                     "embedding_query_file",
                     "embedding_dim",
                     "artifact_coverage",
+                    "engine_order",
                     "migrated_platforms",
                     "blocked_platforms",
                 }
@@ -280,11 +299,13 @@ class HuggingFaceArtifactResolver:
     def _download(self, artifact: dict[str, Any]) -> Path:
         repo = str(artifact["repo"])
         patterns = _allow_patterns(artifact)
-        snapshot = snapshot_download(
+        snapshot = snapshot_download_with_fallback(
             repo_id=repo,
             allow_patterns=patterns,
             cache_dir=str(self.cache_root),
             local_files_only=self.local_files_only,
+            endpoint=self.endpoint,
+            fallback_endpoint=self.fallback_endpoint,
         )
         artifact_name = str(artifact.get("artifact") or ".")
         if artifact_name == ".":
@@ -325,11 +346,14 @@ class HuggingFaceArtifactResolver:
         artifacts = model.get("artifacts") or {}
         if not isinstance(artifacts, dict):
             return None
-        order = self._engine_order(platform)
+        order = self._engine_order(model, platform)
         if self.engine_filter:
             order = [engine for engine in order if engine in self.engine_filter]
         fallback_from: list[str] = []
         for engine in order:
+            if blocked_engine_reason(model, platform, engine):
+                fallback_from.append(engine)
+                continue
             artifact = artifacts.get(engine)
             if not isinstance(artifact, dict) or not self._artifact_supports(
                 engine,
@@ -365,28 +389,19 @@ class HuggingFaceArtifactResolver:
             selected = {str(platform) for platform in model_platforms}
             selected.update(blocked_platforms(model or {}).keys())
             ordered = [platform for platform in policy_platforms if platform in selected]
-            extras = sorted(selected.difference(ordered))
-            return ordered + extras
+            return ordered
         return policy_platforms
 
     def _policy_platforms(self) -> list[str]:
-        policy = (self.catalog.get("support_policy") or {}).get("production_requires") or {}
-        platforms = policy.get("platforms")
-        if isinstance(platforms, list) and platforms:
-            return [str(platform) for platform in platforms]
-        return ["ios", "macos", "windows", "linux", "android"]
+        return production_platforms(self.catalog)
 
     def _platform_defaults(self, platform: str) -> dict[str, Any]:
         defaults = (self.catalog.get("defaults") or {}).get("platforms") or {}
         value = defaults.get(platform)
         return dict(value) if isinstance(value, dict) else {}
 
-    def _engine_order(self, platform: str) -> list[str]:
-        raw = self.catalog.get("engine_order") or {}
-        order = raw.get(platform)
-        if isinstance(order, list) and order:
-            return [str(engine) for engine in order]
-        return ["coreml", "mlx", "onnx", "litert"]
+    def _engine_order(self, model: dict[str, Any], platform: str) -> list[str]:
+        return engine_order_for_platform(self.catalog, model, platform)
 
     def _artifact_supports(
         self,

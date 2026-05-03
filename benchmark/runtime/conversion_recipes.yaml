@@ -2,6 +2,7 @@ version: 1
 output_root: benchmark/artifacts/converted
 tools_root: benchmark/artifacts/tools
 source_artifact_catalog: benchmark/runtime/hf_artifacts.yaml
+seed_models_from_catalog: true
 
 presets:
   coreml_coremlllm:
@@ -75,16 +76,22 @@ presets:
       windows: dml
       linux: cpu
     command:
-      - uv
-      - run
-      - --group
-      - onnx-convert
+      - uvx
+      - --from
+      - "optimum[onnxruntime]==2.1.0"
       - --with
-      - "transformers<5"
+      - "accelerate>=1.13.0"
+      - --with
+      - "onnx>=1.21.0"
+      - --with
+      - "onnxruntime>=1.25.0"
+      - --with
+      - "transformers>=4.57.0,<4.58.0"
       - --with
       - "torch>=2.11.0"
       - --with
       - "torchvision>=0.26.0"
+      - "{with_args}"
       - optimum-cli
       - export
       - onnx
@@ -104,6 +111,103 @@ presets:
       - "**/*.onnx"
       - "*.onnx"
 
+  onnx_text_generation_model_type_patch:
+    engine: onnx
+    exporter: optimum-cli-model-type-patched
+    export_task: text-generation-with-past
+    opset: 18
+    platforms: [windows, linux]
+    provider_by_platform:
+      windows: dml
+      linux: cpu
+    command:
+      - uvx
+      - --from
+      - "optimum[onnxruntime]==2.1.0"
+      - --with
+      - "accelerate>=1.13.0"
+      - --with
+      - "onnx>=1.21.0"
+      - --with
+      - "onnxruntime>=1.25.0"
+      - --with
+      - "transformers>=4.57.0,<4.58.0"
+      - --with
+      - "torch>=2.11.0"
+      - --with
+      - "torchvision>=0.26.0"
+      - "{with_args}"
+      - python
+      - benchmark/runtime/converters/model_type_patched_onnx_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{export_task}"
+      - --opset
+      - "{opset}"
+      - --model-type-to
+      - "{model_type_patch}"
+      - --model-type-from
+      - "{model_type_expected}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/decoder_model_merged*.onnx"
+      - "decoder_model_merged*.onnx"
+      - "**/model*.onnx"
+      - "model*.onnx"
+      - "**/*.onnx"
+      - "*.onnx"
+
+  onnx_ort_genai_text_generation_model_type_patch:
+    engine: onnx
+    exporter: onnxruntime-genai-builder-model-type-patched
+    precision: int4
+    execution_provider: cpu
+    platforms: [windows, linux]
+    provider_by_platform:
+      windows: dml
+      linux: cpu
+    timeout_seconds: 21600
+    command:
+      - uvx
+      - --from
+      - "onnxruntime-genai>=0.9.0"
+      - --with
+      - "accelerate>=1.13.0"
+      - --with
+      - "onnx>=1.21.0"
+      - --with
+      - "onnxruntime>=1.25.0"
+      - --with
+      - "transformers>=4.57.0,<4.58.0"
+      - --with
+      - "onnx-ir"
+      - --with
+      - "torch>=2.7.0"
+      - "{with_args}"
+      - python
+      - benchmark/runtime/converters/ort_genai_builder_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --precision
+      - "{precision}"
+      - --execution-provider
+      - "{execution_provider}"
+      - --model-type-to
+      - "{model_type_patch}"
+      - --model-type-from
+      - "{model_type_expected}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "model.onnx"
+      - "**/model.onnx"
+      - "**/*.onnx"
+      - "*.onnx"
+
   onnx_vlm:
     engine: onnx
     exporter: optimum-cli
@@ -114,16 +218,22 @@ presets:
       windows: dml
       linux: cpu
     command:
-      - uv
-      - run
-      - --group
-      - onnx-convert
+      - uvx
+      - --from
+      - "optimum[onnxruntime]==2.1.0"
       - --with
-      - "transformers<5"
+      - "accelerate>=1.13.0"
+      - --with
+      - "onnx>=1.21.0"
+      - --with
+      - "onnxruntime>=1.25.0"
+      - --with
+      - "transformers>=4.57.0,<4.58.0"
       - --with
       - "torch>=2.11.0"
       - --with
       - "torchvision>=0.26.0"
+      - "{with_args}"
       - optimum-cli
       - export
       - onnx
@@ -153,16 +263,22 @@ presets:
       windows: dml
       linux: cpu
     command:
-      - uv
-      - run
-      - --group
-      - onnx-convert
+      - uvx
+      - --from
+      - "optimum[onnxruntime]==2.1.0"
       - --with
-      - "transformers<5"
+      - "accelerate>=1.13.0"
+      - --with
+      - "onnx>=1.21.0"
+      - --with
+      - "onnxruntime>=1.25.0"
+      - --with
+      - "transformers>=4.57.0,<4.58.0"
       - --with
       - "torch>=2.11.0"
       - --with
       - "torchvision>=0.26.0"
+      - "{with_args}"
       - optimum-cli
       - export
       - onnx
@@ -179,6 +295,49 @@ presets:
       - "model*.onnx"
       - "**/*.onnx"
       - "*.onnx"
+
+  onnx_ming_omni_text_to_audio:
+    engine: onnx
+    exporter: optimum-cli-ming-omni-patched-source
+    export_task: text-to-audio
+    opset: 18
+    platforms: [windows, linux]
+    provider_by_platform:
+      windows: dml
+      linux: cpu
+    command:
+      - uvx
+      - --from
+      - "optimum[onnxruntime]==2.1.0"
+      - --with
+      - "accelerate>=1.13.0"
+      - --with
+      - "onnx>=1.21.0"
+      - --with
+      - "onnxruntime>=1.25.0"
+      - --with
+      - "transformers>=4.57.0,<4.58.0"
+      - --with
+      - "torch>=2.11.0"
+      - --with
+      - "torchvision>=0.26.0"
+      - "{with_args}"
+      - python
+      - benchmark/runtime/converters/ming_omni_onnx_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{export_task}"
+      - --opset
+      - "{opset}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/decoder_model_merged*.onnx"
+      - "decoder_model_merged*.onnx"
+      - "**/model*.onnx"
+      - "model*.onnx"
 
   litert_hf_text_generation:
     engine: litert
@@ -200,6 +359,40 @@ presets:
       - "{output_dir}"
       - --task
       - "{litert_task}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/*.litertlm"
+      - "*.litertlm"
+      - "**/*.tflite"
+      - "*.tflite"
+      - "**/*.task"
+      - "*.task"
+
+  litert_hf_text_generation_model_type_patch:
+    engine: litert
+    exporter: litert-torch-model-type-patched
+    litert_task: text_generation
+    platforms: [android]
+    timeout_seconds: 21600
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - litert-convert
+      - python
+      - benchmark/runtime/converters/litert_hf_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{litert_task}"
+      - --model-type-to
+      - "{model_type_patch}"
+      - --model-type-from
+      - "{model_type_expected}"
       - "{extra_args}"
     artifact_candidates:
       - "**/*.litertlm"
@@ -300,11 +493,48 @@ presets:
       - "**/*.task"
       - "*.task"
 
+  litert_ming_omni_text_to_audio:
+    engine: litert
+    exporter: litert-torch-ming-omni-patched-source
+    tool_repo: https://github.com/inclusionAI/Ming-omni-tts.git
+    tool_name: ming-omni-tts
+    tool_ref: 200a1562e33492e786c23174985bb14f8e012cc6
+    litert_task: text_to_audio
+    platforms: [android]
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - litert-convert
+      - python
+      - benchmark/runtime/converters/ming_omni_litert_export.py
+      - --model
+      - "{source_model}"
+      - --output-dir
+      - "{output_dir}"
+      - --task
+      - "{litert_task}"
+      - --official-source
+      - "{tool_dir}"
+      - --export-small-litert-components
+      - --export-audio-decoder-litert
+      - "{extra_args}"
+    artifact_candidates:
+      - "**/*.litertlm"
+      - "*.litertlm"
+      - "**/*.tflite"
+      - "*.tflite"
+      - "**/*.task"
+      - "*.task"
+
   litert_onnx2tf:
     engine: litert
     exporter: onnx2tf
     platforms: [android]
     timeout_seconds: 7200
+    attempt_timeout_seconds: 900
     delegate_by_platform:
       android: xnnpack
     command:
@@ -320,10 +550,68 @@ presets:
       - "{onnx_artifact}"
       - --output-dir
       - "{output_dir}"
+      - --attempt-timeout-seconds
+      - "{attempt_timeout_seconds}"
       - "{extra_args}"
     artifact_candidates:
       - "model.tflite"
       - "**/*.tflite"
+
+  litert_onnx_pipeline2tf:
+    engine: litert
+    exporter: onnx-pipeline2tf
+    platforms: [android]
+    timeout_seconds: 21600
+    attempt_timeout_seconds: 900
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - onnx2tf-convert
+      - python
+      - benchmark/runtime/converters/onnx_pipeline_to_litert.py
+      - --catalog
+      - benchmark/runtime/hf_artifacts.yaml
+      - --model-id
+      - "{model_id}"
+      - --source-engine
+      - onnx
+      - --output-dir
+      - "{output_dir}"
+      - --attempt-timeout-seconds
+      - "{attempt_timeout_seconds}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "pipeline.json"
+      - "**/pipeline.json"
+
+  litert_qwen3_asr_onnx_components:
+    engine: litert
+    exporter: qwen3-asr-onnx2tf-components
+    platforms: [android]
+    timeout_seconds: 43200
+    attempt_timeout_seconds: 1800
+    delegate_by_platform:
+      android: xnnpack
+    command:
+      - uv
+      - run
+      - --group
+      - onnx2tf-convert
+      - python
+      - benchmark/runtime/converters/qwen3_asr_onnx_to_litert.py
+      - --repo
+      - "{onnx_repo}"
+      - --output-dir
+      - "{output_dir}"
+      - --attempt-timeout-seconds
+      - "{attempt_timeout_seconds}"
+      - "{extra_args}"
+    artifact_candidates:
+      - "qwen3_asr_litert_bundle.json"
+      - "**/qwen3_asr_litert_bundle.json"
 
 models:
   paddle_ocr_vl:
@@ -334,17 +622,11 @@ models:
         preset: coreml_paddleocr_vl
         extra_args: [--trust-remote-code]
       litert:
-        preset: litert_hf_vlm_legacy_transformers
+        preset: litert_onnx_pipeline2tf
         extra_args:
-          - --trust-remote-code
-          - --auto-model-override
-          - AutoModelForCausalLM
-          - --bundle-litert-lm
-          - --export-vision-encoder
-          - --prefill-lengths
-          - "64,128"
-          - --cache-length
-          - "1024"
+          - --onnx2tf-extra-arg=-b
+          - --onnx2tf-extra-arg
+          - "1"
 
   qwen3_vl:
     source_model: Qwen/Qwen3-VL-2B-Instruct
@@ -361,12 +643,45 @@ models:
           - --cache-length
           - "1024"
 
+  qwen3_asr:
+    source_model: Qwen/Qwen3-ASR-1.7B
+    task: audio
+    recipes:
+      coreml:
+        engine: coreml
+        exporter: coreml-asr-stateful-components
+        platforms: [ios, macos]
+        preflight_blocked: true
+        preflight_failure_class: coreml_ane_compile_failed
+        preflight_failure_reason: Qwen3-ASR Core ML stateful runner is implemented and resolves tokenizer sidecars, but the public decoder fails default ANE execution-plan compilation; keep the public Core ML bundle staging on cpuAndGPU until ANE passes.
+        runner: Qwen3AsrCoreMlRunner.loadCoreMlBundle
+      onnx:
+        engine: onnx
+        exporter: onnx-asr-components
+        platforms: [windows, linux, android]
+        provider_by_platform:
+          windows: dml
+          linux: cpu
+          android: npu
+        runner: Qwen3AsrNativeRunner.loadOnnxBundle
+        artifact_candidates:
+          - .
+          - encoder.int4.onnx
+          - decoder_init.int4.onnx
+          - decoder_step.int4.onnx
+          - embed_tokens.bin
+      litert:
+        preset: litert_qwen3_asr_onnx_components
+        onnx_repo: andrewleech/qwen3-asr-1.7b-onnx
+        runner: Qwen3AsrNativeRunner.loadLiteRtBundle
+
   silero_vad:
     source_model: snakers4/silero-vad
     task: vad
     recipes:
       litert:
         preset: litert_onnx2tf
+        attempt_timeout_seconds: 180
         onnx_repo: onnx-community/silero-vad
         onnx_artifact: onnx/model.onnx
         extra_args:
@@ -378,29 +693,39 @@ models:
           - istupakov/silero-vad-onnx::silero_vad_op18_ifless.onnx
 
   kitten_tts:
-    source_model: KittenML/kitten-tts-nano-0.1
+    source_model: KittenML/kitten-tts-mini-0.8
     task: tts
     recipes:
       litert:
         preset: litert_onnx2tf
+        attempt_timeout_seconds: 180
         onnx_repo: onnx-community/KittenTTS-Mini-v0.8-ONNX
         onnx_artifact: onnx/model.onnx
         extra_args:
           - --source-candidate
-          - KittenML/kitten-tts-nano-0.1::kitten_tts_nano_v0_1.onnx
+          - onnx-community/KittenTTS-Mini-v0.8-ONNX::onnx/model.onnx
           - --source-candidate
-          - KittenML/kitten-tts-micro-0.8::kitten_tts_micro_v0_8.onnx
+          - KittenML/kitten-tts-mini-0.8::kitten_tts_mini_v0_8.onnx
 
-  qwen3_5_27b_dwq:
-    source_model: Qwen/Qwen3.5-27B
+  qwen3_6_27b:
+    source_model: Qwen/Qwen3.6-27B
     task: text
     recipes:
       coreml:
         preset: coreml_coremlllm
       onnx:
-        preset: onnx_text_generation
+        preset: onnx_ort_genai_text_generation_model_type_patch
+        model_type_expected: qwen3_5
+        model_type_patch: qwen3
+        timeout_seconds: 21600
+        extra_args:
+          - --extra-option
+          - filename=model.onnx
       litert:
-        preset: litert_hf_text_generation
+        preset: litert_hf_text_generation_model_type_patch
+        model_type_expected: qwen3_5
+        model_type_patch: qwen3
+        timeout_seconds: 21600
         extra_args:
           - --bundle-litert-lm
           - --prefill-lengths
@@ -408,57 +733,26 @@ models:
           - --cache-length
           - "1024"
 
-  translategemma_27b_it:
-    source_model: google/translategemma-27b-it
+  translategemma_4b_it:
+    source_model: google/translategemma-4b-it
     task: text
     recipes:
       coreml:
         preset: coreml_coremlllm
       onnx:
         preset: onnx_text_generation
-
-  nemotron3_nano_30b:
-    source_model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
-    task: text
-    recipes:
-      coreml:
-        preset: coreml_coremlllm
-      onnx:
-        preset: onnx_text_generation
-        extra_args: [--trust-remote-code]
-      litert:
-        preset: litert_hf_text_generation
-        extra_args:
-          - --trust-remote-code
-          - --bundle-litert-lm
-          - --prefill-lengths
-          - "64,128"
-          - --cache-length
-          - "1024"
-
-  glm4_7_flash:
-    source_model: zai-org/GLM-4.7-Flash
-    task: text
-    recipes:
-      coreml:
-        preset: coreml_coremlllm
-      onnx:
-        preset: onnx_text_generation
-        extra_args: [--trust-remote-code]
-      litert:
-        preset: litert_hf_text_generation
-        extra_args:
-          - --trust-remote-code
-          - --bundle-litert-lm
-          - --prefill-lengths
-          - "64,128"
-          - --cache-length
-          - "1024"
 
   minicpm_o_4_5:
     source_model: openbmb/MiniCPM-o-4_5
     task: vlm
     recipes:
+      coreml:
+        engine: coreml
+        exporter: coreml-preflight
+        platforms: [ios, macos]
+        preflight_blocked: true
+        preflight_failure_class: coreml_exporter_missing_for_vlm
+        preflight_failure_reason: MiniCPM-o 4.5 is a multimodal VLM/audio bundle; no production Core ML converter is wired for the full runtime bundle yet.
       onnx:
         preset: onnx_vlm
         extra_args: [--trust-remote-code]
@@ -466,6 +760,9 @@ models:
         preset: litert_hf_vlm
         extra_args:
           - --trust-remote-code
+          - --auto-model-override
+          - AutoModelForCausalLM
+          - --patch-minicpm-optional-deps
           - --bundle-litert-lm
           - --export-vision-encoder
           - --prefill-lengths
@@ -497,11 +794,18 @@ models:
     source_model: inclusionAI/Ming-omni-tts-0.5B
     task: tts
     recipes:
+      coreml:
+        engine: coreml
+        exporter: coreml-preflight
+        platforms: [ios, macos]
+        preflight_blocked: true
+        preflight_failure_class: coreml_exporter_missing_for_tts
+        preflight_failure_reason: Ming-omni TTS needs a text-to-speech Core ML pipeline; no production Core ML converter is wired for the full runtime bundle yet.
       onnx:
-        preset: onnx_text_to_audio
+        preset: onnx_ming_omni_text_to_audio
         extra_args: [--trust-remote-code]
       litert:
-        preset: litert_hf_text_to_audio
+        preset: litert_ming_omni_text_to_audio
         extra_args:
           - --trust-remote-code
           - --bundle-litert-lm

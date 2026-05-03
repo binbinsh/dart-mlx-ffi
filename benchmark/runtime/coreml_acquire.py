@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ ROOT = RUNTIME_DIR.parents[1]
 
 
 COREML_SUFFIXES = (".mlmodelc", ".mlpackage")
+DEFAULT_FALLBACK_ENDPOINT = "https://hf-mirror.com"
 
 
 def main() -> None:
@@ -40,6 +42,11 @@ def main() -> None:
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--tree-limit", type=int, default=2000)
+    parser.add_argument("--endpoint", default=os.environ.get("HF_ENDPOINT"))
+    parser.add_argument(
+        "--fallback-endpoint",
+        default=os.environ.get("HF_FALLBACK_ENDPOINT") or DEFAULT_FALLBACK_ENDPOINT,
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -59,6 +66,8 @@ def main() -> None:
         trust_remote_code=args.trust_remote_code,
         limit=args.limit,
         tree_limit=args.tree_limit,
+        endpoint=args.endpoint,
+        fallback_endpoint=args.fallback_endpoint,
     )
     if args.execute_conversion and payload["recommended_action"] == "convert_coreml_llm":
         completed = subprocess.run(payload["conversion_command"], cwd=ROOT, check=False)
@@ -80,6 +89,8 @@ def build_acquisition_plan(
     trust_remote_code: bool,
     limit: int,
     tree_limit: int,
+    endpoint: str | None = None,
+    fallback_endpoint: str | None = DEFAULT_FALLBACK_ENDPOINT,
 ) -> dict[str, Any]:
     gguf_plan = None
     if gguf is not None:
@@ -104,6 +115,8 @@ def build_acquisition_plan(
         source_model,
         limit=limit,
         tree_limit=tree_limit,
+        endpoint=endpoint,
+        fallback_endpoint=fallback_endpoint,
     )
     if existing:
         return {
@@ -140,20 +153,104 @@ def search_existing_coreml(
     *,
     limit: int,
     tree_limit: int,
+    endpoint: str | None = None,
+    fallback_endpoint: str | None = DEFAULT_FALLBACK_ENDPOINT,
 ) -> list[dict[str, Any]]:
-    api = HfApi()
+    api = _hf_api(endpoint)
+    fallback_apis = _fallback_apis(
+        endpoint=endpoint,
+        fallback_endpoint=fallback_endpoint,
+    )
     candidates = []
     seen = set()
     for query in _queries(source_model):
-        for model in api.list_models(search=query, limit=limit):
+        try:
+            matches = list(api.list_models(search=query, limit=limit))
+            query_api = api
+            query_endpoint = endpoint or "https://huggingface.co"
+        except Exception as error:  # noqa: BLE001 - retry mirror on primary rate limit.
+            if not fallback_apis or not _is_rate_limited_error(error):
+                continue
+            for fallback_endpoint_value, fallback_api in fallback_apis:
+                try:
+                    matches = list(fallback_api.list_models(search=query, limit=limit))
+                except Exception:  # noqa: BLE001 - try the next mirror.
+                    continue
+                query_api = fallback_api
+                query_endpoint = fallback_endpoint_value
+                break
+            else:
+                continue
+        for model in matches:
             repo = model.modelId
             if repo in seen:
                 continue
             seen.add(repo)
-            paths = _coreml_paths(api, repo, tree_limit=tree_limit)
+            paths = _coreml_paths(query_api, repo, tree_limit=tree_limit)
             if paths:
-                candidates.append({"repo": repo, "query": query, "paths": paths})
+                candidates.append(
+                    {
+                        "repo": repo,
+                        "query": query,
+                        "paths": paths,
+                        "endpoint": query_endpoint,
+                    }
+                )
     return candidates
+
+
+def _hf_api(endpoint: str | None) -> HfApi:
+    return HfApi(endpoint=endpoint) if endpoint else HfApi()
+
+
+def _fallback_api(
+    *,
+    endpoint: str | None,
+    fallback_endpoint: str | None,
+) -> HfApi | None:
+    fallback = (fallback_endpoint or "").strip()
+    if not fallback:
+        return None
+    primary = (endpoint or "https://huggingface.co").rstrip("/")
+    if fallback.rstrip("/") == primary:
+        return None
+    return HfApi(endpoint=fallback)
+
+
+def _fallback_apis(
+    *,
+    endpoint: str | None,
+    fallback_endpoint: str | None,
+) -> list[tuple[str, HfApi]]:
+    primary = (endpoint or "https://huggingface.co").rstrip("/")
+    result = []
+    for fallback in _split_endpoints(fallback_endpoint):
+        if fallback.rstrip("/") == primary:
+            continue
+        result.append((fallback, HfApi(endpoint=fallback)))
+    return result
+
+
+def _split_endpoints(value: str | None) -> list[str]:
+    result = []
+    seen = set()
+    for raw in str(value or "").split(","):
+        endpoint = raw.strip()
+        if not endpoint or endpoint in seen:
+            continue
+        result.append(endpoint)
+        seen.add(endpoint)
+    return result
+
+
+def _is_rate_limited_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return (
+        "429" in text
+        or "too many requests" in text
+        or "rate limit" in text
+        or "rate limited" in text
+    )
 
 
 def _queries(source_model: str) -> list[str]:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -103,6 +104,21 @@ def main() -> None:
         type=Path,
         help="Working directory used by isolated fallback commands.",
     )
+    parser.add_argument(
+        "--attempt-timeout-seconds",
+        type=int,
+        default=900,
+        help=(
+            "Timeout for each onnx2tf invocation attempt. "
+            "Use 0 to disable per-attempt timeout."
+        ),
+    )
+    parser.add_argument(
+        "--tflite-preference",
+        choices=["dynamic_range", "float16", "float32"],
+        default="dynamic_range",
+        help="Preferred .tflite variant selected from onnx2tf outputs.",
+    )
     parser.set_defaults(
         retry_auto_prf=True,
         patch_onnx2tf=True,
@@ -142,6 +158,8 @@ def main() -> None:
             onnx2tf_extra_args=args.onnx2tf_extra_arg,
             retry_auto_prf=args.retry_auto_prf,
             runners=runners,
+            attempt_timeout_seconds=args.attempt_timeout_seconds,
+            tflite_preference=args.tflite_preference,
         )
         attempts.append(result)
         if result["success"]:
@@ -179,6 +197,7 @@ def main() -> None:
         "onnx2tf_output_dir": selected["onnx2tf_output_dir"],
         "selected_tflite": str(selected_tflite),
         "final_artifact": str(final_artifact),
+        "tflite_preference": args.tflite_preference,
         "runner": selected["runner"],
         "patches": patch_results,
         "runners": [runner.as_dict() for runner in runners],
@@ -294,6 +313,8 @@ def _convert_source(
     onnx2tf_extra_args: list[str],
     retry_auto_prf: bool,
     runners: list[Onnx2TfRunner],
+    attempt_timeout_seconds: int,
+    tflite_preference: str,
 ) -> dict[str, object]:
     onnx_path = _resolve_onnx_artifact(
         repo=source.repo,
@@ -314,10 +335,14 @@ def _convert_source(
             onnx_path=onnx_path,
             onnx2tf_extra_args=onnx2tf_extra_args,
             retry_auto_prf=retry_auto_prf,
+            attempt_timeout_seconds=attempt_timeout_seconds,
         )
         attempt_runs.extend(run_result["attempt_runs"])
         if run_result["success"]:
-            tflite_path = _pick_tflite(model_dir)
+            tflite_path = _pick_tflite(
+                model_dir,
+                preference=tflite_preference,
+            )
             return {
                 "repo": source.repo,
                 "artifact": source.artifact,
@@ -329,7 +354,7 @@ def _convert_source(
                 "success": True,
             }
         runner_errors.append(
-            f"{runner.id} rc={run_result['final_returncode']}"
+            _runner_error_text(runner.id, run_result)
         )
 
     return {
@@ -356,6 +381,7 @@ def _run_onnx2tf_with_runner(
     onnx_path: Path,
     onnx2tf_extra_args: list[str],
     retry_auto_prf: bool,
+    attempt_timeout_seconds: int,
 ) -> dict[str, object]:
     if model_dir.exists():
         shutil.rmtree(model_dir)
@@ -380,6 +406,7 @@ def _run_onnx2tf_with_runner(
         output_dir=model_dir,
         log_path=attempt1_log,
         cwd=runner.cwd,
+        attempt_timeout_seconds=attempt_timeout_seconds,
     )
     attempt_runs.append(
         {
@@ -390,6 +417,8 @@ def _run_onnx2tf_with_runner(
             "returncode": attempt1["returncode"],
             "log_path": str(attempt1_log),
             "auto_prf_path": attempt1.get("auto_prf_path"),
+            "timed_out": bool(attempt1.get("timed_out")),
+            "timeout_seconds": attempt_timeout_seconds,
         }
     )
     final_result = attempt1
@@ -403,6 +432,7 @@ def _run_onnx2tf_with_runner(
                 output_dir=model_dir,
                 log_path=attempt2_log,
                 cwd=runner.cwd,
+                attempt_timeout_seconds=attempt_timeout_seconds,
             )
             attempt_runs.append(
                 {
@@ -414,6 +444,8 @@ def _run_onnx2tf_with_runner(
                     "log_path": str(attempt2_log),
                     "used_prf": auto_prf,
                     "auto_prf_path": attempt2.get("auto_prf_path"),
+                    "timed_out": bool(attempt2.get("timed_out")),
+                    "timeout_seconds": attempt_timeout_seconds,
                 }
             )
             final_result = attempt2
@@ -421,6 +453,7 @@ def _run_onnx2tf_with_runner(
         "success": final_result["returncode"] == 0,
         "attempt_runs": attempt_runs,
         "final_returncode": final_result["returncode"],
+        "timed_out": bool(final_result.get("timed_out")),
     }
 
 
@@ -430,25 +463,36 @@ def _run_onnx2tf_attempt(
     output_dir: Path,
     log_path: Path,
     cwd: Path | None,
+    attempt_timeout_seconds: int,
 ) -> dict[str, object]:
     if cwd:
         cwd.mkdir(parents=True, exist_ok=True)
-    completed = subprocess.run(
-        command,
-        check=False,
-        cwd=str(cwd) if cwd else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    output = completed.stdout or ""
+    timeout_seconds = attempt_timeout_seconds if attempt_timeout_seconds > 0 else None
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+        )
+        returncode = completed.returncode
+        timed_out = False
+        output = completed.stdout or ""
+    except subprocess.TimeoutExpired as error:
+        output = _timeout_output(error, timeout_seconds=timeout_seconds)
+        returncode = 124
+        timed_out = True
     log_path.write_text(output, encoding="utf-8")
     print(output, end="")
     return {
-        "returncode": completed.returncode,
+        "returncode": returncode,
         "auto_prf_path": _find_auto_prf_path(output, output_dir=output_dir),
+        "timed_out": timed_out,
     }
 
 
@@ -498,6 +542,8 @@ def _apply_onnx2tf_patches() -> list[dict[str, str]]:
         _patch_onnx2tf_unsqueeze_shape_bug(),
         _patch_onnx2tf_sequence_lookup_bug(),
         _patch_onnx2tf_slice_dtype_bug(),
+        _patch_onnx2tf_trilu_dynamic_shape_bug(),
+        _patch_onnx2tf_external_data_resave_bug(),
     ]
 
 
@@ -546,8 +592,43 @@ def _patch_onnx2tf_unsqueeze_shape_bug() -> dict[str, str]:
 
 
 def _patch_unsqueeze_source(source: str) -> tuple[str, bool]:
-    if "else:\n        input_tensor_shape = [None]\n        tensor_rank = len(input_tensor_shape)" in source:
-        return source, False
+    updated = source
+    changed = False
+    if "_lookup_unsqueeze_axes(" not in updated:
+        axes_old = """    axes = tf_layers_dict[graph_node_input_2.name]['tf_node'] \\
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+"""
+        axes_new = """    axes = _lookup_unsqueeze_axes(tf_layers_dict, graph_node_input_2) \\
+        if isinstance(graph_node_input_2, gs.Variable) else graph_node_input_2
+"""
+        if axes_old in updated:
+            updated = updated.replace(axes_old, axes_new)
+            marker = "\n\n@print_node_info"
+            helper_block = """
+
+def _lookup_unsqueeze_axes(tf_layers_dict: dict, graph_input: gs.Variable):
+    key = getattr(graph_input, 'name', None)
+    normalized = key.lstrip('/') if isinstance(key, str) else key
+    for candidate in (key, normalized, f'/{normalized}' if normalized else None):
+        if not candidate:
+            continue
+        entry = tf_layers_dict.get(candidate)
+        if isinstance(entry, dict) and 'tf_node' in entry:
+            return entry['tf_node']
+    for producer in getattr(graph_input, 'inputs', []) or []:
+        attrs = getattr(producer, 'attrs', {}) or {}
+        if 'value' not in attrs:
+            continue
+        value = attrs['value']
+        return getattr(value, 'values', value)
+    raise KeyError(key)
+"""
+            if marker in updated:
+                updated = updated.replace(marker, helper_block + marker, 1)
+            changed = True
+
+    if "else:\n        input_tensor_shape = [None]\n        tensor_rank = len(input_tensor_shape)" in updated:
+        return updated, changed
     original = """    if input_tensor.shape != tf.TensorShape(None):
         input_tensor_shape = list(input_tensor.shape)
         tensor_rank = len(input_tensor_shape)
@@ -575,9 +656,9 @@ def _patch_unsqueeze_source(source: str) -> tuple[str, bool]:
         input_tensor_shape = [None]
         tensor_rank = len(input_tensor_shape)
 """
-    if original not in source:
-        return source, False
-    return source.replace(original, fixed), True
+    if original not in updated:
+        return updated, changed
+    return updated.replace(original, fixed), True
 
 
 def _patch_onnx2tf_slice_dtype_bug() -> dict[str, str]:
@@ -617,11 +698,72 @@ def _patch_onnx2tf_sequence_lookup_bug() -> dict[str, str]:
     )
 
 
+def _patch_onnx2tf_trilu_dynamic_shape_bug() -> dict[str, str]:
+    result = {"name": "onnx2tf_trilu_dynamic_shape", "status": "skipped"}
+    candidates: list[Path] = []
+    try:
+        import onnx2tf.ops.Trilu as trilu  # type: ignore[import-not-found]
+
+        candidates.append(Path(trilu.__file__).resolve())
+    except Exception as error:  # noqa: BLE001
+        result["import_error"] = str(error)
+    candidates.extend(_uv_archive_onnx2tf_module_paths("Trilu.py"))
+    return _patch_candidate_paths(
+        result=result,
+        candidates=candidates,
+        patch_fn=_patch_trilu_source,
+    )
+
+
+def _patch_onnx2tf_external_data_resave_bug() -> dict[str, str]:
+    result = {"name": "onnx2tf_external_data_resave", "status": "skipped"}
+    candidates: list[Path] = []
+    try:
+        import onnx2tf.onnx2tf as onnx2tf_main  # type: ignore[import-not-found]
+
+        candidates.append(Path(onnx2tf_main.__file__).resolve())
+    except Exception as error:  # noqa: BLE001
+        result["import_error"] = str(error)
+    candidates.extend(_uv_archive_onnx2tf_main_paths())
+    return _patch_candidate_paths(
+        result=result,
+        candidates=candidates,
+        patch_fn=_patch_external_data_resave_source,
+    )
+
+
 def _uv_archive_onnx2tf_module_paths(module_name: str) -> list[Path]:
-    base = Path.home() / ".cache" / "uv" / "archive-v0"
-    if not base.exists():
-        return []
-    return sorted(base.glob(f"*/lib/python*/site-packages/onnx2tf/ops/{module_name}"))
+    bases: list[Path] = []
+    uv_cache = (os.environ.get("UV_CACHE_DIR") or "").strip()
+    if uv_cache:
+        bases.append(Path(uv_cache).expanduser())
+    bases.append(Path.home() / ".cache" / "uv")
+
+    matches: list[Path] = []
+    for base in bases:
+        archive = base / "archive-v0"
+        if archive.exists():
+            matches.extend(
+                archive.glob(f"*/lib/python*/site-packages/onnx2tf/ops/{module_name}")
+            )
+    return sorted(matches)
+
+
+def _uv_archive_onnx2tf_main_paths() -> list[Path]:
+    bases: list[Path] = []
+    uv_cache = (os.environ.get("UV_CACHE_DIR") or "").strip()
+    if uv_cache:
+        bases.append(Path(uv_cache).expanduser())
+    bases.append(Path.home() / ".cache" / "uv")
+
+    matches: list[Path] = []
+    for base in bases:
+        archive = base / "archive-v0"
+        if archive.exists():
+            matches.extend(
+                archive.glob("*/lib/python*/site-packages/onnx2tf/onnx2tf.py")
+            )
+    return sorted(matches)
 
 
 def _patch_candidate_paths(
@@ -772,6 +914,53 @@ def _lookup_tf_node(tf_layers_dict: dict, graph_input: gs.Variable):
     return updated, True
 
 
+def _patch_trilu_source(source: str) -> tuple[str, bool]:
+    fixed = "tensor_shape[-1] is not None and k > tensor_shape[-1]"
+    if fixed in source:
+        return source, False
+    original = """    if k is not None:
+        if k > tensor_shape[-1]:
+            k = tensor_shape[-1]
+        elif k < 0 - tensor_shape[-2]:
+            k = 0 - tensor_shape[-2]
+"""
+    replacement = """    if k is not None:
+        if tensor_shape[-1] is not None and k > tensor_shape[-1]:
+            k = tensor_shape[-1]
+        elif tensor_shape[-2] is not None and k < 0 - tensor_shape[-2]:
+            k = 0 - tensor_shape[-2]
+"""
+    if original not in source:
+        return source, False
+    return source.replace(original, replacement), True
+
+
+def _patch_external_data_resave_source(source: str) -> tuple[str, bool]:
+    fixed = "save_as_external_data=True"
+    originals = (
+        "                        onnx.save(estimated_graph, f=input_onnx_file_path)",
+        "                        onnx.save(estimated_graph, input_onnx_file_path)",
+    )
+    replacement = """                        onnx.save_model(
+                            estimated_graph,
+                            f=input_onnx_file_path,
+                            save_as_external_data=True,
+                            all_tensors_to_one_file=True,
+                            location=f'{os.path.basename(input_onnx_file_path)}.data',
+                            size_threshold=1024,
+                            convert_attribute=False,
+                        )"""
+    if fixed in source and not any(original in source for original in originals):
+        return source, False
+    updated = source
+    changed = False
+    for original in originals:
+        if original in updated:
+            updated = updated.replace(original, replacement)
+            changed = True
+    return updated, changed
+
+
 def _resolve_onnx_artifact(
     *,
     repo: str,
@@ -782,9 +971,9 @@ def _resolve_onnx_artifact(
     candidate = Path(artifact)
     if candidate.exists():
         return candidate.resolve()
-    from huggingface_hub import hf_hub_download
+    from hf_download import hf_hub_download_with_fallback
 
-    path = hf_hub_download(
+    path = hf_hub_download_with_fallback(
         repo_id=repo,
         filename=artifact,
         revision=revision,
@@ -793,19 +982,34 @@ def _resolve_onnx_artifact(
     return Path(path).resolve()
 
 
-def _pick_tflite(model_dir: Path) -> Path:
+def _pick_tflite(model_dir: Path, *, preference: str = "dynamic_range") -> Path:
     matches = sorted(model_dir.rglob("*.tflite"))
     if not matches:
         raise RuntimeError(f"onnx2tf did not generate a .tflite artifact in {model_dir}")
 
-    preferred = [
+    preferred = _preferred_tflite_matches(matches, preference)
+    if preferred:
+        return preferred[0]
+    return matches[0]
+
+
+def _preferred_tflite_matches(matches: list[Path], preference: str) -> list[Path]:
+    if preference == "float16":
+        return [path for path in matches if "float16" in path.name.lower() or "fp16" in path.name.lower()]
+    if preference == "float32":
+        return [
+            path
+            for path in matches
+            if "float32" in path.name.lower()
+            and "float16" not in path.name.lower()
+            and "dynamic" not in path.name.lower()
+            and "drq" not in path.name.lower()
+        ]
+    return [
         path
         for path in matches
         if "dynamic_range" in path.name.lower() or "drq" in path.name.lower()
     ]
-    if preferred:
-        return preferred[0]
-    return matches[0]
 
 
 def _empty_to_none(value: str | None) -> str | None:
@@ -818,6 +1022,47 @@ def _empty_to_none(value: str | None) -> str | None:
 def _sanitize_filename_part(value: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
     return sanitized or "runner"
+
+
+def _runner_error_text(runner_id: str, run_result: dict[str, object]) -> str:
+    returncode = run_result.get("final_returncode")
+    if run_result.get("timed_out"):
+        return f"{runner_id} timeout rc={returncode}"
+    return f"{runner_id} rc={returncode}"
+
+
+def _timeout_output(
+    error: subprocess.TimeoutExpired,
+    *,
+    timeout_seconds: int | None,
+) -> str:
+    timeout_text = (
+        f" after {timeout_seconds}s" if isinstance(timeout_seconds, int) else ""
+    )
+    header = (
+        "ERROR: onnx2tf attempt timed out"
+        f"{timeout_text}. command={_command_string(error.cmd)}\n"
+    )
+    body = _coerce_subprocess_text(error.stdout)
+    if not body:
+        return header
+    return header + body
+
+
+def _command_string(cmd: object) -> str:
+    if isinstance(cmd, (list, tuple)):
+        return " ".join(str(part) for part in cmd)
+    return str(cmd)
+
+
+def _coerce_subprocess_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        return value
+    return str(value)
 
 
 if __name__ == "__main__":

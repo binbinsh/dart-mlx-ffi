@@ -259,6 +259,7 @@ class ArtifactConverter:
             exporter,
             recipe.get("extra_args") or [],
         )
+        with_args = _normalized_with_packages(recipe.get("extra_with") or [])
         context = {
             "model_id": model_id,
             "engine": engine,
@@ -267,6 +268,7 @@ class ArtifactConverter:
             "export_task": str(recipe.get("export_task") or recipe.get("task") or ""),
             "opset": str(recipe.get("opset") or ""),
             "extra_args": extra_args,
+            "with_args": with_args,
         }
         for key, value in recipe.items():
             if isinstance(value, (str, int, float, bool)):
@@ -325,6 +327,7 @@ class ArtifactConverter:
         run_env = {
             **os.environ,
             "PYTHONDONTWRITEBYTECODE": "1",
+            **_converter_cache_env(),
             **{
                 str(key): str(value)
                 for key, value in (plan.get("env") or {}).items()
@@ -471,7 +474,11 @@ class ArtifactConverter:
             completed = subprocess.run(
                 cmd,
                 cwd=ROOT,
-                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                env={
+                    **os.environ,
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    **_converter_cache_env(),
+                },
                 check=False,
             )
             checks.append(
@@ -692,8 +699,15 @@ def _expand_command(command: list[Any], context: dict[str, Any]) -> list[str]:
     result: list[str] = []
     for item in command:
         text = str(item)
-        if text == "{extra_args}":
-            result.extend(str(arg) for arg in context.get("extra_args") or [])
+        if text.startswith("{") and text.endswith("}"):
+            key = text[1:-1]
+            value = context.get(key)
+            if isinstance(value, list):
+                result.extend(str(arg) for arg in value)
+                continue
+            if value is None:
+                continue
+            result.append(str(value))
             continue
         result.append(text.format(**context))
     return result
@@ -708,6 +722,28 @@ def _expand_env(raw_env: Any, context: dict[str, Any]) -> dict[str, str]:
         if not key_text or value is None:
             continue
         result[key_text] = str(value).format(**context)
+    return result
+
+
+def _converter_cache_env(
+    environ: dict[str, str] | None = None,
+    *,
+    benchmark_root: Path | None = None,
+) -> dict[str, str]:
+    source = os.environ if environ is None else environ
+    root = benchmark_root or (ROOT / "benchmark")
+    defaults = {
+        "UV_CACHE_DIR": root / ".uv_cache",
+        "HF_HOME": root / ".hf_home",
+        "XDG_CACHE_HOME": root / ".cache",
+    }
+    result = {
+        key: str(path)
+        for key, path in defaults.items()
+        if not source.get(key)
+    }
+    if not source.get("HF_HUB_DISABLE_XET"):
+        result["HF_HUB_DISABLE_XET"] = "1"
     return result
 
 
@@ -839,6 +875,24 @@ def _normalized_extra_args(
     return kept, ignored
 
 
+def _normalized_with_packages(extra_with: list[Any]) -> list[str]:
+    result: list[str] = []
+    for package in extra_with:
+        text = str(package).strip()
+        if not text:
+            continue
+        if text == "--with":
+            continue
+        if text.startswith("--with "):
+            text = text[len("--with ") :].strip()
+        if text.startswith("--with="):
+            text = text[len("--with=") :].strip()
+        if not text:
+            continue
+        result.extend(["--with", text])
+    return result
+
+
 def _artifact_health_command(
     plan: dict[str, Any],
     artifact: Path,
@@ -907,6 +961,10 @@ def _is_pipeline_artifact(path: Path) -> bool:
     return data.get("format") in {
         "dart_inference.coreml_pipeline.v1",
         "dart_inference.onnx_pipeline.v1",
+        "dart_inference.litert_pipeline.v1",
+        "dart_mlx_ffi.coreml_pipeline.v1",
+        "dart_mlx_ffi.onnx_pipeline.v1",
+        "dart_mlx_ffi.litert_pipeline.v1",
     }
 
 
