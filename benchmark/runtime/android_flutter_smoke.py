@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import PurePosixPath
@@ -8,6 +9,7 @@ import selectors
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -21,7 +23,8 @@ from ort_env import resolve_ort_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_DIR = ROOT / "example"
-ANDROID_LOG_TAG = "DINF_RUNTIME_SMOKE"
+EXAMPLE_TARGET = "lib/main.dart"
+ANDROID_LOG_TAGS = ("DINF_RUNTIME_SMOKE", "DMF_RUNTIME_SMOKE")
 DEFAULT_ANDROID_PACKAGE = "com.example.dartinferenceexample"
 DEFAULT_HF_CACHE_DIR = ROOT / "benchmark" / "out" / "runtime" / "_hf_cache"
 RUNTIME_ENV_FILE = ROOT / ".dart_inference_runtime_env.json"
@@ -51,6 +54,11 @@ def main() -> None:
         "--artifact",
         help="Optional artifact override passed to Flutter runtime-smoke mode.",
     )
+    parser.add_argument("--provider")
+    parser.add_argument("--require-provider", action="store_true")
+    parser.add_argument("--delegate")
+    parser.add_argument("--require-delegate", action="store_true")
+    parser.add_argument("--litert-section-index", type=int)
     parser.add_argument(
         "--package-name",
         default=DEFAULT_ANDROID_PACKAGE,
@@ -91,13 +99,18 @@ def main() -> None:
     if not device_id:
         raise SystemExit("No available Android device found via `flutter devices --machine`.")
 
+    hf_cache_dir, hf_cache_prepare = prepare_directory_path(
+        path=args.hf_cache_dir,
+        fallback_path=ROOT / "benchmark" / "out_local" / "runtime" / "_hf_cache",
+        label="hf_cache_dir",
+    )
     resolved_artifact, artifact_prepare = resolve_android_artifact(
         artifact=args.artifact,
         device_id=device_id,
         package_name=args.package_name,
         model_id=args.model_id,
         engine=args.engine,
-        hf_cache_dir=args.hf_cache_dir,
+        hf_cache_dir=hf_cache_dir,
         device_artifact_dir=args.device_artifact_dir,
         host_prefetch=not args.no_host_prefetch,
     )
@@ -109,6 +122,11 @@ def main() -> None:
         engine=args.engine,
         artifact=resolved_artifact,
         build_mode=args.build_mode,
+        provider=args.provider,
+        require_provider=args.require_provider,
+        delegate=args.delegate,
+        require_delegate=args.require_delegate,
+        litert_section_index=args.litert_section_index,
     )
     started = time.time()
     result = {
@@ -121,7 +139,14 @@ def main() -> None:
         "package_name": args.package_name,
         "artifact": args.artifact,
         "resolved_artifact": resolved_artifact,
+        "hf_cache_dir": str(hf_cache_dir),
+        "hf_cache_prepare": hf_cache_prepare,
         "artifact_prepare": artifact_prepare,
+        "provider": args.provider,
+        "require_provider": args.require_provider,
+        "delegate": args.delegate,
+        "require_delegate": args.require_delegate,
+        "litert_section_index": args.litert_section_index,
         "command": command,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
     }
@@ -202,12 +227,24 @@ def main() -> None:
         bool(marker_payload and marker_payload.get("passed") is True) and not timed_out
     )
 
-    out_path = (
+    requested_out_path = (
         args.out
         if args.out is not None
         else ROOT / "benchmark" / "out" / "runtime" / args.model_id / "android" / "device_smoke.json"
     )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path, out_prepare = prepare_out_path(
+        out_path=requested_out_path,
+        fallback_out_path=(
+            ROOT
+            / "benchmark"
+            / "out_local"
+            / "runtime"
+            / args.model_id
+            / "android"
+            / "device_smoke.json"
+        ),
+    )
+    result["out_prepare"] = out_prepare
     out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2, ensure_ascii=False), flush=True)
     if not args.allow_fail and not result["passed"]:
@@ -222,6 +259,11 @@ def flutter_command(
     engine: str,
     artifact: str | None,
     build_mode: str,
+    provider: str | None = None,
+    require_provider: bool = False,
+    delegate: str | None = None,
+    require_delegate: bool = False,
+    litert_section_index: int | None = None,
 ) -> list[str]:
     command = [
         "flutter",
@@ -229,14 +271,39 @@ def flutter_command(
         "-d",
         device_id,
         f"--{build_mode}",
+        "--target",
+        EXAMPLE_TARGET,
         "--dart-define=DINF_RUNTIME_SMOKE=true",
+        "--dart-define=DMF_RUNTIME_SMOKE=true",
         f"--dart-define=DINF_RUNTIME_SMOKE_MODEL={model_id}",
+        f"--dart-define=DMF_RUNTIME_SMOKE_MODEL={model_id}",
         f"--dart-define=DINF_RUNTIME_SMOKE_ENGINE={engine}",
+        f"--dart-define=DMF_RUNTIME_SMOKE_ENGINE={engine}",
     ]
     if device_user:
         command.append(f"--device-user={device_user}")
     if artifact:
         command.append(f"--dart-define=DINF_RUNTIME_SMOKE_ARTIFACT={artifact}")
+        command.append(f"--dart-define=DMF_RUNTIME_SMOKE_ARTIFACT={artifact}")
+    if provider:
+        command.append(f"--dart-define=DINF_RUNTIME_SMOKE_PROVIDER={provider}")
+        command.append(f"--dart-define=DMF_RUNTIME_SMOKE_PROVIDER={provider}")
+    if require_provider:
+        command.append("--dart-define=DINF_RUNTIME_SMOKE_REQUIRE_PROVIDER=true")
+        command.append("--dart-define=DMF_RUNTIME_SMOKE_REQUIRE_PROVIDER=true")
+    if delegate:
+        command.append(f"--dart-define=DINF_RUNTIME_SMOKE_DELEGATE={delegate}")
+        command.append(f"--dart-define=DMF_RUNTIME_SMOKE_DELEGATE={delegate}")
+    if require_delegate:
+        command.append("--dart-define=DINF_RUNTIME_SMOKE_REQUIRE_DELEGATE=true")
+        command.append("--dart-define=DMF_RUNTIME_SMOKE_REQUIRE_DELEGATE=true")
+    if litert_section_index is not None:
+        command.append(
+            f"--dart-define=DINF_RUNTIME_SMOKE_LITERT_SECTION_INDEX={litert_section_index}"
+        )
+        command.append(
+            f"--dart-define=DMF_RUNTIME_SMOKE_LITERT_SECTION_INDEX={litert_section_index}"
+        )
     return command
 
 
@@ -256,7 +323,29 @@ def resolve_android_artifact(
     if not host_prefetch:
         return artifact, {"mode": "direct", "reason": "host_prefetch_disabled"}
     if not _is_hf_uri(artifact):
-        return artifact, {"mode": "direct", "reason": "not_hf_uri"}
+        local_path = Path(artifact).expanduser()
+        if local_path.exists():
+            try:
+                remote_path = push_artifact_to_device(
+                    device_id=device_id,
+                    local_path=local_path,
+                    package_name=package_name,
+                    model_id=model_id,
+                    engine=engine,
+                    device_artifact_dir=device_artifact_dir,
+                )
+                return remote_path, {
+                    "mode": "local_push",
+                    "source_path": str(local_path),
+                    "remote_path": remote_path,
+                }
+            except Exception as exc:
+                return artifact, {
+                    "mode": "direct_fallback",
+                    "source_path": str(local_path),
+                    "error": str(exc),
+                }
+        return artifact, {"mode": "direct", "reason": "not_hf_or_local_path"}
     try:
         local_path = download_hf_artifact(artifact, hf_cache_dir)
         remote_path = push_artifact_to_device(
@@ -327,9 +416,16 @@ def push_artifact_to_device(
         remote_dir=remote_dir,
     ):
         _chmod_device_path(device_id=device_id, path=path, mode="0775")
-    remote_path = f"{remote_dir}/{local_path.name}"
-    _run_adb(device_id, ["push", str(local_path), remote_path], check=True)
-    _chmod_device_path(device_id=device_id, path=remote_path, mode="0664")
+    push_path, remote_path, recursive = _push_source_and_remote(
+        local_path=local_path,
+        remote_dir=remote_dir,
+    )
+    with _materialized_push_path(push_path) as materialized:
+        _run_adb(device_id, ["push", str(materialized), remote_path], check=True)
+    if recursive:
+        _chmod_device_path(device_id=device_id, path=remote_path, mode="0775", recursive=True)
+    else:
+        _chmod_device_path(device_id=device_id, path=remote_path, mode="0664")
     return remote_path
 
 
@@ -343,6 +439,113 @@ def parse_hf_uri(uri: str) -> tuple[str, str]:
     repo_id = f"{parts[0]}/{parts[1]}"
     artifact_path = "/".join(parts[2:])
     return repo_id, artifact_path
+
+
+def prepare_directory_path(
+    *,
+    path: Path,
+    fallback_path: Path,
+    label: str,
+) -> tuple[Path, dict[str, Any]]:
+    if _has_broken_symlink_parent(path):
+        fallback_path.mkdir(parents=True, exist_ok=True)
+        return fallback_path, {
+            "mode": "fallback",
+            "label": label,
+            "requested": str(path),
+            "resolved": str(fallback_path),
+            "reason": "broken_symlink_parent",
+        }
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path, {"mode": "direct", "label": label, "resolved": str(path)}
+    except OSError as exc:
+        fallback_path.mkdir(parents=True, exist_ok=True)
+        return fallback_path, {
+            "mode": "fallback",
+            "label": label,
+            "requested": str(path),
+            "resolved": str(fallback_path),
+            "error": str(exc),
+        }
+
+
+def prepare_out_path(
+    *,
+    out_path: Path,
+    fallback_out_path: Path,
+) -> tuple[Path, dict[str, Any]]:
+    if _has_broken_symlink_parent(out_path.parent):
+        fallback_out_path.parent.mkdir(parents=True, exist_ok=True)
+        return fallback_out_path, {
+            "mode": "fallback",
+            "requested": str(out_path),
+            "resolved": str(fallback_out_path),
+            "reason": "broken_symlink_parent",
+        }
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        return out_path, {"mode": "direct", "resolved": str(out_path)}
+    except OSError as exc:
+        fallback_out_path.parent.mkdir(parents=True, exist_ok=True)
+        return fallback_out_path, {
+            "mode": "fallback",
+            "requested": str(out_path),
+            "resolved": str(fallback_out_path),
+            "error": str(exc),
+        }
+
+
+def _push_source_and_remote(
+    *,
+    local_path: Path,
+    remote_dir: str,
+) -> tuple[Path, str, bool]:
+    if local_path.is_file() and _is_pipeline_spec(local_path):
+        source = local_path.parent
+        return source, f"{remote_dir}/{source.name}/{local_path.name}", True
+    if local_path.is_dir():
+        return local_path, f"{remote_dir}/{local_path.name}", True
+    return local_path, f"{remote_dir}/{local_path.name}", False
+
+
+@contextmanager
+def _materialized_push_path(path: Path):
+    if not path.is_dir() or not _directory_has_symlink(path):
+        yield path
+        return
+    with tempfile.TemporaryDirectory(prefix="dinf_android_push_") as tmp:
+        materialized = Path(tmp) / path.name
+        shutil.copytree(path, materialized, symlinks=False)
+        yield materialized
+
+
+def _is_pipeline_spec(path: Path) -> bool:
+    if path.suffix.lower() != ".json":
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    format_name = payload.get("format") if isinstance(payload, dict) else None
+    return isinstance(format_name, str) and "pipeline.v1" in format_name
+
+
+def _directory_has_symlink(path: Path) -> bool:
+    try:
+        return any(item.is_symlink() for item in path.rglob("*"))
+    except OSError:
+        return True
+
+
+def _has_broken_symlink_parent(path: Path) -> bool:
+    for candidate in (path, *path.parents):
+        try:
+            if candidate.is_symlink() and not candidate.exists():
+                return True
+        except OSError:
+            return True
+    return False
 
 
 def _is_hf_uri(value: str) -> bool:
@@ -406,10 +609,20 @@ def _is_same_or_child(path: PurePosixPath, parent: PurePosixPath) -> bool:
     return parent in path.parents
 
 
-def _chmod_device_path(*, device_id: str, path: str, mode: str) -> None:
+def _chmod_device_path(
+    *,
+    device_id: str,
+    path: str,
+    mode: str,
+    recursive: bool = False,
+) -> None:
+    args = ["shell", "chmod"]
+    if recursive:
+        args.append("-R")
+    args.extend([mode, path])
     _run_adb(
         device_id,
-        ["shell", "chmod", mode, path],
+        args,
         check=False,
     )
 
@@ -449,7 +662,7 @@ def logcat_follow_command(*, device_id: str) -> list[str]:
         "logcat",
         "-v",
         "brief",
-        f"{ANDROID_LOG_TAG}:I",
+        *[f"{tag}:I" for tag in ANDROID_LOG_TAGS],
         "flutter:I",
         "*:S",
     ]

@@ -8,16 +8,26 @@ import time
 from typing import Any
 
 
-MARKER = "DINF_RUNTIME_SMOKE_RESULT:"
-MARKER_BEGIN = "DINF_RUNTIME_SMOKE_RESULT_BEGIN"
-MARKER_CHUNK = "DINF_RUNTIME_SMOKE_RESULT_CHUNK:"
-MARKER_END = "DINF_RUNTIME_SMOKE_RESULT_END"
+MARKERS = ("DINF_RUNTIME_SMOKE_RESULT:", "DMF_RUNTIME_SMOKE_RESULT:")
+MARKER_BEGINS = (
+    "DINF_RUNTIME_SMOKE_RESULT_BEGIN",
+    "DMF_RUNTIME_SMOKE_RESULT_BEGIN",
+)
+MARKER_CHUNKS = (
+    "DINF_RUNTIME_SMOKE_RESULT_CHUNK:",
+    "DMF_RUNTIME_SMOKE_RESULT_CHUNK:",
+)
+MARKER_ENDS = (
+    "DINF_RUNTIME_SMOKE_RESULT_END",
+    "DMF_RUNTIME_SMOKE_RESULT_END",
+)
 
 
 def extract_marker_payload(line: str) -> dict[str, Any] | None:
-    if MARKER not in line:
+    marker = _first_marker(line, MARKERS)
+    if marker is None:
         return None
-    raw = line.split(MARKER, 1)[1].strip()
+    raw = line.split(marker, 1)[1].strip()
     if not raw:
         return None
     try:
@@ -40,26 +50,28 @@ class MarkerParser:
         if inline is not None:
             return inline
 
-        if MARKER_BEGIN in line:
+        begin = _first_marker(line, MARKER_BEGINS)
+        if begin is not None:
             self._started = True
             self._chunks.clear()
-            self._expected_chunks = self._parse_expected_chunks(line)
+            self._expected_chunks = self._parse_expected_chunks(line, begin)
             return None
 
-        if MARKER_CHUNK in line:
+        chunk = _first_marker(line, MARKER_CHUNKS)
+        if chunk is not None:
             self._started = True
-            self._store_chunk(line)
+            self._store_chunk(line, chunk)
             if self._expected_chunks is not None and len(self._chunks) >= self._expected_chunks:
                 return self._decode_chunks()
             return None
 
-        if MARKER_END in line and self._started:
+        if _first_marker(line, MARKER_ENDS) is not None and self._started:
             return self._decode_chunks()
 
         return None
 
-    def _parse_expected_chunks(self, line: str) -> int | None:
-        raw = line.split(MARKER_BEGIN, 1)[1].strip()
+    def _parse_expected_chunks(self, line: str, marker: str) -> int | None:
+        raw = line.split(marker, 1)[1].strip()
         if raw.startswith(":"):
             raw = raw[1:].strip()
         if not raw:
@@ -70,8 +82,8 @@ class MarkerParser:
             return None
         return parsed if parsed > 0 else None
 
-    def _store_chunk(self, line: str) -> None:
-        raw = line.split(MARKER_CHUNK, 1)[1].strip()
+    def _store_chunk(self, line: str, marker: str) -> None:
+        raw = line.split(marker, 1)[1].strip()
         if not raw:
             return
         if ":" not in raw:
@@ -140,6 +152,13 @@ class MarkerParser:
         self._started = False
         self._expected_chunks = None
         self._chunks.clear()
+
+
+def _first_marker(line: str, markers: tuple[str, ...]) -> str | None:
+    for marker in markers:
+        if marker in line:
+            return marker
+    return None
 
 
 def terminate_process(process: subprocess.Popen[str]) -> None:

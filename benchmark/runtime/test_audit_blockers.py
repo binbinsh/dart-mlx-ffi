@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 import yaml
@@ -75,6 +76,61 @@ class AuditBlockerTest(unittest.TestCase):
             platform["blocked_reason"],
             "Converter exited with code 1. See conversion.log.",
         )
+
+    def test_attaches_search_evidence_to_blocked_platforms(self) -> None:
+        config_path = self.tmp / "models.yaml"
+        config_path.write_text(
+            yaml.safe_dump(
+                {
+                    "support_policy": {
+                        "production_requires": {
+                            "platforms": ["windows"],
+                        }
+                    },
+                    "first_wave": [
+                        {
+                            "id": "minicpm_o_4_5",
+                            "family": "MiniCPM-o 4.5",
+                            "blocked_platforms": {
+                                "windows": "No full ONNX Runtime artifact found.",
+                            },
+                        }
+                    ],
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        search_report = self.tmp / "search.json"
+        search_report.write_text(
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "id": "minicpm_o_4_5",
+                            "runtime_candidates": [],
+                            "component_candidates": [
+                                {"repo": "openbmb/MiniCPM-o-4_5"},
+                                {"repo": "openbmb/MiniCPM-o-4_5"},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        payload = audit(
+            config_path=config_path,
+            out_root=self.tmp / "out",
+            search_report_path=search_report,
+            model_id="minicpm_o_4_5",
+        )
+
+        evidence = payload["models"][0]["platforms"][0]["search_evidence"]
+        self.assertEqual(evidence["runtime_candidate_count"], 0)
+        self.assertEqual(evidence["component_candidate_count"], 2)
+        self.assertEqual(evidence["component_repos"], ["openbmb/MiniCPM-o-4_5"])
 
 
 if __name__ == "__main__":
