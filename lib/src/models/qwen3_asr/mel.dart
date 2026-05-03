@@ -1,7 +1,8 @@
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dart_inference/mlx.dart';
+
+import 'mel_math.dart';
 
 /// Whisper-compatible mel spectrogram frontend for Qwen3-ASR.
 ///
@@ -9,17 +10,17 @@ import 'package:dart_inference/mlx.dart';
 /// Uses log10 mel with max-clamping (Whisper convention).
 final class Qwen3AsrMelFrontend {
   Qwen3AsrMelFrontend()
-    : _window = _hannWindow(nFft),
-      _filterbank = _whisperMelFilterbank(
+    : _window = qwen3AsrHannWindow(nFft),
+      _filterbank = qwen3AsrWhisperMelFilterbank(
         sampleRate: sampleRate,
         nFft: nFft,
         nMels: nMels,
       );
 
-  static const int sampleRate = 16000;
-  static const int nMels = 128;
-  static const int nFft = 400;
-  static const int hopLength = 160;
+  static const int sampleRate = Qwen3AsrMelConstants.sampleRate;
+  static const int nMels = Qwen3AsrMelConstants.nMels;
+  static const int nFft = Qwen3AsrMelConstants.nFft;
+  static const int hopLength = Qwen3AsrMelConstants.hopLength;
 
   final Float32List _window;
   final Float32List _filterbank;
@@ -137,7 +138,7 @@ final class Qwen3AsrMelFrontend {
     final clamped = mx.maximum(mel, MlxArray.full([], 1e-10));
     final log10 = mx.multiply(
       mx.log(clamped),
-      MlxArray.full([], 1.0 / math.ln10),
+      MlxArray.full([], 0.4342944819032518),
     );
     clamped.close();
     // Compute global max via flatten → argmax → index.
@@ -191,71 +192,3 @@ final class Qwen3AsrMelFrontend {
     return result;
   }
 }
-
-/// Hann window of length n (periodic).
-Float32List _hannWindow(int n) {
-  final out = Float32List(n);
-  if (n <= 1) {
-    if (n == 1) out[0] = 1;
-    return out;
-  }
-  for (var i = 0; i < n; i++) {
-    out[i] = 0.5 - 0.5 * math.cos((2 * math.pi * i) / n);
-  }
-  return out;
-}
-
-/// Whisper-style mel filterbank (Slaney mel scale, slaney normalization).
-/// Returns flat array of shape [nMels, bins].
-///
-/// Matches `librosa.filters.mel(sr=16000, n_fft=400, n_mels=128,
-/// htk=False, norm='slaney')` which is the filterbank used by the
-/// moona3k/mlx-qwen3-asr reference (stored in mel_filters.npz).
-Float32List _whisperMelFilterbank({
-  required int sampleRate,
-  required int nFft,
-  required int nMels,
-}) {
-  final bins = (nFft ~/ 2) + 1;
-  final out = Float32List(nMels * bins);
-  final melMin = _slaneyHzToMel(0.0);
-  final melMax = _slaneyHzToMel(sampleRate / 2.0);
-  final melPoints = List<double>.generate(
-    nMels + 2,
-    (i) => melMin + (melMax - melMin) * i / (nMels + 1),
-  );
-  final hzPoints = melPoints.map(_slaneyMelToHz).toList(growable: false);
-  final fftFreqs = List<double>.generate(
-    bins,
-    (i) => sampleRate * i / nFft,
-    growable: false,
-  );
-
-  for (var m = 0; m < nMels; m++) {
-    final lower = hzPoints[m];
-    final center = hzPoints[m + 1];
-    final upper = hzPoints[m + 2];
-    final enorm = 2.0 / (upper - lower);
-    for (var bin = 0; bin < bins; bin++) {
-      final freq = fftFreqs[bin];
-      final left = center > lower ? (freq - lower) / (center - lower) : 0.0;
-      final right = upper > center ? (upper - freq) / (upper - center) : 0.0;
-      out[m * bins + bin] = math.max(0.0, math.min(left, right)) * enorm;
-    }
-  }
-  return out;
-}
-
-/// Slaney (O'Shaughnessy) mel scale — used by librosa with htk=False.
-/// Linear below 1000 Hz, logarithmic above.
-double _slaneyHzToMel(double hz) {
-  if (hz < 1000.0) return 3.0 * hz / 200.0;
-  return 15.0 + 27.0 * math.log(hz / 1000.0) / _ln6_4;
-}
-
-double _slaneyMelToHz(double mel) {
-  if (mel < 15.0) return 200.0 * mel / 3.0;
-  return 1000.0 * math.exp((mel - 15.0) * _ln6_4 / 27.0);
-}
-
-final double _ln6_4 = math.log(6.4);
