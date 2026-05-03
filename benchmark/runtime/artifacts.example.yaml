@@ -3,7 +3,9 @@ source_catalog: benchmark/runtime/hf_artifacts.yaml
 
 support_policy:
   production_requires:
-    platforms: [ios, macos, windows, linux, android]
+    platforms: [ios, macos, android]
+  optional_platforms: [linux]
+  abandoned_platforms: [windows]
 
 # Generate a concrete local artifact map from Hugging Face:
 #
@@ -18,13 +20,14 @@ support_policy:
 # gaps with:
 #
 #   uv run python benchmark/runtime/engine_gap_report.py \
+#     --artifacts benchmark/runtime/artifacts.converted.yaml \
 #     --model-id paddle_ocr_vl
 #
 # If Hugging Face does not publish a directly loadable runtime artifact yet,
 # generate a converted overlay instead:
 #
 #   uv run python benchmark/runtime/convert_artifacts.py \
-#     --model-id glm4_7_flash \
+#     --model-id qwen3_6_27b \
 #     --engine onnx \
 #     --base-artifacts benchmark/runtime/artifacts.local.yaml \
 #     --out benchmark/runtime/artifacts.converted.yaml
@@ -51,8 +54,6 @@ defaults:
     macos:
       baseline_engine: coreml-llm
       coreml_mode: decode
-    windows:
-      provider: dml
     linux:
       provider: cpu
     android:

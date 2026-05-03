@@ -139,16 +139,25 @@ final class RuntimeValidationStatus {
   const RuntimeValidationStatus({
     required this.platform,
     required this.engine,
+    this.identityPassed = false,
     this.correctnessPassed = false,
     this.speedPassed = false,
     this.peakMemoryPassed = false,
     this.deviceProfilePassed = false,
+    this.promotionPassed,
     this.reportPath,
     this.speedRatio,
     this.ttftRatio,
+    this.endToEndRatio,
     this.peakMemoryRatio,
     this.peakMemoryBytes,
     this.baselinePeakMemoryBytes,
+    this.iterationCount,
+    this.warmupCount,
+    this.latencyMs = const <String, Object?>{},
+    this.baselineLatencyMs = const <String, Object?>{},
+    this.runConfig = const <String, Object?>{},
+    this.inputSignature = const <String, Object?>{},
     this.deviceProfile = const <String, Object?>{},
     this.notes = const <String>[],
   });
@@ -158,6 +167,9 @@ final class RuntimeValidationStatus {
 
   /// Runtime engine used for this validation entry.
   final RuntimeEngine engine;
+
+  /// Whether report identity, inputs, and run config matched.
+  final bool identityPassed;
 
   /// Whether deterministic outputs and task-level parity passed.
   final bool correctnessPassed;
@@ -171,6 +183,9 @@ final class RuntimeValidationStatus {
   /// Whether provider/delegate/device-placement evidence passed.
   final bool deviceProfilePassed;
 
+  /// Overall verdict emitted by the runtime matrix comparator.
+  final bool? promotionPassed;
+
   /// Path to the full runtime matrix report.
   final String? reportPath;
 
@@ -179,6 +194,9 @@ final class RuntimeValidationStatus {
 
   /// Candidate TTFT divided by baseline TTFT.
   final double? ttftRatio;
+
+  /// Candidate end-to-end latency divided by baseline latency.
+  final double? endToEndRatio;
 
   /// Candidate peak memory divided by baseline peak memory.
   final double? peakMemoryRatio;
@@ -189,6 +207,24 @@ final class RuntimeValidationStatus {
   /// Baseline peak memory in bytes.
   final int? baselinePeakMemoryBytes;
 
+  /// Number of measured iterations in the candidate run.
+  final int? iterationCount;
+
+  /// Number of warmup iterations before candidate measurement.
+  final int? warmupCount;
+
+  /// Candidate latency summary: sample count, mean, p50, p95.
+  final Map<String, Object?> latencyMs;
+
+  /// Baseline latency summary: sample count, mean, p50, p95.
+  final Map<String, Object?> baselineLatencyMs;
+
+  /// Benchmark run configuration used for this validation.
+  final Map<String, Object?> runConfig;
+
+  /// Input signature used to prove candidate/baseline input identity.
+  final Map<String, Object?> inputSignature;
+
   /// Raw device/provider profile details.
   final Map<String, Object?> deviceProfile;
 
@@ -197,6 +233,7 @@ final class RuntimeValidationStatus {
 
   /// All required production gates passed for this platform.
   bool get passed =>
+      identityPassed &&
       correctnessPassed &&
       speedPassed &&
       peakMemoryPassed &&
@@ -205,17 +242,26 @@ final class RuntimeValidationStatus {
   Map<String, Object?> toJson() => {
     'platform': platform,
     'engine': engine.name,
+    'identityPassed': identityPassed,
     'correctnessPassed': correctnessPassed,
     'speedPassed': speedPassed,
     'peakMemoryPassed': peakMemoryPassed,
     'deviceProfilePassed': deviceProfilePassed,
+    if (promotionPassed != null) 'promotionPassed': promotionPassed,
     if (reportPath != null) 'reportPath': reportPath,
     if (speedRatio != null) 'speedRatio': speedRatio,
     if (ttftRatio != null) 'ttftRatio': ttftRatio,
+    if (endToEndRatio != null) 'endToEndRatio': endToEndRatio,
     if (peakMemoryRatio != null) 'peakMemoryRatio': peakMemoryRatio,
     if (peakMemoryBytes != null) 'peakMemoryBytes': peakMemoryBytes,
     if (baselinePeakMemoryBytes != null)
       'baselinePeakMemoryBytes': baselinePeakMemoryBytes,
+    if (iterationCount != null) 'iterationCount': iterationCount,
+    if (warmupCount != null) 'warmupCount': warmupCount,
+    if (latencyMs.isNotEmpty) 'latencyMs': latencyMs,
+    if (baselineLatencyMs.isNotEmpty) 'baselineLatencyMs': baselineLatencyMs,
+    if (runConfig.isNotEmpty) 'runConfig': runConfig,
+    if (inputSignature.isNotEmpty) 'inputSignature': inputSignature,
     if (deviceProfile.isNotEmpty) 'deviceProfile': deviceProfile,
     if (notes.isNotEmpty) 'notes': notes,
   };
@@ -224,17 +270,26 @@ final class RuntimeValidationStatus {
     return RuntimeValidationStatus(
       platform: json['platform'] as String? ?? '',
       engine: _parseRuntimeEngine(json['engine'] as String?),
+      identityPassed: json['identityPassed'] as bool? ?? false,
       correctnessPassed: json['correctnessPassed'] as bool? ?? false,
       speedPassed: json['speedPassed'] as bool? ?? false,
       peakMemoryPassed: json['peakMemoryPassed'] as bool? ?? false,
       deviceProfilePassed: json['deviceProfilePassed'] as bool? ?? false,
+      promotionPassed: json['promotionPassed'] as bool?,
       reportPath: json['reportPath'] as String?,
       speedRatio: (json['speedRatio'] as num?)?.toDouble(),
       ttftRatio: (json['ttftRatio'] as num?)?.toDouble(),
+      endToEndRatio: (json['endToEndRatio'] as num?)?.toDouble(),
       peakMemoryRatio: (json['peakMemoryRatio'] as num?)?.toDouble(),
       peakMemoryBytes: (json['peakMemoryBytes'] as num?)?.toInt(),
       baselinePeakMemoryBytes: (json['baselinePeakMemoryBytes'] as num?)
           ?.toInt(),
+      iterationCount: (json['iterationCount'] as num?)?.toInt(),
+      warmupCount: (json['warmupCount'] as num?)?.toInt(),
+      latencyMs: _objectMap(json['latencyMs']),
+      baselineLatencyMs: _objectMap(json['baselineLatencyMs']),
+      runConfig: _objectMap(json['runConfig']),
+      inputSignature: _objectMap(json['inputSignature']),
       deviceProfile: _objectMap(json['deviceProfile']),
       notes:
           (json['notes'] as List<Object?>?)?.whereType<String>().toList() ??

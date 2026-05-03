@@ -136,11 +136,26 @@ ModelSpec _applyRuntimePatch(ModelSpec spec, Map<String, Object?>? patch) {
   final status = _objectMap(patch['validationStatus']).map((key, value) {
     return MapEntry(key, RuntimeValidationStatus.fromJson(_objectMap(value)));
   });
+  final platformArtifacts = Map<RuntimeEngine, RuntimeArtifact>.from(
+    spec.platformArtifacts,
+  );
+  final artifactPatch = _objectMap(patch['platformArtifacts']);
+  for (final entry in artifactPatch.entries) {
+    final engine = RuntimeEngine.values.firstWhere(
+      (candidate) => candidate.name == entry.key,
+      orElse: () => RuntimeEngine.mlx,
+    );
+    final artifact = RuntimeArtifact.fromJson(_objectMap(entry.value));
+    platformArtifacts[engine] = artifact;
+  }
   return spec.copyWith(
     supportLevel: patch.containsKey('supportLevel')
         ? parseSupportLevel(patch['supportLevel'] as String?)
         : spec.supportLevel,
     validationStatus: status.isEmpty ? spec.validationStatus : status,
+    platformArtifacts: artifactPatch.isEmpty
+        ? spec.platformArtifacts
+        : platformArtifacts,
   );
 }
 
@@ -224,19 +239,61 @@ final List<ModelSpec> builtInSpecs = [
     modalities: const [ModelModality.speechToText],
     description: 'Qwen3 automatic speech recognition',
     requiredFiles: const ['config.json'],
-    optionalFiles: const ['vocab.json', 'merges.txt'],
-    platformArtifacts: _runtimeArtifacts(
-      id: 'qwen3_asr',
-      sourceModel: 'Qwen/Qwen3-ASR-0.6B',
-      mlxRepo: 'mlx-community/Qwen3-ASR-1.7B-8bit',
-      mlxArtifact: '.',
-      coremlRepo: 'FluidInference/qwen3-asr-0.6b-coreml',
-      coremlArtifact: 'int8/qwen3_asr_decoder_stateful.mlmodelc',
-      onnxRepo: 'Daumee/Qwen3-ASR-0.6B-ONNX-CPU',
-      onnxArtifact: 'onnx_models/decoder_step.int8.onnx',
-      litertRepo: 'litert-community/Qwen3-ASR-0.6B',
-      litertArtifact: 'qwen3_asr_0.6b_5s_i8.tflite',
-    ),
+    optionalFiles: const [
+      'vocab.json',
+      'merges.txt',
+      'tokenizer.json',
+      'added_tokens.json',
+    ],
+    platformArtifacts: {
+      ..._runtimeArtifacts(
+        id: 'qwen3_asr',
+        sourceModel: 'Qwen/Qwen3-ASR-1.7B',
+        mlxRepo: 'mlx-community/Qwen3-ASR-1.7B-8bit',
+        mlxArtifact: '.',
+      ),
+      RuntimeEngine.coreml: _artifact(
+        engine: RuntimeEngine.coreml,
+        repo: 'UniMocha/Qwen3-ASR-1.7B-CoreML-INT8',
+        artifact: '.',
+        modelId: 'qwen3_asr',
+        sourceModel: 'Qwen/Qwen3-ASR-1.7B',
+        format: 'coreml-asr-components',
+        platforms: const ['ios', 'macos'],
+        accelerators: const [Accelerator.ane, Accelerator.gpu, Accelerator.cpu],
+        extraMetadata: const {
+          'runtimeScope': 'model-level-coreml-stateful',
+          'runner': 'Qwen3AsrCoreMlRunner.loadCoreMlBundle',
+          'tokenizerRequired': true,
+          'tokenizerSourceRepo': 'andrewleech/qwen3-asr-1.7b-onnx',
+          'componentArtifacts': [
+            'encoder.mlmodelc',
+            'embedding.mlmodelc',
+            'decoder.mlmodelc',
+          ],
+        },
+      ),
+      RuntimeEngine.onnx: _artifact(
+        engine: RuntimeEngine.onnx,
+        repo: 'andrewleech/qwen3-asr-1.7b-onnx',
+        artifact: '.',
+        modelId: 'qwen3_asr',
+        sourceModel: 'Qwen/Qwen3-ASR-1.7B',
+        format: 'onnx-asr-components',
+        platforms: const ['linux', 'android'],
+        accelerators: const [Accelerator.npu, Accelerator.gpu, Accelerator.cpu],
+        extraMetadata: const {
+          'runtimeScope': 'model-level-asr-components',
+          'runner': 'Qwen3AsrNativeRunner.loadOnnxBundle',
+          'componentArtifacts': [
+            'encoder.int4.onnx',
+            'decoder_init.int4.onnx',
+            'decoder_step.int4.onnx',
+            'embed_tokens.bin',
+          ],
+        },
+      ),
+    },
   ),
   ModelSpec(
     id: 'kitten_tts',
@@ -246,11 +303,11 @@ final List<ModelSpec> builtInSpecs = [
     requiredFiles: const ['config.json'],
     platformArtifacts: _runtimeArtifacts(
       id: 'kitten_tts',
-      sourceModel: 'KittenML/kitten-tts-nano-0.1',
-      mlxRepo: 'mlx-community/kitten-tts-nano-0.8-6bit',
+      sourceModel: 'KittenML/kitten-tts-mini-0.8',
+      mlxRepo: 'mlx-community/kitten-tts-mini-0.8-8bit',
       mlxArtifact: '.',
       coremlRepo: 'alexwengg/kittentts-coreml',
-      coremlArtifact: 'nano/kittentts_5s.mlmodelc',
+      coremlArtifact: 'mini/kittentts_mini_5s.mlmodelc',
       onnxRepo: 'onnx-community/KittenTTS-Mini-v0.8-ONNX',
       onnxArtifact: 'onnx/model.onnx',
     ),
@@ -296,20 +353,20 @@ final List<ModelSpec> builtInSpecs = [
     id: 'gemma4',
     family: 'Gemma 4',
     modalities: const [ModelModality.textGeneration],
-    description: 'Gemma 4 E2B instruction-tuned text model',
+    description: 'Gemma 4 E4B instruction-tuned text model',
     requiredFiles: const ['config.json'],
     requiredTags: const ['mlx'],
     platformArtifacts: _runtimeArtifacts(
       id: 'gemma4',
-      sourceModel: 'google/gemma-4-E2B-it',
-      mlxRepo: 'unsloth/gemma-4-E2B-it-UD-MLX-4bit',
+      sourceModel: 'google/gemma-4-E4B-it',
+      mlxRepo: 'mlx-community/gemma-4-e4b-it-4bit',
       mlxArtifact: '.',
-      coremlRepo: 'mlboydaisuke/gemma-4-E2B-coreml',
-      coremlArtifact: 'lite-chunks',
-      onnxRepo: 'onnx-community/gemma-4-E2B-it-ONNX',
+      coremlRepo: 'mlboydaisuke/gemma-4-E4B-coreml',
+      coremlArtifact: '.',
+      onnxRepo: 'huggingworld/gemma-4-E4B-it-ONNX',
       onnxArtifact: 'onnx/decoder_model_merged_q4f16.onnx',
-      litertRepo: 'litert-community/gemma-4-E2B-it-litert-lm',
-      litertArtifact: 'gemma-4-E2B-it.litertlm',
+      litertRepo: 'litert-community/gemma-4-E4B-it-litert-lm',
+      litertArtifact: 'gemma-4-E4B-it.litertlm',
     ),
   ),
   ModelSpec(
@@ -353,104 +410,46 @@ final List<ModelSpec> builtInSpecs = [
     ),
   ),
   ModelSpec(
-    id: 'qwen3_5_27b_dwq',
-    family: 'Qwen3.5 27B DWQ',
+    id: 'qwen3_6_27b',
+    family: 'Qwen3.6 27B',
     modalities: const [ModelModality.textGeneration],
-    description: 'Qwen3.5 27B publish-time MLX benchmark model',
+    description: 'Qwen3.6 27B publish-time MLX benchmark model',
     requiredFiles: const ['config.json'],
     requiredTags: const ['mlx'],
     metadata: _partialRuntimeMigration(
       migratedPlatforms: const ['ios', 'macos'],
       blockedPlatforms: const {
-        'windows':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
         'linux':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
+            'ONNX Runtime GenAI conversion is wired and the config probe passes, but no validated 27B ONNX artifact has been exported yet.',
         'android':
-            'No directly loadable LiteRT artifact found on Hugging Face.',
+            'LiteRT patched conversion is wired and the config probe passes, but no validated 27B LiteRT artifact has been exported yet.',
       },
     ),
     platformArtifacts: _runtimeArtifacts(
-      id: 'qwen3_5_27b_dwq',
-      sourceModel: 'Qwen/Qwen3.5-27B',
-      mlxRepo: 'mlx-community/Qwen3.5-27B-4bit-DWQ',
+      id: 'qwen3_6_27b',
+      sourceModel: 'Qwen/Qwen3.6-27B',
+      mlxRepo: 'mlx-community/Qwen3.6-27B-4bit',
       mlxArtifact: '.',
     ),
   ),
   ModelSpec(
-    id: 'translategemma_27b_it',
-    family: 'TranslateGemma 27B IT',
+    id: 'translategemma_4b_it',
+    family: 'TranslateGemma 4B IT',
     modalities: const [ModelModality.textGeneration],
-    description: 'TranslateGemma 27B instruction-tuned translation model',
+    description: 'TranslateGemma 4B instruction-tuned translation model',
     requiredFiles: const ['config.json'],
     requiredTags: const ['mlx'],
-    metadata: _partialRuntimeMigration(
-      migratedPlatforms: const ['ios', 'macos', 'android'],
-      blockedPlatforms: const {
-        'windows':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
-        'linux':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
-      },
-    ),
     platformArtifacts: _runtimeArtifacts(
-      id: 'translategemma_27b_it',
-      sourceModel: 'google/translategemma-27b-it',
-      mlxRepo: 'mlx-community/translategemma-27b-it-4bit',
+      id: 'translategemma_4b_it',
+      sourceModel: 'google/translategemma-4b-it',
+      mlxRepo: 'mlx-community/translategemma-4b-it-4bit',
       mlxArtifact: '.',
-      litertRepo: 'litert-community/TranslateGemma-27B-IT',
-      litertArtifact: 'translategemma-27b-it-int8-web.task',
-    ),
-  ),
-  ModelSpec(
-    id: 'nemotron3_nano_30b',
-    family: 'NVIDIA Nemotron 3 Nano 30B A3B',
-    modalities: const [ModelModality.textGeneration],
-    description:
-        'NVIDIA Nemotron 3 Nano 30B A3B publish-time MLX benchmark model',
-    requiredFiles: const ['config.json'],
-    requiredTags: const ['mlx'],
-    metadata: _partialRuntimeMigration(
-      migratedPlatforms: const ['ios', 'macos'],
-      blockedPlatforms: const {
-        'windows':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
-        'linux':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
-        'android':
-            'No directly loadable LiteRT artifact found on Hugging Face.',
-      },
-    ),
-    platformArtifacts: _runtimeArtifacts(
-      id: 'nemotron3_nano_30b',
-      sourceModel: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16',
-      mlxRepo: 'mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit',
-      mlxArtifact: '.',
-    ),
-  ),
-  ModelSpec(
-    id: 'glm4_7_flash',
-    family: 'GLM-4.7-Flash',
-    modalities: const [ModelModality.textGeneration],
-    description: 'GLM-4.7-Flash publish-time MLX benchmark model',
-    requiredFiles: const ['config.json'],
-    requiredTags: const ['mlx'],
-    metadata: _partialRuntimeMigration(
-      migratedPlatforms: const ['ios', 'macos'],
-      blockedPlatforms: const {
-        'windows':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
-        'linux':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
-        'android':
-            'No directly loadable LiteRT artifact found on Hugging Face.',
-      },
-    ),
-    platformArtifacts: _runtimeArtifacts(
-      id: 'glm4_7_flash',
-      sourceModel: 'zai-org/GLM-4.7-Flash',
-      mlxRepo: 'mlx-community/GLM-4.7-Flash-4bit',
-      mlxArtifact: '.',
+      coremlRepo: 'Skyline23/translategemma-4b-it-coreml',
+      coremlArtifact: 'StatefulTranslateGemma4BITInt4PerChannel.mlpackage',
+      onnxRepo: 'onnx-community/translategemma-text-4b-it-ONNX',
+      onnxArtifact: 'onnx/model_q4f16.onnx',
+      litertRepo: 'litert-community/TranslateGemma-4B-IT',
+      litertArtifact: 'translategemma-4b-it-int8-web.task',
     ),
   ),
   ModelSpec(
@@ -469,8 +468,6 @@ final List<ModelSpec> builtInSpecs = [
     metadata: _partialRuntimeMigration(
       migratedPlatforms: const ['ios', 'macos'],
       blockedPlatforms: const {
-        'windows':
-            'Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.',
         'linux':
             'Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.',
         'android':
@@ -498,8 +495,6 @@ final List<ModelSpec> builtInSpecs = [
     metadata: _partialRuntimeMigration(
       migratedPlatforms: const ['ios', 'macos'],
       blockedPlatforms: const {
-        'windows':
-            'No directly loadable ONNX Runtime artifact found on Hugging Face.',
         'linux':
             'No directly loadable ONNX Runtime artifact found on Hugging Face.',
         'android':
@@ -520,17 +515,60 @@ final List<ModelSpec> builtInSpecs = [
     description: 'Ming-omni TTS 0.5B publish-time MLX benchmark model',
     requiredFiles: const ['config.json'],
     requiredTags: const ['mlx'],
-    metadata: _partialRuntimeMigration(
-      migratedPlatforms: const ['ios', 'macos'],
-      blockedPlatforms: const {
-        'windows':
-            'Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.',
-        'linux':
-            'Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.',
-        'android':
-            'No directly loadable LiteRT artifact found on Hugging Face; only campplus.onnx component sidecar was found.',
+    metadata: {
+      ..._partialRuntimeMigration(
+        migratedPlatforms: const ['ios', 'macos'],
+        blockedPlatforms: const {
+          'linux':
+              'Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.',
+          'android':
+              'Ming Omni TTS LLM, flowloss_dit_step, linear_proj_audio, stop_head, and audio_decode_chunk submodels export and load as LiteRT/XNNPACK, but full TTS still needs streaming sampler/orchestration.',
+        },
+      ),
+      'runtimeComponentEvidence': {
+        'android': {
+          'litert_llm_artifact':
+              'benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/llm_litert/model.litertlm',
+          'litert_flowloss_dit_step_artifact':
+              'benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/flowloss_dit_step/model.tflite',
+          'litert_linear_proj_audio_artifact':
+              'benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/linear_proj_audio/model.tflite',
+          'litert_stop_head_artifact':
+              'benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/stop_head/model.tflite',
+          'litert_audio_decode_chunk_artifact':
+              'benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/audio_decode_chunk/model.tflite',
+          'onnx_audio_decode_chunk_artifact':
+              'benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/onnx/audio_decode_chunk.onnx',
+          'audio_decode_chunk_litert_report':
+              'benchmark/artifacts_local/converted/ming_omni_tts_0_5b/native_components/components/litert/audio_decode_chunk/onnx_to_litert_report.json',
+          'audio_decode_chunk_host_litert_smoke_report':
+              'benchmark/out_local/runtime/ming_omni_tts_0_5b/host/audio_decode_chunk_tflite_smoke.json',
+          'audio_decode_chunk_host_litert_parity_report':
+              'benchmark/out_local/runtime/ming_omni_tts_0_5b/host/audio_decode_chunk_litert_onnx_parity.json',
+          'flowloss_dit_step_device_smoke_report':
+              'benchmark/out_local/runtime/ming_omni_tts_0_5b/android/flowloss_dit_step_litert_device_smoke_xnnpack.json',
+          'linear_proj_audio_device_smoke_report':
+              'benchmark/out_local/runtime/ming_omni_tts_0_5b/android/linear_proj_audio_litert_device_smoke_xnnpack.json',
+          'stop_head_device_smoke_report':
+              'benchmark/out_local/runtime/ming_omni_tts_0_5b/android/stop_head_litert_device_smoke_xnnpack.json',
+          'audio_decode_chunk_device_smoke_report':
+              'benchmark/out_local/runtime/ming_omni_tts_0_5b/android/audio_decode_chunk_litert_device_smoke_xnnpack.json',
+          'audio_decode_chunk_native_device_report':
+              'benchmark/out_local/runtime/ming_omni_tts_0_5b/android/audio_decode_chunk_native_litert_report.json',
+          'delegate': 'xnnpack',
+          'flowloss_dit_step_peak_memory_bytes': 263455744,
+          'linear_proj_audio_peak_memory_bytes': 260816896,
+          'stop_head_peak_memory_bytes': 53060608,
+          'audio_decode_chunk_load_peak_memory_bytes': 2298078208,
+          'audio_decode_chunk_invoke_peak_memory_bytes': 2307913728,
+          'audio_decode_chunk_end_to_end_ms': 476.2753125,
+          'audio_decode_chunk_litert_onnx_max_abs_error': 6.149709224700928e-05,
+          'missing_native_components': const [
+            'streaming TTS sampler/orchestration',
+          ],
+        },
       },
-    ),
+    },
     platformArtifacts: _runtimeArtifacts(
       id: 'ming_omni_tts_0_5b',
       sourceModel: 'inclusionAI/Ming-omni-tts-0.5B',
@@ -596,7 +634,7 @@ Map<RuntimeEngine, RuntimeArtifact> _runtimeArtifacts({
       modelId: id,
       sourceModel: sourceModel,
       format: 'onnx',
-      platforms: const ['ios', 'macos', 'windows', 'linux', 'android'],
+      platforms: const ['linux', 'android'],
       accelerators: const [Accelerator.gpu, Accelerator.cpu],
     ),
   if (litertRepo != null && litertArtifact != null)
@@ -621,6 +659,7 @@ RuntimeArtifact _artifact({
   required String format,
   required List<String> platforms,
   required List<Accelerator> accelerators,
+  Map<String, Object?> extraMetadata = const {},
 }) {
   final uri = 'hf://$repo/$artifact';
   final metadata = <String, Object?>{
@@ -628,6 +667,7 @@ RuntimeArtifact _artifact({
     'modelId': modelId,
     'repo': repo,
     'artifact': artifact,
+    ...extraMetadata,
   };
   if (sourceModel != null) {
     metadata['sourceModel'] = sourceModel;

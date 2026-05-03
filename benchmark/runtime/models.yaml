@@ -1,17 +1,22 @@
 version: 1
 support_policy:
   production_requires:
-    platforms: [ios, macos, windows, linux, android]
+    platforms: [ios, macos, android]
     correctness: true
     speed: true
     peak_memory: true
+  optional_platforms: [linux]
+  abandoned_platforms: [windows]
   thresholds:
     min_speed_ratio: 0.90
     max_ttft_ratio: 1.10
+    max_end_to_end_ratio: 1.10
     max_peak_memory_ratio: 1.10
     min_embedding_cosine: 0.999
     max_embedding_l2: 0.001
     max_abs_diff: 0.0001
+    require_input_signature: true
+    require_run_config: true
     require_device_profile: true
     required_coreml_preferred_device: ane
 
@@ -39,23 +44,37 @@ first_wave:
     support_level: staging
     coreml_llm_baseline: false
     baseline_publish_model_id: mlx-community/PaddleOCR-VL-1.5-8bit
+    engine_order:
+      android: [onnx, litert]
   - id: qwen3_asr
     family: Qwen3-ASR
     task: audio
-    source_model: Qwen/Qwen3-ASR-0.6B
+    source_model: Qwen/Qwen3-ASR-1.7B
     source_artifacts: huggingface
     required_fixtures: [audio]
     support_level: staging
     coreml_llm_baseline: false
+    baseline_publish_model_id: mlx-community/Qwen3-ASR-1.7B-8bit
+    artifact_coverage: all_platform_staging
+    migrated_platforms: [ios, macos, linux, android]
+    engine_order:
+      android: [onnx, litert]
+    runtime_notes:
+      ios: Core ML stateful runner is implemented, but tokenizer sidecars and iOS runtime-matrix evidence are still pending; default remains MLX fallback.
+      macos: Core ML stateful runner is implemented, but tokenizer sidecars and macOS runtime-matrix evidence are still pending; default remains MLX fallback.
+      linux: Uses Qwen3AsrNativeRunner with the same-model ONNX encoder, decoder_init, decoder_step, tokenizer, and embed_tokens sidecar.
+      android: Uses ONNX Runtime Mobile as the preferred Android runtime because the decoder uses ORT MatMulNBits; LiteRT remains tracked as an optimization path.
   - id: kitten_tts
     family: KittenTTS
     task: tts
-    source_model: KittenML/kitten-tts-nano-0.1
+    source_model: KittenML/kitten-tts-mini-0.8
     source_artifacts: huggingface
     required_fixtures: [text_prompt]
     support_level: staging
     coreml_llm_baseline: false
-    baseline_publish_model_id: mlx-community/kitten-tts-nano-0.8-6bit
+    baseline_publish_model_id: mlx-community/kitten-tts-mini-0.8-8bit
+    engine_order:
+      android: [onnx, litert]
   - id: silero_vad
     family: Silero VAD
     task: vad
@@ -72,10 +91,12 @@ first_wave:
     required_fixtures: [text_prompt, image]
     support_level: staging
     coreml_llm_baseline: true
+    engine_order:
+      android: [onnx, litert]
   - id: gemma4
     family: Gemma 4
     task: text
-    source_model: google/gemma-4-E2B-it
+    source_model: google/gemma-4-E4B-it
     source_artifacts: huggingface
     support_level: staging
     coreml_llm_baseline: true
@@ -95,61 +116,33 @@ first_wave:
     required_fixtures: [embedding_query]
     support_level: staging
     coreml_llm_baseline: true
-  - id: qwen3_5_27b_dwq
-    family: Qwen3.5 27B DWQ
+  - id: qwen3_6_27b
+    family: Qwen3.6 27B
     task: text
-    source_model: Qwen/Qwen3.5-27B
+    source_model: Qwen/Qwen3.6-27B
     source_artifacts: huggingface
     support_level: staging
     coreml_llm_baseline: false
-    baseline_publish_model_id: mlx-community/Qwen3.5-27B-4bit-DWQ
+    baseline_publish_model_id: mlx-community/Qwen3.6-27B-4bit
     artifact_coverage: partial
     migrated_platforms: [ios, macos]
     blocked_platforms:
-      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
-      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
-      android: No directly loadable LiteRT artifact found on Hugging Face.
-  - id: translategemma_27b_it
-    family: TranslateGemma 27B IT
+      linux: ONNX Runtime GenAI conversion is wired and the config probe passes, but no validated 27B ONNX artifact has been exported yet.
+      android: LiteRT patched conversion is wired and the config probe passes, but no validated 27B LiteRT artifact has been exported yet.
+    blocked_platform_failure_classes:
+      linux: conversion_pending_weight_export
+      android: conversion_pending_weight_export
+    blocked_platform_failure_reasons:
+      linux: The ONNX Runtime GenAI exporter can parse the patched Qwen3.6 config through hf-mirror.com; a full weight export and artifact_health pass are still required.
+      android: The LiteRT exporter can prepare the patched Qwen3.6 source config through hf-mirror.com; a full weight export and Android artifact_health pass are still required.
+  - id: translategemma_4b_it
+    family: TranslateGemma 4B IT
     task: text
-    source_model: google/translategemma-27b-it
+    source_model: google/translategemma-4b-it
     source_artifacts: huggingface
     support_level: staging
     coreml_llm_baseline: false
-    baseline_publish_model_id: mlx-community/translategemma-27b-it-4bit
-    artifact_coverage: partial
-    migrated_platforms: [ios, macos, android]
-    blocked_platforms:
-      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
-      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
-  - id: nemotron3_nano_30b
-    family: NVIDIA Nemotron 3 Nano 30B A3B
-    task: text
-    source_model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
-    source_artifacts: huggingface
-    support_level: staging
-    coreml_llm_baseline: false
-    baseline_publish_model_id: mlx-community/NVIDIA-Nemotron-3-Nano-30B-A3B-4bit
-    artifact_coverage: partial
-    migrated_platforms: [ios, macos]
-    blocked_platforms:
-      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
-      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
-      android: No directly loadable LiteRT artifact found on Hugging Face.
-  - id: glm4_7_flash
-    family: GLM-4.7-Flash
-    task: text
-    source_model: zai-org/GLM-4.7-Flash
-    source_artifacts: huggingface
-    support_level: staging
-    coreml_llm_baseline: false
-    baseline_publish_model_id: mlx-community/GLM-4.7-Flash-4bit
-    artifact_coverage: partial
-    migrated_platforms: [ios, macos]
-    blocked_platforms:
-      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
-      linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
-      android: No directly loadable LiteRT artifact found on Hugging Face.
+    baseline_publish_model_id: mlx-community/translategemma-4b-it-4bit
   - id: minicpm_o_4_5
     family: MiniCPM-o 4.5
     task: vlm
@@ -162,9 +155,14 @@ first_wave:
     artifact_coverage: partial
     migrated_platforms: [ios, macos]
     blocked_platforms:
-      windows: Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.
       linux: Only token2wav/CosyVoice ONNX components and a Core ML vision sidecar found; no full ONNX Runtime artifact found.
       android: No directly loadable LiteRT artifact found on Hugging Face; only non-LiteRT component sidecars were found.
+    blocked_platform_failure_classes:
+      linux: hf_component_only_artifact
+      android: hf_litert_artifact_missing
+    blocked_platform_failure_reasons:
+      linux: Hugging Face search found component sidecars, not a complete ONNX Runtime bundle.
+      android: Hugging Face search found component sidecars, not a complete LiteRT artifact.
   - id: gemma_sea_lion_v4_4b_vl
     family: Gemma SEA-LION v4 4B VL
     task: vlm
@@ -177,9 +175,14 @@ first_wave:
     artifact_coverage: partial
     migrated_platforms: [ios, macos]
     blocked_platforms:
-      windows: No directly loadable ONNX Runtime artifact found on Hugging Face.
       linux: No directly loadable ONNX Runtime artifact found on Hugging Face.
       android: No directly loadable LiteRT artifact found on Hugging Face.
+    blocked_platform_failure_classes:
+      linux: hf_runtime_artifact_missing
+      android: hf_litert_artifact_missing
+    blocked_platform_failure_reasons:
+      linux: Hugging Face search did not find a complete ONNX Runtime artifact for this model.
+      android: Hugging Face search did not find a complete LiteRT artifact for this model.
   - id: ming_omni_tts_0_5b
     family: Ming-omni TTS 0.5B
     task: tts
@@ -192,6 +195,11 @@ first_wave:
     artifact_coverage: partial
     migrated_platforms: [ios, macos]
     blocked_platforms:
-      windows: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.
       linux: Only campplus.onnx component sidecar found; no full ONNX Runtime TTS artifact found.
       android: No directly loadable LiteRT artifact found on Hugging Face; only campplus.onnx component sidecar was found.
+    blocked_platform_failure_classes:
+      linux: hf_component_only_artifact
+      android: hf_litert_artifact_missing
+    blocked_platform_failure_reasons:
+      linux: Hugging Face search found only a component sidecar, not a complete ONNX Runtime TTS bundle.
+      android: Hugging Face search found only a component sidecar, not a complete LiteRT artifact.
