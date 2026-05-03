@@ -11,6 +11,8 @@ def base_parser(engine: str) -> argparse.ArgumentParser:
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--platform", required=True)
+    parser.add_argument("--task")
+    parser.add_argument("--max-tokens")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--hf-cache-root")
     return parser
@@ -24,6 +26,8 @@ def emit_report(
     artifact: str,
     correctness: dict[str, Any],
     metrics: dict[str, Any],
+    task: str | None = None,
+    input_signature: dict[str, Any] | None = None,
     device_profile: dict[str, Any] | None = None,
     out: Path | None = None,
 ) -> None:
@@ -32,6 +36,8 @@ def emit_report(
         "platform": platform,
         "engine": engine,
         "artifact": artifact,
+        **({"task": task} if task else {}),
+        **({"input_signature": input_signature} if input_signature else {}),
         "correctness": correctness,
         "metrics": metrics,
         "device_profile": device_profile or {},
@@ -63,6 +69,14 @@ def normalize_report(
         "platform": raw.get("platform") or platform,
         "engine": raw.get("engine") or engine,
         "artifact": raw.get("artifact") or artifact,
+        **({"task": raw["task"]} if raw.get("task") else {}),
+        **(
+            {"input_signature": raw["input_signature"]}
+            if raw.get("input_signature") is not None
+            else {}
+        ),
+        **({"input_digest": raw["input_digest"]} if raw.get("input_digest") else {}),
+        **({"run_config": raw["run_config"]} if raw.get("run_config") is not None else {}),
         "correctness": raw.get("correctness") or {},
         "metrics": raw.get("metrics") or {},
         "device_profile": raw.get("device_profile") or {},

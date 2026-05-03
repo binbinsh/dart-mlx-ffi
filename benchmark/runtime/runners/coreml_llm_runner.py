@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -56,20 +58,24 @@ def main() -> None:
 
     if args.raw_report:
         raw = read_report(args.raw_report)
-        write_report(
-            normalize_report(
-                raw,
-                model_id=args.model_id,
-                platform=args.platform,
-                engine="coreml-llm",
-                artifact=args.artifact,
-            ),
-            args.out,
+        report = normalize_report(
+            raw,
+            model_id=args.model_id,
+            platform=args.platform,
+            engine="coreml-llm",
+            artifact=args.artifact,
         )
+        report.setdefault("task", args.task)
+        report.setdefault("input_signature", _source_input_signature(args))
+        report.setdefault("run_config", _run_config(args))
+        _patch_metrics_counts(report, args)
+        write_report(report, args.out)
         return
 
     cmd = _command(args)
     subprocess.run(cmd, check=True)
+    if args.out:
+        _patch_report(args.out, args)
 
 
 def _command(args) -> list[str]:
@@ -126,6 +132,89 @@ def _command(args) -> list[str]:
     if args.out:
         cmd.extend(["--out", str(args.out.resolve())])
     return cmd
+
+
+def _patch_report(path: Path, args) -> None:
+    report = read_report(path)
+    report.setdefault("task", args.task)
+    report.setdefault("input_signature", _source_input_signature(args))
+    report.setdefault("run_config", _run_config(args))
+    _patch_metrics_counts(report, args)
+    write_report(report, path)
+
+
+def _source_input_signature(args) -> dict:
+    task = args.task or "text"
+    items = [{"name": "task", "digest": _sha256_text(task)}]
+    if task == "embedding":
+        items.append(
+            {
+                "name": "embedding_query",
+                "digest": _sha256_text(_embedding_query(args)),
+            }
+        )
+    else:
+        items.append({"name": "prompt", "digest": _sha256_text(_prompt(args))})
+    if args.image_file is not None:
+        items.append({"name": "image", "digest": _sha256_file(args.image_file)})
+    digest = hashlib.sha256(
+        "\n".join(f"{item['name']}={item['digest']}" for item in items).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return {
+        "format": "dart_mlx_ffi.source_input_signature.v1",
+        "digest": digest,
+        "items": items,
+    }
+
+
+def _run_config(args) -> dict:
+    return {
+        "format": "dart_mlx_ffi.run_config.v1",
+        "task": args.task,
+        "warmup": int(args.warmup),
+        "iters": int(args.iters),
+        "max_tokens": int(args.max_tokens),
+        "sampling_strategy": "greedy",
+    }
+
+
+def _patch_metrics_counts(report: dict, args) -> None:
+    metrics = report.setdefault("metrics", {})
+    if not isinstance(metrics, dict):
+        metrics = {}
+        report["metrics"] = metrics
+    metrics.setdefault("iteration_count", int(args.iters))
+    metrics.setdefault("warmup_count", int(args.warmup))
+
+
+def _prompt(args) -> str:
+    if args.prompt is not None:
+        return args.prompt
+    if args.prompt_file is not None:
+        return args.prompt_file.read_text(encoding="utf-8")
+    return ""
+
+
+def _embedding_query(args) -> str:
+    if args.embedding_query is not None:
+        return args.embedding_query
+    if args.embedding_query_file is not None:
+        return args.embedding_query_file.read_text(encoding="utf-8")
+    return ""
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ from report_schema import base_parser, normalize_report, read_report, write_repo
 
 def main() -> None:
     parser = base_parser("mlx")
+    parser.add_argument("--warmup", default="1")
+    parser.add_argument("--iters", default="5")
     parser.add_argument(
         "--raw-report",
         type=Path,
@@ -34,16 +36,17 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.raw_report:
-        write_report(
-            normalize_report(
-                read_report(args.raw_report),
-                model_id=args.model_id,
-                platform=args.platform,
-                engine="mlx",
-                artifact=args.artifact,
-            ),
-            args.out,
+        report = normalize_report(
+            read_report(args.raw_report),
+            model_id=args.model_id,
+            platform=args.platform,
+            engine="mlx",
+            artifact=args.artifact,
         )
+        report.setdefault("task", args.task)
+        report.setdefault("run_config", _run_config(args))
+        _patch_metrics_counts(report, args)
+        write_report(report, args.out)
         return
 
     publish_model_id = args.publish_model_id or args.model_id
@@ -51,6 +54,8 @@ def main() -> None:
     ms_key = "dart_ms" if args.implementation == "dart" else "python_ms"
     metrics = {
         "end_to_end_ms": item.get(ms_key),
+        "iteration_count": int(args.iters),
+        "warmup_count": int(args.warmup),
     }
     if "peak_memory_bytes" in item:
         metrics["peak_memory_bytes"] = item["peak_memory_bytes"]
@@ -65,6 +70,8 @@ def main() -> None:
             "platform": args.platform,
             "engine": "mlx",
             "artifact": args.artifact,
+            "task": args.task,
+            "run_config": _run_config(args),
             "correctness": correctness,
             "metrics": metrics,
             "device_profile": {
@@ -89,6 +96,26 @@ def _find_publish_item(path: Path, model_id: str) -> dict:
         if isinstance(item, dict) and item.get("model_id") == model_id:
             return item
     raise ValueError(f"Model {model_id!r} was not found in {path}")
+
+
+def _run_config(args) -> dict:
+    return {
+        "format": "dart_mlx_ffi.run_config.v1",
+        "task": args.task or "tensor",
+        "warmup": int(args.warmup),
+        "iters": int(args.iters),
+        "max_tokens": int(args.max_tokens or 64),
+        "sampling_strategy": "greedy",
+    }
+
+
+def _patch_metrics_counts(report: dict, args) -> None:
+    metrics = report.setdefault("metrics", {})
+    if not isinstance(metrics, dict):
+        metrics = {}
+        report["metrics"] = metrics
+    metrics.setdefault("iteration_count", int(args.iters))
+    metrics.setdefault("warmup_count", int(args.warmup))
 
 
 if __name__ == "__main__":

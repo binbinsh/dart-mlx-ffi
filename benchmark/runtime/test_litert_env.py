@@ -115,6 +115,34 @@ class LiteRtEnvTest(unittest.TestCase):
         self.assertTrue(env.ready)
         self.assertEqual(env.extra_libraries, ())
 
+    def test_tools_dir_fallback_when_primary_has_broken_symlink_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            broken = root / "broken"
+            broken.symlink_to(root / "missing-target")
+            primary = broken / "tools" / "litert"
+            fallback = root / "artifacts_local" / "tools" / "litert"
+            with (
+                mock.patch.dict(os.environ, {}, clear=False),
+                mock.patch.object(litert_env, "TOOLS_DIR", primary),
+                mock.patch.object(litert_env, "TOOLS_DIR_FALLBACK", fallback),
+            ):
+                resolved = litert_env._tools_dir(ensure_exists=True)
+                self.assertEqual(resolved, fallback)
+                self.assertTrue(fallback.exists())
+
+    def test_tools_dir_prefers_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            override = Path(tmp) / "custom-litert-tools"
+            with mock.patch.dict(
+                os.environ,
+                {litert_env.TOOLS_DIR_ENV: str(override)},
+                clear=False,
+            ):
+                resolved = litert_env._tools_dir(ensure_exists=True)
+                self.assertEqual(resolved, override)
+                self.assertTrue(override.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

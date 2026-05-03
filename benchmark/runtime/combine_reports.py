@@ -42,11 +42,39 @@ def combine_reports(
 ) -> dict[str, Any]:
     resolved_model = model_id or candidate.get("model_id") or baseline.get("model_id")
     mismatches = []
-    for field in ("model_id", "platform"):
+    for field in ("model_id", "platform", "task"):
         left = baseline.get(field)
         right = candidate.get(field)
         if left and right and left != right:
             mismatches.append({"field": field, "baseline": left, "candidate": right})
+    baseline_signature = _input_signature(baseline)
+    candidate_signature = _input_signature(candidate)
+    if (
+        baseline_signature is not None
+        and candidate_signature is not None
+        and baseline_signature != candidate_signature
+    ):
+        mismatches.append(
+            {
+                "field": "input_signature",
+                "baseline": baseline_signature,
+                "candidate": candidate_signature,
+            }
+        )
+    baseline_run_config = baseline.get("run_config")
+    candidate_run_config = candidate.get("run_config")
+    if (
+        baseline_run_config is not None
+        and candidate_run_config is not None
+        and baseline_run_config != candidate_run_config
+    ):
+        mismatches.append(
+            {
+                "field": "run_config",
+                "baseline": baseline_run_config,
+                "candidate": candidate_run_config,
+            }
+        )
     return {
         "model_id": resolved_model,
         "platform": candidate.get("platform") or baseline.get("platform"),
@@ -65,6 +93,16 @@ def _read(path: Path) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise ValueError(f"Report must be a JSON object: {path}")
     return decoded
+
+
+def _input_signature(report: dict[str, Any]) -> Any:
+    signature = report.get("input_signature")
+    if signature is not None:
+        return signature
+    digest = report.get("input_digest")
+    if digest is not None:
+        return {"digest": digest}
+    return None
 
 
 if __name__ == "__main__":

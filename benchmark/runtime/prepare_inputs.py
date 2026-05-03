@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,8 @@ def main() -> None:
     parser.add_argument("--audio-file", type=Path)
     parser.add_argument("--onnx-artifact", type=Path)
     parser.add_argument("--coreml-artifact", type=Path)
+    parser.add_argument("--litert-artifact", type=Path)
+    parser.add_argument("--hf-cache-root", type=Path)
     parser.add_argument("--trust-remote-code", action="store_true")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--seq-length", type=int, default=16)
@@ -65,8 +69,9 @@ def main() -> None:
     )
     image_file = args.image_file or _path(config.get("image_file"))
     audio_file = args.audio_file or _path(config.get("audio_file"))
+    _configure_hf_cache(args.hf_cache_root)
 
-    tensors = _prepare_tensors(
+    tensors, prepare_fallback = _prepare_tensors_with_audio_fallback(
         source_model=source_model,
         task=task,
         prompt=prompt,
@@ -89,10 +94,13 @@ def main() -> None:
         if args.coreml_artifact is not None:
             tensors = _align_coreml_inputs(tensors, args.coreml_artifact)
         tensors = _coreml_tensors(tensors)
+    if args.engine == "litert" and args.litert_artifact is not None:
+        tensors = _align_litert_inputs(tensors, args.litert_artifact)
 
+    resolved_out, out_path_meta = _prepare_out_path(out)
     payload = _payload(
         tensors,
-        out=out,
+        out=resolved_out,
         metadata={
             "model_id": args.model_id,
             "source_model": source_model,
@@ -100,16 +108,115 @@ def main() -> None:
             "prompt": prompt,
             "image_file": str(image_file) if image_file else None,
             "audio_file": str(audio_file) if audio_file else None,
+            "input_signature": _source_input_signature(
+                task=task,
+                prompt=prompt,
+                embedding_query=embedding_query,
+                image_file=image_file,
+                audio_file=audio_file,
+            ),
             "onnx_artifact": str(args.onnx_artifact) if args.onnx_artifact else None,
             "coreml_artifact": str(args.coreml_artifact)
             if args.coreml_artifact
             else None,
+            "litert_artifact": str(args.litert_artifact)
+            if args.litert_artifact
+            else None,
+            "prepare_fallback": prepare_fallback,
+            "out_path_requested": str(out),
         },
         sidecar_threshold=args.sidecar_threshold,
     )
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
-    print(json.dumps({"out": str(out), "input_count": len(payload["inputs"])}, indent=2))
+    if out_path_meta["mode"] == "fallback":
+        payload["metadata"]["out_path_fallback"] = out_path_meta
+    payload["metadata"]["out_path"] = str(resolved_out)
+    resolved_out.parent.mkdir(parents=True, exist_ok=True)
+    resolved_out.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    print(
+        json.dumps(
+            {"out": str(resolved_out), "input_count": len(payload["inputs"])},
+            indent=2,
+        )
+    )
+
+
+def _configure_hf_cache(hf_cache_root: Path | None) -> None:
+    cache_root = hf_cache_root or (ROOT / "benchmark" / ".hf_home")
+    cache_root = Path(cache_root).expanduser()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HOME", str(cache_root))
+    hub_cache = cache_root / "hub"
+    hub_cache.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hub_cache))
+    os.environ.setdefault("TRANSFORMERS_CACHE", str(hub_cache))
+
+
+def _source_input_signature(
+    *,
+    task: str,
+    prompt: str,
+    embedding_query: str,
+    image_file: Path | None,
+    audio_file: Path | None,
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = [{"name": "task", "digest": _sha256_text(task)}]
+    if task == "embedding":
+        items.append(
+            {"name": "embedding_query", "digest": _sha256_text(embedding_query)}
+        )
+    else:
+        items.append({"name": "prompt", "digest": _sha256_text(prompt)})
+    if image_file is not None:
+        items.append({"name": "image", "digest": _sha256_file(image_file)})
+    if audio_file is not None:
+        items.append({"name": "audio", "digest": _sha256_file(audio_file)})
+    digest = hashlib.sha256(
+        "\n".join(f"{item['name']}={item['digest']}" for item in items).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return {
+        "format": "dart_mlx_ffi.source_input_signature.v1",
+        "digest": digest,
+        "items": items,
+    }
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _prepare_out_path(out: Path) -> tuple[Path, dict[str, str]]:
+    requested = out if out.is_absolute() else (ROOT / out)
+    try:
+        requested.parent.mkdir(parents=True, exist_ok=True)
+        return requested, {"mode": "requested"}
+    except OSError as exc:
+        fallback = _fallback_out_path(requested)
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return fallback, {
+            "mode": "fallback",
+            "reason": str(exc),
+            "requested_out_path": str(requested),
+            "resolved_out_path": str(fallback),
+        }
+
+
+def _fallback_out_path(out: Path) -> Path:
+    benchmark_out = ROOT / "benchmark" / "out"
+    try:
+        relative = out.relative_to(benchmark_out)
+    except ValueError:
+        return ROOT / "benchmark" / "out_local" / "runtime_inputs" / out.name
+    return ROOT / "benchmark" / "out_local" / relative
 
 
 def _resolve_config(args: argparse.Namespace) -> dict[str, Any]:
@@ -144,6 +251,8 @@ def _prepare_tensors(
             max_length=max_length,
         )
     if task in {"audio", "asr", "vad"} and audio_file is not None:
+        if _uses_model_level_audio_runner(source_model):
+            return _fallback_audio_waveform_tensors(audio_file, task=task)
         return _audio_tensors(
             source_model,
             audio_file=audio_file,
@@ -156,6 +265,80 @@ def _prepare_tensors(
         trust_remote_code=trust_remote_code,
         max_length=max_length,
     )
+
+
+def _prepare_tensors_with_audio_fallback(
+    *,
+    source_model: str,
+    task: str,
+    prompt: str,
+    embedding_query: str,
+    image_file: Path | None,
+    audio_file: Path | None,
+    trust_remote_code: bool,
+    max_length: int | None,
+) -> tuple[dict[str, np.ndarray], str | None]:
+    try:
+        return (
+            _prepare_tensors(
+                source_model=source_model,
+                task=task,
+                prompt=prompt,
+                embedding_query=embedding_query,
+                image_file=image_file,
+                audio_file=audio_file,
+                trust_remote_code=trust_remote_code,
+                max_length=max_length,
+            ),
+            None,
+        )
+    except Exception as error:
+        if task not in {"audio", "asr", "vad"} or audio_file is None:
+            raise
+        fallback = _fallback_audio_waveform_tensors(audio_file, task=task)
+        return fallback, f"{type(error).__name__}: {error}"
+
+
+def _fallback_audio_waveform_tensors(
+    audio_file: Path,
+    *,
+    task: str,
+) -> dict[str, np.ndarray]:
+    import soundfile as sf
+
+    audio, sampling_rate = sf.read(audio_file, dtype="float32", always_2d=False)
+    if isinstance(audio, np.ndarray) and audio.ndim == 2:
+        audio = audio.mean(axis=1)
+    if task == "vad":
+        chunk_size = 512 if int(sampling_rate) >= 16000 else 256
+        audio = _fixed_audio_chunk(audio, chunk_size)
+    waveform = np.asarray(audio, dtype=np.float32).reshape(1, -1)
+    sr = np.asarray([int(sampling_rate)], dtype=np.int64)
+    # `state` is commonly required by Silero-style VAD graphs.
+    state = np.zeros((2, 1, 128), dtype=np.float32)
+    return {
+        "input_values": waveform,
+        "input": waveform,
+        "audio": waveform,
+        "waveform": waveform,
+        "state": state,
+        "sr": sr,
+        "sampling_rate": sr,
+    }
+
+
+def _fixed_audio_chunk(audio: np.ndarray, chunk_size: int) -> np.ndarray:
+    chunk = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if chunk.size >= chunk_size:
+        return chunk[:chunk_size]
+    padded = np.zeros((chunk_size,), dtype=np.float32)
+    padded[: chunk.size] = chunk
+    return padded
+
+
+def _uses_model_level_audio_runner(source_model: str) -> bool:
+    normalized = source_model.lower().replace("_", "-")
+    return normalized.endswith("qwen3-asr-1.7b") or "qwen3-asr" in normalized
 
 
 def _tokenizer_tensors(
@@ -463,21 +646,34 @@ def _align_onnx_inputs(
     import onnx
 
     model = onnx.load(str(onnx_artifact), load_external_data=False)
-    aligned = dict(tensors)
+    aligned: dict[str, np.ndarray] = {}
     for input_value in model.graph.input:
         name = input_value.name
-        if name in aligned:
-            continue
         tensor_type = input_value.type.tensor_type
         dtype = _onnx_dtype(tensor_type.elem_type)
-        shape = [
-            _dim_value(dim, batch_size, seq_length, past_length)
-            for dim in tensor_type.shape.dim
-        ]
-        if not shape:
-            shape = [1]
-        aligned[name] = np.zeros(shape, dtype=dtype)
-    return {name: aligned[name] for name in _onnx_input_names(model, aligned)}
+        source = _find_litert_source_tensor(tensors, name)
+        if source is None:
+            shape = [
+                _dim_value(dim, batch_size, seq_length, past_length)
+                for dim in tensor_type.shape.dim
+            ]
+            if not shape:
+                shape = [1]
+            array = np.zeros(shape, dtype=dtype)
+        else:
+            array = np.asarray(source)
+            target_shape = _onnx_target_shape(
+                tensor_type,
+                source_shape=array.shape,
+                batch_size=batch_size,
+                seq_length=seq_length,
+                past_length=past_length,
+            )
+            array = _align_array_to_shape(array, target_shape)
+            if array.dtype != dtype:
+                array = array.astype(dtype, copy=False)
+        aligned[name] = array if array.ndim == 0 else np.ascontiguousarray(array)
+    return aligned
 
 
 def _coreml_tensors(tensors: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -516,6 +712,110 @@ def _align_coreml_inputs(
             array = array.astype(target_dtype, copy=False)
         aligned[name] = np.ascontiguousarray(array)
     return aligned
+
+
+def _align_litert_inputs(
+    tensors: dict[str, np.ndarray],
+    litert_artifact: Path,
+) -> dict[str, np.ndarray]:
+    try:
+        import tensorflow as tf
+    except Exception:
+        return tensors
+    try:
+        interpreter = tf.lite.Interpreter(model_path=str(litert_artifact))
+        interpreter.allocate_tensors()
+        details = interpreter.get_input_details()
+    except Exception:
+        return tensors
+    if not isinstance(details, list) or not details:
+        return tensors
+    aligned: dict[str, np.ndarray] = {}
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        name = str(detail.get("name") or "")
+        if not name:
+            continue
+        dtype = np.dtype(detail.get("dtype") or np.float32)
+        shape = tuple(int(max(1, dim)) for dim in np.asarray(detail.get("shape", [])))
+        array = _find_litert_source_tensor(tensors, name)
+        if array is None:
+            array = _litert_default_input(
+                name=name,
+                target_shape=shape,
+                target_dtype=dtype,
+                tensors=tensors,
+            )
+        if shape:
+            array = _align_array_to_shape(np.asarray(array), shape)
+        else:
+            array = np.asarray(array)
+        if array.dtype != dtype:
+            array = array.astype(dtype, copy=False)
+        aligned[name] = np.ascontiguousarray(array)
+    return aligned or tensors
+
+
+def _find_litert_source_tensor(
+    tensors: dict[str, np.ndarray],
+    target_name: str,
+) -> np.ndarray | None:
+    if target_name in tensors:
+        return np.asarray(tensors[target_name])
+    target_key = _canonical_litert_name(target_name)
+    for name, value in tensors.items():
+        if _canonical_litert_name(name) == target_key:
+            return np.asarray(value)
+    alias_map = {
+        "input": ("input", "input_values", "audio", "waveform"),
+        "input_values": ("input_values", "input", "audio", "waveform"),
+        "audio": ("audio", "waveform", "input_values", "input"),
+        "waveform": ("waveform", "audio", "input_values", "input"),
+        "sr": ("sr", "sampling_rate"),
+        "sampling_rate": ("sampling_rate", "sr"),
+        "state": ("state",),
+    }
+    for canonical, aliases in alias_map.items():
+        if target_key == canonical:
+            for alias in aliases:
+                for name, value in tensors.items():
+                    if _canonical_litert_name(name) == alias:
+                        return np.asarray(value)
+    return None
+
+
+def _canonical_litert_name(name: str) -> str:
+    key = name.strip().lower()
+    if "/" in key:
+        key = key.rsplit("/", 1)[-1]
+    if ":" in key:
+        key = key.split(":", 1)[0]
+    if key.startswith("serving_default_"):
+        key = key[len("serving_default_") :]
+    return key.replace("-", "_")
+
+
+def _litert_default_input(
+    *,
+    name: str,
+    target_shape: tuple[int, ...],
+    target_dtype: np.dtype[Any],
+    tensors: dict[str, np.ndarray],
+) -> np.ndarray:
+    canonical = _canonical_litert_name(name)
+    if canonical in {"sr", "sampling_rate"}:
+        value = np.asarray([16000], dtype=np.int64)
+        return _align_array_to_shape(value, target_shape) if target_shape else value
+    if canonical == "state":
+        state_value = tensors.get("state")
+        if state_value is not None:
+            fallback = np.asarray(state_value, dtype=np.float32)
+            if fallback.size > 0:
+                return fallback
+    if target_shape:
+        return np.zeros(target_shape, dtype=target_dtype)
+    return np.zeros((1,), dtype=target_dtype)
 
 
 def _coreml_sample_inputs(coreml_artifact: Path) -> dict[str, dict[str, Any]]:
@@ -725,6 +1025,28 @@ def _dim_value(
     if "seq" in token or "time" in token or "token" in token:
         return seq_length
     return 1
+
+
+def _onnx_target_shape(
+    tensor_type: Any,
+    *,
+    source_shape: tuple[int, ...],
+    batch_size: int,
+    seq_length: int,
+    past_length: int,
+) -> tuple[int, ...]:
+    dims = list(tensor_type.shape.dim)
+    if not dims:
+        return ()
+    shape: list[int] = []
+    for index, dim in enumerate(dims):
+        if dim.dim_value > 0:
+            shape.append(int(dim.dim_value))
+        elif index < len(source_shape):
+            shape.append(int(source_shape[index]))
+        else:
+            shape.append(_dim_value(dim, batch_size, seq_length, past_length))
+    return tuple(shape)
 
 
 def _onnx_dtype(elem_type: int) -> np.dtype[Any]:

@@ -76,6 +76,7 @@ def main() -> None:
     parser.add_argument("--provider")
     parser.add_argument("--delegate")
     parser.add_argument("--coreml-mode", choices=["decode", "prefill"])
+    parser.add_argument("--coreml-compute-units")
     parser.add_argument("--litert-section-index")
     parser.add_argument("--hf-cache-root")
     parser.add_argument("--require-provider", action="store_true")
@@ -99,7 +100,8 @@ def main() -> None:
 class RuntimeCell:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.out_dir = args.out_root / args.model_id / args.platform
+        self.out_root, self.out_root_meta = _prepare_out_root(args.out_root)
+        self.out_dir = self.out_root / args.model_id / args.platform
         baseline_name = _safe_name(args.baseline_engine)
         if args.baseline_engine == args.engine:
             baseline_name = f"{baseline_name}_baseline"
@@ -151,27 +153,37 @@ class RuntimeCell:
         compare_cmd.extend(_device_profile_args(self.args))
         commands.append(compare_cmd)
         if self.args.dry_run:
-            return {
+            result = {
                 "model_id": self.args.model_id,
                 "platform": self.args.platform,
                 "engine": self.args.engine,
                 "baseline_engine": self.args.baseline_engine,
                 "passed": True,
                 "dry_run": True,
+                "out_root_requested": str(self.args.out_root),
+                "out_root": str(self.out_root),
                 "paths": self._paths(),
                 "commands": [_display_command(cmd) for cmd in commands],
             }
+            if self.out_root_meta["mode"] == "fallback":
+                result["out_root_fallback"] = self.out_root_meta
+            return result
         compare = self._run(compare_cmd, check=False)
         verdict = _read_json(self.verdict_path).get("verdict", {})
-        return {
+        result = {
             "model_id": self.args.model_id,
             "platform": self.args.platform,
             "engine": self.args.engine,
             "baseline_engine": self.args.baseline_engine,
             "passed": bool(verdict.get("passed")) and compare.returncode == 0,
+            "out_root_requested": str(self.args.out_root),
+            "out_root": str(self.out_root),
             "paths": self._paths(),
             "commands": [_display_command(cmd) for cmd in commands],
         }
+        if self.out_root_meta["mode"] == "fallback":
+            result["out_root_fallback"] = self.out_root_meta
+        return result
 
     def _paths(self) -> dict[str, str]:
         return {
@@ -239,9 +251,14 @@ class RuntimeCell:
                 self.args.platform,
                 "--artifact",
                 artifact,
+                "--task",
+                self.args.task,
+                "--max-tokens",
+                self.args.max_tokens,
                 "--out",
                 str(self.baseline_path),
             ]
+            cmd.extend(["--warmup", self.args.warmup, "--iters", self.args.iters])
             if self.args.raw_baseline_report:
                 cmd.extend(["--raw-report", str(self.args.raw_baseline_report)])
             if self.args.baseline_publish_report:
@@ -277,9 +294,14 @@ class RuntimeCell:
             self.args.platform,
             "--artifact",
             self.args.artifact,
+            "--task",
+            self.args.task,
+            "--max-tokens",
+            self.args.max_tokens,
             "--out",
             str(self.candidate_path),
         ]
+        cmd.extend(["--warmup", self.args.warmup, "--iters", self.args.iters])
         return cmd
 
     def _native_command(
@@ -303,6 +325,8 @@ class RuntimeCell:
             self.args.platform,
             "--artifact",
             artifact,
+            "--task",
+            self.args.task,
             "--out",
             str(out_path),
             "--input-json",
@@ -311,6 +335,8 @@ class RuntimeCell:
             self.args.warmup,
             "--iters",
             self.args.iters,
+            "--max-tokens",
+            self.args.max_tokens,
         ]
         if self.args.num_threads:
             cmd.extend(["--num-threads", self.args.num_threads])
@@ -318,6 +344,8 @@ class RuntimeCell:
             cmd.extend(["--hf-cache-root", self.args.hf_cache_root])
         if engine == "coreml" and self.args.coreml_mode:
             cmd.extend(["--coreml-mode", self.args.coreml_mode])
+        if engine == "coreml" and self.args.coreml_compute_units:
+            cmd.extend(["--coreml-compute-units", self.args.coreml_compute_units])
         if engine == "onnx":
             if self.args.provider:
                 cmd.extend(["--provider", self.args.provider])
@@ -356,6 +384,31 @@ def _safe_name(value: str) -> str:
     return value.replace("-", "_")
 
 
+def _prepare_out_root(out_root: Path) -> tuple[Path, dict[str, str]]:
+    requested = out_root if out_root.is_absolute() else (ROOT / out_root)
+    try:
+        requested.mkdir(parents=True, exist_ok=True)
+        return requested, {"mode": "requested"}
+    except OSError as exc:
+        fallback = _fallback_out_root(requested)
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback, {
+            "mode": "fallback",
+            "reason": str(exc),
+            "requested_out_root": str(requested),
+            "resolved_out_root": str(fallback),
+        }
+
+
+def _fallback_out_root(requested: Path) -> Path:
+    benchmark_out = ROOT / "benchmark" / "out"
+    try:
+        relative = requested.relative_to(benchmark_out)
+    except ValueError:
+        return ROOT / "benchmark" / "out_local" / "runtime"
+    return ROOT / "benchmark" / "out_local" / relative
+
+
 def _display_command(cmd: list[str]) -> str:
     return " ".join(cmd)
 
@@ -375,6 +428,7 @@ def _threshold_args(config_path: Path) -> list[str]:
     mapping = {
         "min_speed_ratio": "--min-speed-ratio",
         "max_ttft_ratio": "--max-ttft-ratio",
+        "max_end_to_end_ratio": "--max-end-to-end-ratio",
         "max_peak_memory_ratio": "--max-peak-memory-ratio",
         "min_embedding_cosine": "--min-embedding-cosine",
         "max_embedding_l2": "--max-embedding-l2",
@@ -387,6 +441,10 @@ def _threshold_args(config_path: Path) -> list[str]:
             args.extend([flag, str(thresholds[key])])
     if thresholds.get("require_device_profile"):
         args.append("--require-device-profile")
+    if thresholds.get("require_input_signature"):
+        args.append("--require-input-signature")
+    if thresholds.get("require_run_config"):
+        args.append("--require-run-config")
     return args
 
 

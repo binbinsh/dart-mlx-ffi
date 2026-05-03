@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from runtime_backend_env import prepare_runtime_environment
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +23,7 @@ def main() -> None:
     parser.add_argument("--artifact", required=True, type=Path)
     parser.add_argument("--platform")
     parser.add_argument("--provider", default="cpu")
+    parser.add_argument("--require-provider", action="store_true")
     parser.add_argument("--delegate")
     parser.add_argument("--coreml-mode")
     parser.add_argument("--litert-section-index")
@@ -30,7 +34,11 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.probe_child == "onnx":
-        payload = _probe_onnx_child(args.artifact, args.provider)
+        payload = _probe_onnx_child(
+            args.artifact,
+            args.provider,
+            require_provider=args.require_provider,
+        )
         print(json.dumps(payload, ensure_ascii=False))
         if not payload["passed"]:
             raise SystemExit(1)
@@ -41,6 +49,7 @@ def main() -> None:
         artifact=args.artifact,
         platform=args.platform,
         provider=args.provider,
+        require_provider=args.require_provider,
         delegate=args.delegate,
         coreml_mode=args.coreml_mode,
         litert_section_index=args.litert_section_index,
@@ -62,6 +71,7 @@ def validate_artifact(
     artifact: Path,
     platform: str | None = None,
     provider: str = "cpu",
+    require_provider: bool = False,
     delegate: str | None = None,
     coreml_mode: str | None = None,
     litert_section_index: str | None = None,
@@ -70,7 +80,28 @@ def validate_artifact(
 ) -> dict[str, Any]:
     artifact = artifact.expanduser()
     if engine == "onnx":
-        return _validate_onnx_artifact(artifact, provider=provider, timeout=timeout)
+        return _validate_onnx_artifact(
+            artifact,
+            provider=provider,
+            require_provider=require_provider,
+            timeout=timeout,
+        )
+    if engine == "litert" and _is_litert_pipeline(artifact):
+        return _validate_litert_pipeline_artifact(
+            artifact,
+            platform=platform,
+            delegate=delegate,
+            require_delegate=require_delegate,
+            timeout=timeout,
+        )
+    if engine == "litert" and _is_qwen3_asr_litert_bundle(artifact):
+        return _validate_qwen3_asr_litert_bundle(
+            artifact,
+            platform=platform,
+            delegate=delegate,
+            require_delegate=require_delegate,
+            timeout=timeout,
+        )
     return _validate_dart_runtime_artifact(
         engine=engine,
         artifact=artifact,
@@ -83,10 +114,49 @@ def validate_artifact(
     )
 
 
+def _validate_litert_pipeline_artifact(
+    artifact: Path,
+    *,
+    platform: str | None,
+    delegate: str | None,
+    require_delegate: bool,
+    timeout: float,
+) -> dict[str, Any]:
+    checks = _litert_pipeline_checks(artifact)
+    invalid = [item for item in checks if item.get("passed") is False]
+    if invalid:
+        return {
+            "engine": "litert",
+            "artifact": str(artifact),
+            "pipeline": True,
+            "passed": False,
+            "checks": invalid,
+        }
+    check = _run_dart_runtime_probe(
+        engine="litert",
+        artifact=artifact,
+        platform=platform or _default_platform("litert"),
+        delegate=delegate,
+        coreml_mode=None,
+        litert_section_index=None,
+        require_delegate=require_delegate,
+        timeout=timeout,
+    )
+    return {
+        "engine": "litert",
+        "artifact": str(artifact),
+        "pipeline": True,
+        "passed": bool(check.get("passed")),
+        "checks": [check],
+        "stages": checks,
+    }
+
+
 def _validate_onnx_artifact(
     artifact: Path,
     *,
     provider: str,
+    require_provider: bool,
     timeout: float,
 ) -> dict[str, Any]:
     checks = _onnx_checks(artifact)
@@ -110,6 +180,7 @@ def _validate_onnx_artifact(
                 name=check["name"],
                 path=Path(check["path"]),
                 provider=provider,
+                require_provider=require_provider,
                 timeout=timeout,
             )
         )
@@ -149,6 +220,198 @@ def _validate_dart_runtime_artifact(
         "passed": bool(check.get("passed")),
         "checks": [check],
     }
+
+
+def _is_litert_pipeline(artifact: Path) -> bool:
+    if artifact.suffix.lower() != ".json":
+        return False
+    try:
+        spec = json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return isinstance(spec, dict) and spec.get("format") == "dart_mlx_ffi.litert_pipeline.v1"
+
+
+def _is_qwen3_asr_litert_bundle(artifact: Path) -> bool:
+    if artifact.suffix.lower() != ".json":
+        return False
+    try:
+        spec = json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return (
+        isinstance(spec, dict)
+        and spec.get("format") == "dart_mlx_ffi.qwen3_asr_litert_bundle.v1"
+    )
+
+
+def _validate_qwen3_asr_litert_bundle(
+    artifact: Path,
+    *,
+    platform: str | None,
+    delegate: str | None,
+    require_delegate: bool,
+    timeout: float,
+) -> dict[str, Any]:
+    checks = _qwen3_asr_litert_bundle_checks(artifact)
+    invalid = [item for item in checks if item.get("passed") is False]
+    if invalid:
+        return {
+            "engine": "litert",
+            "artifact": str(artifact),
+            "bundle": "qwen3_asr",
+            "passed": False,
+            "checks": invalid,
+        }
+    check = _run_dart_runtime_probe(
+        engine="litert",
+        artifact=artifact,
+        platform=platform or _default_platform("litert"),
+        delegate=delegate,
+        coreml_mode=None,
+        litert_section_index=None,
+        require_delegate=require_delegate,
+        timeout=timeout,
+    )
+    return {
+        "engine": "litert",
+        "artifact": str(artifact),
+        "bundle": "qwen3_asr",
+        "passed": bool(check.get("passed")),
+        "checks": [*checks, check],
+    }
+
+
+def _qwen3_asr_litert_bundle_checks(artifact: Path) -> list[dict[str, Any]]:
+    spec = json.loads(artifact.read_text(encoding="utf-8"))
+    checks: list[dict[str, Any]] = []
+    components = spec.get("components") if isinstance(spec.get("components"), dict) else {}
+    for name in ("encoder", "decoder_init", "decoder_step"):
+        relative = components.get(name) if isinstance(components, dict) else None
+        if not isinstance(relative, str) or not relative:
+            checks.append(
+                {
+                    "name": f"component_{name}",
+                    "kind": "component",
+                    "passed": False,
+                    "state": "invalid",
+                    "reason": f"Qwen3-ASR LiteRT bundle is missing {name}.",
+                }
+            )
+            continue
+        checks.append(_existing_file_check(artifact, relative, f"component_{name}"))
+    for name in ("config.json", "embed_tokens.bin"):
+        checks.append(_existing_file_check(artifact, name, f"sidecar_{name}"))
+    if (artifact.parent / "tokenizer.json").is_file():
+        checks.append(_existing_file_check(artifact, "tokenizer.json", "tokenizer"))
+    elif (artifact.parent / "vocab.json").is_file() and (
+        artifact.parent / "merges.txt"
+    ).is_file():
+        checks.append(_existing_file_check(artifact, "vocab.json", "tokenizer_vocab"))
+        checks.append(_existing_file_check(artifact, "merges.txt", "tokenizer_merges"))
+    else:
+        checks.append(
+            {
+                "name": "tokenizer",
+                "kind": "sidecar",
+                "passed": False,
+                "state": "missing",
+                "reason": "Qwen3-ASR bundle needs tokenizer.json or vocab.json+merges.txt.",
+            }
+        )
+    if spec.get("runner") != "Qwen3AsrNativeRunner.loadLiteRtBundle":
+        checks.append(
+            {
+                "name": "runner",
+                "kind": "metadata",
+                "passed": False,
+                "state": "invalid",
+                "reason": "Qwen3-ASR LiteRT bundle must declare the model-level runner.",
+            }
+        )
+    else:
+        checks.append(
+            {
+                "name": "runner",
+                "kind": "metadata",
+                "passed": True,
+                "runner": spec.get("runner"),
+            }
+        )
+    return checks
+
+
+def _existing_file_check(artifact: Path, relative: str, name: str) -> dict[str, Any]:
+    path = _resolve_pipeline_path(artifact, relative)
+    exists = path.is_file() and path.stat().st_size > 0
+    return {
+        "name": name,
+        "kind": "file",
+        "path": str(path),
+        "passed": exists,
+        **(
+            {}
+            if exists
+            else {
+                "state": "missing",
+                "reason": f"Required file is missing or empty: {path}",
+            }
+        ),
+    }
+
+
+def _litert_pipeline_checks(artifact: Path) -> list[dict[str, Any]]:
+    spec = json.loads(artifact.read_text(encoding="utf-8"))
+    checks: list[dict[str, Any]] = []
+    for index, stage in enumerate(spec.get("stages") or []):
+        if not isinstance(stage, dict):
+            checks.append(
+                {
+                    "name": f"stage_{index}",
+                    "kind": "invalid",
+                    "passed": False,
+                    "state": "invalid",
+                    "reason": "Pipeline stage must be an object.",
+                }
+            )
+            continue
+        name = str(stage.get("name") or f"stage_{index}")
+        if stage.get("op"):
+            checks.append({"name": name, "kind": "op", "op": str(stage["op"])})
+            continue
+        model = stage.get("model")
+        if not isinstance(model, str):
+            checks.append(
+                {
+                    "name": name,
+                    "kind": "invalid",
+                    "passed": False,
+                    "state": "invalid",
+                    "reason": "LiteRT pipeline model stage has no model path.",
+                }
+            )
+            continue
+        inputs = stage.get("inputs")
+        if not isinstance(inputs, dict) or not inputs:
+            checks.append(
+                {
+                    "name": name,
+                    "kind": "invalid",
+                    "passed": False,
+                    "state": "invalid",
+                    "reason": "LiteRT pipeline model stage must declare inputs.",
+                }
+            )
+            continue
+        checks.append(
+            {
+                "name": name,
+                "kind": "model",
+                "path": str(_resolve_pipeline_path(artifact, model)),
+                "passed": True,
+            }
+        )
+    return checks
 
 
 def _onnx_checks(artifact: Path) -> list[dict[str, Any]]:
@@ -201,6 +464,7 @@ def _run_onnx_probe(
     name: str,
     path: Path,
     provider: str,
+    require_provider: bool,
     timeout: float,
 ) -> dict[str, Any]:
     cmd = [
@@ -215,6 +479,8 @@ def _run_onnx_probe(
         "--probe-child",
         "onnx",
     ]
+    if require_provider:
+        cmd.append("--require-provider")
     try:
         completed = subprocess.run(
             cmd,
@@ -270,6 +536,11 @@ def _run_dart_runtime_probe(
     require_delegate: bool,
     timeout: float,
 ) -> dict[str, Any]:
+    run_env, runtime_env = prepare_runtime_environment(
+        engine=engine,
+        platform=platform,
+        base_env=dict(os.environ),
+    )
     cmd = [
         "dart",
         "run",
@@ -301,6 +572,7 @@ def _run_dart_runtime_probe(
             stderr=subprocess.PIPE,
             text=True,
             timeout=timeout,
+            env=run_env,
         )
     except subprocess.TimeoutExpired as error:
         return {
@@ -323,6 +595,8 @@ def _run_dart_runtime_probe(
         "stdout": completed.stdout.strip(),
         "stderr": completed.stderr.strip(),
     }
+    if runtime_env:
+        result["runtime_env"] = runtime_env
     if completed.returncode < 0:
         result["state"] = "crashed"
         result["signal"] = _signal_name(-completed.returncode)
@@ -391,6 +665,11 @@ def _classify_dart_runtime_failure(
                 "builtin_code out of range",
                 "runtime_version_mismatch",
                 "LiteRT model requires newer TensorFlow Lite runtime operator support.",
+            ),
+            (
+                "with delegates",
+                "delegate_interpreter_create_failed",
+                "Requested LiteRT delegate was attached but interpreter creation failed.",
             ),
             (
                 "no optional support libraries loaded",
@@ -465,7 +744,12 @@ def _classify_dart_runtime_failure(
     }
 
 
-def _probe_onnx_child(artifact: Path, provider: str) -> dict[str, Any]:
+def _probe_onnx_child(
+    artifact: Path,
+    provider: str,
+    *,
+    require_provider: bool,
+) -> dict[str, Any]:
     try:
         import onnxruntime as ort
     except ImportError as error:
@@ -473,11 +757,26 @@ def _probe_onnx_child(artifact: Path, provider: str) -> dict[str, Any]:
             "passed": False,
             "reason": f"onnxruntime is not installed: {error}",
         }
-    providers = [_canonical_provider(provider)]
+    available = list(ort.get_available_providers())
+    selected = _select_onnx_provider(provider, available)
+    if require_provider and selected.get("fallback"):
+        return {
+            "passed": False,
+            "requested_provider": provider,
+            "selected_provider": selected["provider"],
+            "available_providers": available,
+            "provider_fallback": selected["fallback"],
+            "reason": "requested ONNX Runtime provider is unavailable",
+        }
+    providers = [selected["provider"]]
     session = ort.InferenceSession(str(artifact), providers=providers)
     return {
         "passed": True,
+        "requested_provider": provider,
+        "selected_provider": selected["provider"],
         "provider": session.get_providers()[0] if session.get_providers() else None,
+        "available_providers": available,
+        "provider_fallback": selected.get("fallback"),
         "inputs": [_io_meta(item) for item in session.get_inputs()],
         "outputs": [_io_meta(item) for item in session.get_outputs()],
     }
@@ -503,9 +802,70 @@ def _canonical_provider(provider: str) -> str:
         return "DmlExecutionProvider"
     if normalized == "openvino":
         return "OpenVINOExecutionProvider"
-    if normalized == "qnn":
+    if normalized in {"qnn", "npu"}:
         return "QNNExecutionProvider"
+    if normalized in {"nnapi", "androidnnapi"}:
+        return "NNAPIExecutionProvider"
+    if normalized == "xnnpack":
+        return "XnnpackExecutionProvider"
     return provider
+
+
+def _select_onnx_provider(provider: str, available: list[str]) -> dict[str, Any]:
+    normalized = provider.lower()
+    if normalized in {"gpu"}:
+        return _select_from_order(
+            requested=provider,
+            available=available,
+            order=[
+                "CUDAExecutionProvider",
+                "TensorrtExecutionProvider",
+                "DmlExecutionProvider",
+                "ROCMExecutionProvider",
+                "OpenVINOExecutionProvider",
+                "CoreMLExecutionProvider",
+                "XnnpackExecutionProvider",
+            ],
+        )
+    if normalized in {"npu"}:
+        return _select_from_order(
+            requested=provider,
+            available=available,
+            order=[
+                "QNNExecutionProvider",
+                "NNAPIExecutionProvider",
+                "OpenVINOExecutionProvider",
+                "XnnpackExecutionProvider",
+            ],
+        )
+    canonical = _canonical_provider(provider)
+    if canonical in available:
+        return {"provider": canonical}
+    return {
+        "provider": "CPUExecutionProvider",
+        "fallback": {
+            "requested": canonical,
+            "reason": "requested_provider_unavailable",
+        },
+    }
+
+
+def _select_from_order(
+    *,
+    requested: str,
+    available: list[str],
+    order: list[str],
+) -> dict[str, Any]:
+    for candidate in order:
+        if candidate in available:
+            return {"provider": candidate}
+    return {
+        "provider": "CPUExecutionProvider",
+        "fallback": {
+            "requested": requested,
+            "reason": "accelerated_provider_unavailable",
+        },
+    }
 
 
 def _extract_json(text: str) -> dict[str, Any]:

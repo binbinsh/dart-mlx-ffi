@@ -71,6 +71,10 @@ class RunMatrixPublishModelIdTest(unittest.TestCase):
         self.assertIn("--publish-model-id", cmd)
         index = cmd.index("--publish-model-id")
         self.assertEqual(cmd[index + 1], "mlx-community/PaddleOCR-VL-1.5-8bit")
+        self.assertIn("--task", cmd)
+        self.assertEqual(cmd[cmd.index("--task") + 1], "vlm")
+        self.assertIn("--max-tokens", cmd)
+        self.assertEqual(cmd[cmd.index("--max-tokens") + 1], "1")
 
     def test_mlx_runner_uses_publish_model_id_lookup(self) -> None:
         publish = self.tmp / "publish.json"
@@ -103,6 +107,14 @@ class RunMatrixPublishModelIdTest(unittest.TestCase):
                 str(publish),
                 "--publish-model-id",
                 "mlx-community/PaddleOCR-VL-1.5-8bit",
+                "--task",
+                "vlm",
+                "--warmup",
+                "2",
+                "--iters",
+                "3",
+                "--max-tokens",
+                "4",
                 "--out",
                 str(out),
             ],
@@ -116,6 +128,20 @@ class RunMatrixPublishModelIdTest(unittest.TestCase):
         decoded = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(decoded["model_id"], "paddle_ocr_vl")
         self.assertEqual(decoded["metrics"]["end_to_end_ms"], 12.34)
+        self.assertEqual(decoded["metrics"]["iteration_count"], 3)
+        self.assertEqual(decoded["metrics"]["warmup_count"], 2)
+        self.assertEqual(decoded["task"], "vlm")
+        self.assertEqual(
+            decoded["run_config"],
+            {
+                "format": "dart_mlx_ffi.run_config.v1",
+                "task": "vlm",
+                "warmup": 2,
+                "iters": 3,
+                "max_tokens": 4,
+                "sampling_strategy": "greedy",
+            },
+        )
 
 
 if __name__ == "__main__":

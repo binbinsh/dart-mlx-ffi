@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from flutter_smoke_common import clear_runtime_env_file, write_runtime_env_file
 from report_schema import base_parser
+from runtime_backend_env import prepare_runtime_environment, runtime_build_env_values
 
 
 def main() -> None:
@@ -27,12 +31,16 @@ def main() -> None:
         "onnx",
         "--artifact",
         args.artifact,
+        "--task",
+        args.task or "tensor",
         "--input-json",
         args.input_json,
         "--warmup",
         args.warmup,
         "--iters",
         args.iters,
+        "--max-tokens",
+        args.max_tokens,
         "--platform",
         args.platform,
     ]
@@ -46,7 +54,17 @@ def main() -> None:
         cmd.extend(["--provider", args.provider])
     if args.require_provider:
         cmd.append("--require-provider")
-    subprocess.run(cmd, check=True)
+    run_env, _ = prepare_runtime_environment(
+        engine="onnx",
+        platform=args.platform,
+        base_env=dict(os.environ),
+    )
+    runtime_env_file = write_runtime_env_file(runtime_build_env_values(run_env))
+    run_env["DART_MLX_RUNTIME_ENV_FILE"] = str(runtime_env_file)
+    try:
+        subprocess.run(cmd, check=True, env=run_env)
+    finally:
+        clear_runtime_env_file(runtime_env_file)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS_DIR = ROOT / "benchmark" / "artifacts" / "tools" / "litert"
+TOOLS_DIR_FALLBACK = ROOT / "benchmark" / "artifacts_local" / "tools" / "litert"
+TOOLS_DIR_ENV = "DART_MLX_LITERT_TOOLS_DIR"
 GOOGLE_ANDROID_MAVEN_BASE = "https://dl.google.com/dl/android/maven2"
 DEFAULT_HOST_LITERT_VERSION = "2.16.1"
 DEFAULT_ANDROID_LITERT_VERSION = "1.4.2"
@@ -221,7 +223,7 @@ def _resolve_android_library(
     if version == "unknown":
         return None
     abi = _normalize_android_abi(target_arch)
-    lib_path = TOOLS_DIR / f"v{version}" / "android" / abi / "libtensorflowlite_jni.so"
+    lib_path = _tools_dir() / f"v{version}" / "android" / abi / "libtensorflowlite_jni.so"
     if lib_path.exists():
         return lib_path.resolve()
     if not fetch_library:
@@ -243,7 +245,7 @@ def _resolve_android_extra_libraries(
     if version == "unknown":
         return ()
     abi = _normalize_android_abi(target_arch)
-    lib_path = TOOLS_DIR / f"v{version}" / "android" / abi / "libtensorflowlite_flex_jni.so"
+    lib_path = _tools_dir() / f"v{version}" / "android" / abi / "libtensorflowlite_flex_jni.so"
     if lib_path.exists():
         return (lib_path.resolve(),)
     if not fetch_library:
@@ -274,7 +276,7 @@ def _normalize_android_abi(target_arch: str | None) -> str:
 
 
 def _download_android_aar(version: str) -> Path:
-    aar_dir = TOOLS_DIR / f"v{version}" / "android"
+    aar_dir = _tools_dir(ensure_exists=True) / f"v{version}" / "android"
     aar_dir.mkdir(parents=True, exist_ok=True)
     candidates = _android_runtime_aar_candidates(version)
     existing = _first_existing_file(candidates)
@@ -301,7 +303,7 @@ def _download_android_aar(version: str) -> Path:
 
 
 def _download_android_select_ops_aar(version: str) -> Path:
-    aar_dir = TOOLS_DIR / f"v{version}" / "android"
+    aar_dir = _tools_dir(ensure_exists=True) / f"v{version}" / "android"
     aar_dir.mkdir(parents=True, exist_ok=True)
     candidates = _android_select_ops_aar_candidates(version)
     existing = _first_existing_file(candidates)
@@ -332,7 +334,7 @@ def _extract_android_library(version: str, abi: str) -> Path:
     aar_path = _first_existing_file(_android_runtime_aar_candidates(version))
     if aar_path is None:
         raise RuntimeError(f"Missing downloaded AAR for LiteRT runtime v{version}")
-    target = TOOLS_DIR / f"v{version}" / "android" / abi / "libtensorflowlite_jni.so"
+    target = _tools_dir() / f"v{version}" / "android" / abi / "libtensorflowlite_jni.so"
     if target.exists() and target.stat().st_size > 0:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -349,7 +351,7 @@ def _extract_android_select_ops_library(version: str, abi: str) -> Path:
     aar_path = _first_existing_file(_android_select_ops_aar_candidates(version))
     if aar_path is None:
         raise RuntimeError(f"Missing downloaded AAR for LiteRT select ops v{version}")
-    target = TOOLS_DIR / f"v{version}" / "android" / abi / "libtensorflowlite_flex_jni.so"
+    target = _tools_dir() / f"v{version}" / "android" / abi / "libtensorflowlite_flex_jni.so"
     if target.exists() and target.stat().st_size > 0:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -383,6 +385,39 @@ def _path(value: str | None) -> Path | None:
     return Path(value).expanduser()
 
 
+def _tools_dir(*, ensure_exists: bool = False) -> Path:
+    for candidate in _tools_dir_candidates():
+        if _has_broken_symlink_ancestor(candidate):
+            continue
+        if ensure_exists:
+            try:
+                candidate.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+        return candidate
+    fallback = _tools_dir_candidates()[-1]
+    if ensure_exists:
+        fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def _tools_dir_candidates() -> list[Path]:
+    override = os.environ.get(TOOLS_DIR_ENV)
+    if override:
+        return [Path(override).expanduser()]
+    return [TOOLS_DIR, TOOLS_DIR_FALLBACK]
+
+
+def _has_broken_symlink_ancestor(path: Path) -> bool:
+    current = path
+    while True:
+        if current.is_symlink() and not current.exists():
+            return True
+        if current.parent == current:
+            return False
+        current = current.parent
+
+
 def _first_existing_file(candidates: tuple[Path, ...]) -> Path | None:
     for candidate in candidates:
         if candidate.exists() and candidate.stat().st_size > 0:
@@ -391,7 +426,7 @@ def _first_existing_file(candidates: tuple[Path, ...]) -> Path | None:
 
 
 def _android_runtime_aar_candidates(version: str) -> tuple[Path, ...]:
-    root = TOOLS_DIR / f"v{version}" / "android"
+    root = _tools_dir() / f"v{version}" / "android"
     return (
         root / f"litert-runtime-{version}.aar",
         root / f"litert-{version}.aar",
@@ -400,7 +435,7 @@ def _android_runtime_aar_candidates(version: str) -> tuple[Path, ...]:
 
 
 def _android_select_ops_aar_candidates(version: str) -> tuple[Path, ...]:
-    root = TOOLS_DIR / f"v{version}" / "android"
+    root = _tools_dir() / f"v{version}" / "android"
     return (
         root / f"litert-select-ops-{version}.aar",
         root / f"litert-select-tf-ops-{version}.aar",
