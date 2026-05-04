@@ -154,6 +154,48 @@ extension PaddleOcrVlRunnerDebug on PaddleOcrVlRunner {
     return imageEncoding.hidden;
   }
 
+  /// Debug seam: prefill logits prefix `[1, width]` starting from a
+  /// pre-projected `image_hidden` tensor `[numImageTokens, lmHidden]`
+  /// (e.g. produced by an external CoreML `vision_embed` stage in the
+  /// hybrid runner) plus an explicit (gridHeight, gridWidth) — bypasses
+  /// the MLX-side ViT encoder entirely so the hybrid bench can be
+  /// compared apples-to-apples against the pure-MLX bench.
+  ///
+  /// Caller retains ownership of [imageHidden] and is responsible for
+  /// closing it. The returned array is the caller's to close.
+  MlxArray debugPrefillLogitsPrefixFromVisionFeatures(
+    List<int> promptIds,
+    MlxArray imageHidden, {
+    required int gridHeight,
+    required int gridWidth,
+    int width = 16,
+  }) {
+    final numImageTokens = imageHidden.shape[0];
+    final imageTokenCountInPrompt = promptIds
+        .where((id) => id == config.imageTokenId)
+        .length;
+    final expandedIds = imageTokenCountInPrompt == numImageTokens
+        ? List<int>.from(promptIds)
+        : _expandImageTokens(promptIds, numImageTokens);
+    final positionInfo = _multimodalPositionIds(
+      expandedIds,
+      gridHeight,
+      gridWidth,
+    );
+    final posIds = positionInfo.ids;
+    final embeddings = _buildMultimodalEmbedding(expandedIds, imageHidden);
+    try {
+      return _debugPrefillLogitsPrefixFromEmbeddings(
+        embeddings,
+        posIds,
+        width: width,
+      );
+    } finally {
+      embeddings.close();
+      posIds.close();
+    }
+  }
+
   MlxArray debugPrefillFinalHiddenFromPixelValues(
     List<int> promptIds,
     MlxArray pixelValues,

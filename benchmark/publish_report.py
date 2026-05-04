@@ -312,6 +312,29 @@ def vlm_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, o
     }
 
 
+def _resolve_paddle_ocr_vl_coreml_bundle() -> Path | None:
+    """Locate a Phase-1 CoreML bundle for PaddleOCR-VL hybrid bench.
+
+    Returns the directory containing `pipeline.json` + `vision_embed.mlpackage`,
+    or `None` if no bundle can be found locally. The hybrid bench is
+    optional: if the converted artifacts haven't been built on this host
+    (e.g. local dev without the converter pipeline), the publish report
+    silently skips the hybrid leg rather than failing the whole report.
+    """
+    candidates = [
+        ROOT / "benchmark" / "artifacts" / "converted" / "paddle_ocr_vl" / "coreml",
+    ]
+    env_override = os.environ.get("DART_INFERENCE_PADDLE_OCR_VL_COREML_BUNDLE")
+    if env_override:
+        candidates.insert(0, Path(env_override))
+    for cand in candidates:
+        if (cand / "pipeline.json").exists() and (
+            cand / "vision_embed.mlpackage"
+        ).exists():
+            return cand
+    return None
+
+
 def paddle_ocr_vl_bench(
     model_id: str,
     *,
@@ -345,6 +368,7 @@ def paddle_ocr_vl_bench(
         "dart",
         "run",
         "benchmark/paddle_ocr_vl/dart_bench.dart",
+        "--mode=mlx-only",
         f"--snapshot={python_payload['snapshot_path']}",
         f"--input-ids={python_payload['input_ids_path']}",
         f"--pixel-values={python_payload['pixel_values_path']}",
@@ -358,8 +382,58 @@ def paddle_ocr_vl_bench(
         [float(v) for v in python_payload["values"]],
         [float(v) for v in dart_payload["values"]],
     )
+
+    # Hybrid leg: only attempted when a CoreML bundle is locally
+    # resolvable. Failure to find one downgrades to a soft-skip with a
+    # warning so local dev / converted-artifact-less environments still
+    # produce the legacy mlx-only numbers.
+    hybrid_block: dict[str, object] | None = None
+    bundle = _resolve_paddle_ocr_vl_coreml_bundle()
+    if bundle is None:
+        print(
+            "[paddle_ocr_vl_bench] hybrid leg skipped: no CoreML bundle "
+            "found at benchmark/artifacts/converted/paddle_ocr_vl/coreml/ "
+            "(set DART_INFERENCE_PADDLE_OCR_VL_COREML_BUNDLE to override).",
+            file=sys.stderr,
+        )
+    else:
+        try:
+            hybrid_cmd = [
+                "dart",
+                "run",
+                "benchmark/paddle_ocr_vl/dart_bench.dart",
+                "--mode=hybrid",
+                f"--snapshot={python_payload['snapshot_path']}",
+                f"--coreml-bundle={bundle}",
+                f"--input-ids={python_payload['input_ids_path']}",
+                f"--image-rgb-hwc-u8={python_payload['image_rgb_hwc_u8_path']}",
+                f"--image-height={python_payload['image_orig_height']}",
+                f"--image-width={python_payload['image_orig_width']}",
+                f"--warmup={local_warmup}",
+                f"--iters={local_iters}",
+            ]
+            hybrid_payload = parse_last_json(
+                run_script_capture(hybrid_cmd, env=dict(os.environ))
+            )
+            hybrid_max_diff, hybrid_mean_diff = compare_lists(
+                [float(v) for v in python_payload["values"]],
+                [float(v) for v in hybrid_payload["values"]],
+            )
+            hybrid_block = {
+                "coreml_bundle": str(bundle),
+                "dart_ms": float(hybrid_payload["per_iter_ms"]),
+                "max_abs_diff": hybrid_max_diff,
+                "mean_abs_diff": hybrid_mean_diff,
+            }
+        except Exception as exc:  # noqa: BLE001 — never fail the whole report
+            print(
+                f"[paddle_ocr_vl_bench] hybrid leg failed: {exc!r}; "
+                "continuing with mlx-only result only.",
+                file=sys.stderr,
+            )
+
     cleanup_mlx(mx)
-    return {
+    result: dict[str, object] = {
         "model_id": model_id,
         "kind": "vlm",
         "input_desc": (
@@ -373,6 +447,9 @@ def paddle_ocr_vl_bench(
         "max_abs_diff": max_diff,
         "mean_abs_diff": mean_diff,
     }
+    if hybrid_block is not None:
+        result["hybrid"] = hybrid_block
+    return result
 
 
 def ming_tts_bench(model_id: str, *, warmup: int = 3, iters: int = 10) -> dict[str, object]:

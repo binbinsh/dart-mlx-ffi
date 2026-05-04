@@ -263,6 +263,94 @@ final class PaddleOcrVlHybridRunner {
     }
   }
 
+  /// Debug seam used by the hybrid benchmark: runs the CoreML
+  /// `vision_embed` stage exactly like [generate], then returns only the
+  /// last-token prefill logits prefix `[1, width]` (defaults to 16) as a
+  /// fp32 [MlxArray]. No decode loop is run.
+  ///
+  /// This mirrors `PaddleOcrVlRunner.debugPrefillLogitsPrefixFromPixelValues`
+  /// but with the ViT replaced by CoreML, giving the publish bench a
+  /// directly-comparable scalar signal between the pure-MLX path and the
+  /// hybrid path.
+  ///
+  /// Caller owns the returned array and must close it.
+  MlxArray debugFirstTokenLogitsPrefix({
+    required Uint8List imageBytes,
+    required int imageHeight,
+    required int imageWidth,
+    required List<int> promptIds,
+    int width = 16,
+  }) {
+    _ensureOpen();
+
+    final resized = smartResize(
+      height: imageHeight,
+      width: imageWidth,
+      factor: manifest.vision.patchSize * manifest.vision.spatialMerge,
+    );
+    final bucket = pickImageBucket(
+      resizedHeight: resized.height,
+      resizedWidth: resized.width,
+      buckets: manifest.vision.buckets,
+      patchSize: manifest.vision.patchSize,
+    );
+    final pre = preprocessImage(
+      imageRgb: imageBytes,
+      imageHeight: imageHeight,
+      imageWidth: imageWidth,
+      bucket: bucket,
+      patchSize: manifest.vision.patchSize,
+      spatialMergeSize: manifest.vision.spatialMerge,
+    );
+    final mergedCount = bucket.$1 *
+        (bucket.$2 ~/ manifest.vision.spatialMerge) *
+        (bucket.$3 ~/ manifest.vision.spatialMerge);
+    final placeholderCount =
+        promptIds.where((id) => id == manifest.tokens.imageTokenId).length;
+    if (placeholderCount != mergedCount) {
+      throw StateError(
+        'prompt has $placeholderCount image-token placeholders but bucket '
+        '$bucket requires $mergedCount',
+      );
+    }
+
+    final gridI32 = Int32List.fromList([bucket.$1, bucket.$2, bucket.$3]);
+    final visionOut = _visionEmbed.predict({
+      'pixel_values': (
+        [1, 3, pre.resizedHeight, pre.resizedWidth],
+        pre.pixelValues,
+      ),
+      'image_grid_thw': ([3], gridI32),
+    });
+    final imageRecord =
+        visionOut['image_embeds']! as (List<int>, Float32List);
+    final imageEmbedShape = imageRecord.$1;
+    final imageEmbedFloats = imageRecord.$2;
+    if (imageEmbedShape.length != 2) {
+      throw StateError(
+        'vision_embed produced rank-${imageEmbedShape.length} image_embeds',
+      );
+    }
+    final numImageTokens = imageEmbedShape[0];
+    final imageHiddenSize = imageEmbedShape[1];
+
+    final imageHidden = MlxArray.fromFloat32List(
+      imageEmbedFloats,
+      shape: [numImageTokens, imageHiddenSize],
+    );
+    try {
+      return _mlxRunner.debugPrefillLogitsPrefixFromVisionFeatures(
+        promptIds,
+        imageHidden,
+        gridHeight: bucket.$2,
+        gridWidth: bucket.$3,
+        width: width,
+      );
+    } finally {
+      imageHidden.close();
+    }
+  }
+
   /// Release both the CoreML session and the MLX runner. Idempotent.
   void close() {
     if (_closed) return;
