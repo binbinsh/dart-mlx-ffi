@@ -31,6 +31,7 @@ import '../../runtime/runtime.dart';
 import 'coreml_image.dart';
 import 'coreml_mrope.dart';
 import 'coreml_pipeline_manifest.dart';
+import 'coreml_scatter.dart';
 
 // -----------------------------------------------------------------------
 // Phase 2 FFI surface (documented Dart API).
@@ -91,11 +92,16 @@ CoremlLoader? testCoremlLoaderOverride;
 
 /// Default tensor-naming scheme between Dart and the mlpackages, matching
 /// ADR §2. Centralised so Phase 1 and Phase 3 stay in sync.
+///
+/// Post-commit-#5 contract: `vision_embed` consumes `pixel_values` +
+/// `image_grid_thw` and emits rank-2 `image_embeds [num_image_tokens, 1024]`.
+/// The host-side runner then embeds the prompt via `token_embed` and
+/// scatters `image_embeds` into the text embeddings (commit #6) before
+/// feeding `inputs_embeds` to `prefill_decoder`.
 abstract final class _CoremlIo {
   static const visionPixels = 'pixel_values';
-  static const visionInputIds = 'input_ids';
   static const visionGridThw = 'image_grid_thw';
-  static const visionInputsEmbeds = 'inputs_embeds';
+  static const visionImageEmbeds = 'image_embeds';
 
   static const tokenEmbedInputId = 'input_id';
   static const tokenEmbedOut = 'token_embed';
@@ -252,26 +258,66 @@ final class PaddleOcrVlCoremlRunner {
     _prefill.resetState();
     _decode.resetState();
 
-    // ── 3. Vision + embed: fused inputs_embeds in one shot ───────────────
-    final inputIdsI32 = Int32List.fromList(
-      promptIds,
-    ); // CoreML int input is i32
+    // ── 3. Vision embed: rank-2 image_embeds [num_image_tokens, 1024] ────
+    // After commit #5 vision_embed no longer scatters into prompt embeds;
+    // it just produces image hidden states. The host (this runner) then
+    // embeds the prompt via token_embed and scatters in Dart (commit #6).
     final gridI32 = Int32List.fromList([bucket.$1, bucket.$2, bucket.$3]);
     final visionOut = _visionEmbed.predict({
       _CoremlIo.visionPixels: (
         [1, 3, pre.resizedHeight, pre.resizedWidth],
         pre.pixelValues,
       ),
-      _CoremlIo.visionInputIds: ([1, promptIds.length], inputIdsI32),
       _CoremlIo.visionGridThw: ([3], gridI32),
     });
-    final fusedRecord =
-        visionOut[_CoremlIo.visionInputsEmbeds]! as (List<int>, Float32List);
-    final fusedShape = fusedRecord.$1;
-    final fusedEmbeds = fusedRecord.$2;
-    final hiddenSize = fusedShape.last; // 1024
+    final imageRecord =
+        visionOut[_CoremlIo.visionImageEmbeds]!
+            as (List<int>, Float32List);
+    final imageEmbeds = imageRecord.$2;
+    final hiddenSize = imageRecord.$1.last; // 1024
 
-    // ── 4. mRoPE positions for prefill ───────────────────────────────────
+    // ── 4. Token embed: text embeddings for the entire prompt ────────────
+    // token_embed produces `[1, prompt_len, hidden]` (or `[prompt_len,
+    // hidden]`) — both layouts are the same memory; we treat the result as
+    // `prompt_len * hidden` floats row-major.
+    final promptIdsI32 = Int32List.fromList(promptIds);
+    final tokenOut = _tokenEmbed.predict({
+      _CoremlIo.tokenEmbedInputId: ([1, promptIds.length], promptIdsI32),
+    });
+    final textRecord =
+        tokenOut[_CoremlIo.tokenEmbedOut]! as (List<int>, Float32List);
+    final textEmbeds = textRecord.$2;
+    if (textEmbeds.length != promptIds.length * hiddenSize) {
+      throw StateError(
+        'token_embed produced ${textEmbeds.length} floats; expected '
+        '${promptIds.length * hiddenSize} for prompt_len=${promptIds.length} '
+        ' * hidden=$hiddenSize.',
+      );
+    }
+
+    // ── 5. Host-side scatter: image_embeds into text_embeds at placeholders
+    final imagePositions = <int>[
+      for (var i = 0; i < promptIds.length; i++)
+        if (promptIds[i] == manifest.tokens.imageTokenId) i,
+    ];
+    if (imagePositions.length != mergedCount) {
+      // This is already covered by the placeholder-count guard above, but
+      // re-assert here so a future change to that guard doesn't silently
+      // produce a misaligned scatter.
+      throw StateError(
+        'scatter mismatch: ${imagePositions.length} placeholder positions '
+        'vs $mergedCount image features from vision_embed',
+      );
+    }
+    final fusedEmbeds = paddleOcrVlScatterImageEmbeddingsFloat32(
+      textEmbed: textEmbeds,
+      imageHidden: imageEmbeds,
+      imagePositions: imagePositions,
+      promptLen: promptIds.length,
+      hiddenSize: hiddenSize,
+    );
+
+    // ── 6. mRoPE positions for prefill ───────────────────────────────────
     final prefillPositions = computeMRopePositionIds(
       inputIds: promptIds,
       imageGridThw: bucket,
@@ -280,7 +326,7 @@ final class PaddleOcrVlCoremlRunner {
     );
     final anchor = lastPositionTriple(prefillPositions, promptIds.length);
 
-    // ── 5. Pad embeds + positions + mask to the chosen prefill bucket ─────
+    // ── 7. Pad embeds + positions + mask to the chosen prefill bucket ─────
     final seqBucket = manifest.pickPrefillBucket(promptIds.length);
     if (promptIds.length > seqBucket) {
       throw StateError(
@@ -304,7 +350,7 @@ final class PaddleOcrVlCoremlRunner {
       bucket: seqBucket,
     );
 
-    // ── 6. Prefill: returns last-position logits only ────────────────────
+    // ── 8. Prefill: returns last-position logits only ────────────────────
     final prefillOut = _prefill.predict({
       _CoremlIo.prefillEmbeds: ([1, seqBucket, hiddenSize], paddedEmbeds),
       _CoremlIo.prefillPositionIds: ([3, 1, seqBucket], paddedPositions),
@@ -325,10 +371,10 @@ final class PaddleOcrVlCoremlRunner {
     generated.add(nextToken);
     onToken?.call(nextToken, 0);
 
-    // ── 7. Decode loop ───────────────────────────────────────────────────
+    // ── 9. Decode loop ───────────────────────────────────────────────────
     var pastKvLen = promptIds.length;
     for (var step = 1; step < maxNewTokens; step++) {
-      // 7a. Embed the previously sampled token (token_embed mlpackage).
+      // 9a. Embed the previously sampled token (token_embed mlpackage).
       final tokenIn = Int32List.fromList([nextToken]);
       final tokOut = _tokenEmbed.predict({
         _CoremlIo.tokenEmbedInputId: ([1, 1], tokenIn),
@@ -336,13 +382,13 @@ final class PaddleOcrVlCoremlRunner {
       final tokEmbed =
           (tokOut[_CoremlIo.tokenEmbedOut]! as (List<int>, Float32List)).$2;
 
-      // 7b. mRoPE single-token position.
+      // 9b. mRoPE single-token position.
       final pos = computeDecodePositionIds(
         newTokenIndex: step - 1,
         anchorPosition: anchor,
       );
 
-      // 7c. Stateful decode step.
+      // 9c. Stateful decode step.
       final out = _decode.predict({
         _CoremlIo.decodeTokenEmbed: ([1, 1, hiddenSize], tokEmbed),
         _CoremlIo.decodePositionIds: ([3, 1, 1], pos),

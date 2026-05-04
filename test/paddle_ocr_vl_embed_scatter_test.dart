@@ -9,6 +9,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:dart_inference/mlx.dart';
+import 'package:dart_inference/src/models/paddle_ocr_vl/coreml_scatter.dart';
 import 'package:dart_inference/src/models/paddle_ocr_vl/paddle_ocr_vl.dart';
 import 'package:test/test.dart';
 
@@ -297,6 +298,130 @@ void main() {
       expect(originalRow0[1], closeTo(1.0, 1e-6));
       expect(originalRow0[2], closeTo(2.0, 1e-6));
       expect(originalRow0[3], closeTo(3.0, 1e-6));
+    });
+  });
+
+  group('paddleOcrVlScatterImageEmbeddingsFloat32', () {
+    // Float32-only sibling used by the CoreML hybrid runner (commit #6).
+    // Mirrors the row-by-row contract of the MLX helper without dragging in
+    // any MLX tensors.
+
+    Float32List makeTextEmbedF32(int totalLen) {
+      final values = Float32List(totalLen * _hiddenSize);
+      for (var i = 0; i < totalLen; i++) {
+        for (var j = 0; j < _hiddenSize; j++) {
+          values[i * _hiddenSize + j] = i * 0.01 + j.toDouble();
+        }
+      }
+      return values;
+    }
+
+    Float32List makeImageHiddenF32(int numFeatures) {
+      final values = Float32List(numFeatures * _hiddenSize);
+      for (var i = 0; i < numFeatures; i++) {
+        for (var j = 0; j < _hiddenSize; j++) {
+          values[i * _hiddenSize + j] = -(i + 1).toDouble() - j * 0.1;
+        }
+      }
+      return values;
+    }
+
+    test('contiguous run matches expected scatter', () {
+      const totalLen = 8;
+      final imagePositions = [2, 3, 4];
+      final result = paddleOcrVlScatterImageEmbeddingsFloat32(
+        textEmbed: makeTextEmbedF32(totalLen),
+        imageHidden: makeImageHiddenF32(imagePositions.length),
+        imagePositions: imagePositions,
+        promptLen: totalLen,
+        hiddenSize: _hiddenSize,
+      );
+      final expected = _expectedScatter(
+        totalLen: totalLen,
+        imagePositions: imagePositions,
+      );
+      expect(result.length, equals(expected.length));
+      for (var i = 0; i < expected.length; i++) {
+        expect(result[i], closeTo(expected[i], 1e-5),
+            reason: 'mismatch at flat index $i');
+      }
+    });
+
+    test('sparse positions match expected scatter', () {
+      const totalLen = 8;
+      final imagePositions = [0, 3, 6];
+      final result = paddleOcrVlScatterImageEmbeddingsFloat32(
+        textEmbed: makeTextEmbedF32(totalLen),
+        imageHidden: makeImageHiddenF32(imagePositions.length),
+        imagePositions: imagePositions,
+        promptLen: totalLen,
+        hiddenSize: _hiddenSize,
+      );
+      final expected = _expectedScatter(
+        totalLen: totalLen,
+        imagePositions: imagePositions,
+      );
+      for (var i = 0; i < expected.length; i++) {
+        expect(result[i], closeTo(expected[i], 1e-5));
+      }
+    });
+
+    test('extra image rows beyond imagePositions.length are ignored', () {
+      const totalLen = 6;
+      final imagePositions = [0, 2, 4];
+      final result = paddleOcrVlScatterImageEmbeddingsFloat32(
+        textEmbed: makeTextEmbedF32(totalLen),
+        imageHidden: makeImageHiddenF32(imagePositions.length + 2),
+        imagePositions: imagePositions,
+        promptLen: totalLen,
+        hiddenSize: _hiddenSize,
+      );
+      final expected = _expectedScatter(
+        totalLen: totalLen,
+        imagePositions: imagePositions,
+      );
+      for (var i = 0; i < expected.length; i++) {
+        expect(result[i], closeTo(expected[i], 1e-5));
+      }
+    });
+
+    test('empty imagePositions throws ArgumentError', () {
+      expect(
+        () => paddleOcrVlScatterImageEmbeddingsFloat32(
+          textEmbed: makeTextEmbedF32(4),
+          imageHidden: makeImageHiddenF32(1),
+          imagePositions: const <int>[],
+          promptLen: 4,
+          hiddenSize: _hiddenSize,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('out-of-range position throws ArgumentError', () {
+      expect(
+        () => paddleOcrVlScatterImageEmbeddingsFloat32(
+          textEmbed: makeTextEmbedF32(4),
+          imageHidden: makeImageHiddenF32(1),
+          imagePositions: const <int>[7],
+          promptLen: 4,
+          hiddenSize: _hiddenSize,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('undersized imageHidden throws ArgumentError', () {
+      expect(
+        () => paddleOcrVlScatterImageEmbeddingsFloat32(
+          textEmbed: makeTextEmbedF32(4),
+          imageHidden: Float32List(_hiddenSize - 1),
+          imagePositions: const <int>[1],
+          promptLen: 4,
+          hiddenSize: _hiddenSize,
+        ),
+        throwsArgumentError,
+      );
     });
   });
 }
