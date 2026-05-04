@@ -523,6 +523,15 @@ CoremlLoader _defaultLoader() {
   return const _NativeCoremlLoader();
 }
 
+/// Public factory for the production CoreML loader used by both
+/// [PaddleOcrVlCoremlRunner] (legacy 4-stage) and
+/// `PaddleOcrVlHybridRunner` (commit #8). Exposed so the hybrid runner can
+/// share the exact same `_NativeCoremlLoader` wiring without re-deriving
+/// the RuntimeArtifact + ModelSpec scaffolding. Callers that want to inject
+/// a fake should set [testCoremlLoaderOverride] instead — both runners
+/// honour that override.
+CoremlLoader defaultCoremlLoader() => _defaultLoader();
+
 final class _NativeCoremlLoader implements CoremlLoader {
   const _NativeCoremlLoader();
 
