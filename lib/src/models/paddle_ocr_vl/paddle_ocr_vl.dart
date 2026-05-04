@@ -31,6 +31,7 @@ part 'runner_debug.dart';
 part 'embed.dart';
 part 'runner_load.dart';
 part 'runner.dart';
-// coreml_runner.dart is a *standalone* library (not a part-of). Phase 3
-// CoreML pipeline lives in `coreml_runner.dart`, `coreml_image.dart`,
-// `coreml_mrope.dart`, `coreml_pipeline_manifest.dart`.
+// `hybrid_runner.dart` is a *standalone* library (not a part-of). The
+// CoreML+MLX hybrid OCR pipeline lives in `hybrid_runner.dart`,
+// `coreml_loader.dart`, `coreml_image.dart`, `coreml_mrope.dart`,
+// `coreml_pipeline_manifest.dart`.

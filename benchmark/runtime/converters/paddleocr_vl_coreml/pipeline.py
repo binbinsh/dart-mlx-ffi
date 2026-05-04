@@ -4,11 +4,17 @@ Run as ``python -m benchmark.runtime.converters.paddleocr_vl_coreml.pipeline``
 or via the legacy ``paddleocr_vl_coreml.py`` shim.
 
 Outputs in ``--output-dir``:
-  vision_embed.mlpackage/      Model A
-  prefill_decoder.mlpackage/   Model B (stateful)
-  decode_decoder.mlpackage/    Model C (stateful)
+  vision_embed.mlpackage/      Model A (the only CoreML stage in the
+                               hybrid OCR runner — see issue #1, commit #11)
   pipeline.json                runtime wiring + bucket metadata
-  parity_report.json           PT vs CoreML logit comparison
+  parity_report.json           PT vs CoreML logit comparison (vision only)
+
+Hybrid OCR refactor (issue #1):
+    Commit #11 deleted the legacy 4-stage CoreML pipeline
+    (token_embed/prefill_decoder/decode_decoder). The decoder now runs in
+    MLX via ``PaddleOcrVlHybridRunner`` (commit #8). This converter
+    therefore only emits the vision tower; everything else flows through
+    MLX safetensors.
 """
 
 from __future__ import annotations
@@ -24,28 +30,17 @@ from typing import Any
 import numpy as np
 import torch
 
-from .decode_decoder_model import (
-    DecodeDecoderWrapper,
-    make_trace_example as make_decode_example,
-)
 from .enumerated_shapes import (
     GRID_BUCKETS,
-    MAX_KV_LEN,
     PATCH_SIZE,
-    PROMPT_BUCKETS,
     ImageBucket,
     all_image_buckets,
     default_image_bucket,
-    default_prompt_len,
     merged_token_buckets,
     patch_count_buckets,
 )
-from .palettization import palettize_embed, quantize_decoder
+from .palettization import palettize_embed
 from .parity import ParityReport, compare_logits, write_report
-from .prefill_decoder_model import (
-    PrefillDecoderWrapper,
-    make_trace_example as make_prefill_example,
-)
 from .vision_embed_model import (
     VisionEmbedWrapper,
     make_trace_example as make_vision_example,
@@ -105,18 +100,19 @@ def build_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
     target = _resolve_target(ct, cfg.deployment_target)
     precision = _mixed_precision(ct)
 
-    print("[1/4] loading HF model + processor")
+    print("[1/2] loading HF model + processor")
     model, processor, image = _load_model_and_image(cfg)
 
     # Bug V: text-decoder hyperparameters live on `config.text_config` for
-    # the LIB PaddleOCRVLConfig (multimodal).
+    # the LIB PaddleOCRVLConfig (multimodal). Kept in the metadata so the
+    # MLX-side decoder can validate it sees the same shapes.
     text_cfg = model.config.text_config
     head_dim = int(text_cfg.head_dim)
     hidden_size = int(text_cfg.hidden_size)
     num_layers = int(text_cfg.num_hidden_layers)
 
     # --------------------------------------------------------------- #
-    print("[2/4] converting Model A (vision + projector → image_embeds)")
+    print("[2/2] converting Model A (vision + projector → image_embeds)")
     vision_pkg = cfg.output_dir / "vision_embed.mlpackage"
     _convert_vision_embed(
         ct=ct,
@@ -129,42 +125,8 @@ def build_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
     _free_torch_mem()
 
     # --------------------------------------------------------------- #
-    print("[3/4] converting Model B (prefill, stateful)")
-    prefill_pkg = cfg.output_dir / "prefill_decoder.mlpackage"
-    _convert_prefill(
-        ct=ct,
-        model=model,
-        package_path=prefill_pkg,
-        target=target,
-        precision=precision,
-        head_dim=head_dim,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        skip_quantization=cfg.skip_quantization,
-    )
-    _free_torch_mem()
-
-    # --------------------------------------------------------------- #
-    print("[4/4] converting Model C (decode, stateful)")
-    decode_pkg = cfg.output_dir / "decode_decoder.mlpackage"
-    _convert_decode(
-        ct=ct,
-        model=model,
-        package_path=decode_pkg,
-        target=target,
-        precision=precision,
-        head_dim=head_dim,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        skip_quantization=cfg.skip_quantization,
-    )
-    _free_torch_mem()
-
-    # --------------------------------------------------------------- #
     pipeline_json = _pipeline_spec(
         vision_pkg=vision_pkg,
-        prefill_pkg=prefill_pkg,
-        decode_pkg=decode_pkg,
         head_dim=head_dim,
         hidden_size=hidden_size,
         num_layers=num_layers,
@@ -176,14 +138,9 @@ def build_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
 
     parity: ParityReport | None = None
     if not cfg.skip_parity:
-        print("[parity] (deferred — see parity.py; reference path TBD)")
-        # Parity check requires loading the saved mlpackages and replaying the
-        # full prompt. Implemented as a follow-up — the converter exits cleanly
-        # here so Phase 1 review can proceed.
+        print("[parity] (deferred — see parity.py; vision-only after commit #11)")
     return {
         "vision_embed": str(vision_pkg),
-        "prefill_decoder": str(prefill_pkg),
-        "decode_decoder": str(decode_pkg),
         "pipeline_json": str(cfg.output_dir / "pipeline.json"),
         "parity": parity.to_dict() if parity else None,
     }
@@ -205,8 +162,9 @@ def _convert_vision_embed(
 
     Hybrid-OCR contract (issue #1): vision_embed.mlpackage emits the
     projector output ``image_embeds`` directly. Scatter into prompt embeds
-    happens host-side. For Phase 1 we ship the smallest bucket only and
-    add enumeration in Phase 2 — keeps trace memory bounded.
+    happens MLX-side inside ``PaddleOcrVlHybridRunner`` (commit #8). For
+    Phase 1 we ship the smallest bucket only and add enumeration in
+    Phase 2 — keeps trace memory bounded.
     """
     bucket = default_image_bucket()
     wrapper = VisionEmbedWrapper(model, bucket).eval()
@@ -245,130 +203,12 @@ def _convert_vision_embed(
     _save(mlmodel, package_path)
 
 
-def _convert_prefill(
-    *,
-    ct: Any,
-    model: torch.nn.Module,
-    package_path: Path,
-    target: Any,
-    precision: Any,
-    head_dim: int,
-    hidden_size: int,
-    num_layers: int,
-    skip_quantization: bool,
-) -> None:
-    prompt_len = default_prompt_len()
-    wrapper = PrefillDecoderWrapper(model, prompt_len=prompt_len).eval()
-    ex = make_prefill_example(
-        prompt_len, head_dim=head_dim, hidden_size=hidden_size, dtype=torch.float32,
-    )
-
-    inputs = [
-        ct.TensorType(name="inputs_embeds", shape=tuple(ex.inputs_embeds.shape), dtype=np.float16),
-        ct.TensorType(name="attention_mask", shape=tuple(ex.attention_mask.shape), dtype=np.int32),
-        ct.TensorType(name="rope_cos", shape=tuple(ex.rope_cos.shape), dtype=np.float16),
-        ct.TensorType(name="rope_sin", shape=tuple(ex.rope_sin.shape), dtype=np.float16),
-        ct.TensorType(name="prompt_len_used", shape=tuple(ex.prompt_len_used.shape), dtype=np.int32),
-    ]
-    outputs = [ct.TensorType(name="logits", dtype=np.float16)]
-    states = _kv_state_specs(ct, num_layers, head_dim, model)
-
-    with torch.no_grad():
-        traced = torch.jit.trace(
-            wrapper,
-            (
-                ex.inputs_embeds,
-                ex.attention_mask,
-                ex.rope_cos,
-                ex.rope_sin,
-                ex.prompt_len_used,
-            ),
-            strict=False,
-        )
-        mlmodel = ct.convert(
-            traced,
-            source="pytorch",
-            inputs=inputs,
-            outputs=outputs,
-            states=states,
-            minimum_deployment_target=target,
-            compute_precision=precision,
-        )
-    if not skip_quantization:
-        mlmodel = quantize_decoder(mlmodel)
-    _save(mlmodel, package_path)
-
-
-def _convert_decode(
-    *,
-    ct: Any,
-    model: torch.nn.Module,
-    package_path: Path,
-    target: Any,
-    precision: Any,
-    head_dim: int,
-    hidden_size: int,
-    num_layers: int,
-    skip_quantization: bool,
-) -> None:
-    wrapper = DecodeDecoderWrapper(model).eval()
-    ex = make_decode_example(head_dim=head_dim, hidden_size=hidden_size, dtype=torch.float32)
-
-    inputs = [
-        ct.TensorType(name="inputs_embeds", shape=tuple(ex.inputs_embeds.shape), dtype=np.float16),
-        ct.TensorType(name="rope_cos", shape=tuple(ex.rope_cos.shape), dtype=np.float16),
-        ct.TensorType(name="rope_sin", shape=tuple(ex.rope_sin.shape), dtype=np.float16),
-        ct.TensorType(name="cur_len", shape=tuple(ex.cur_len.shape), dtype=np.int32),
-        ct.TensorType(name="kv_len", shape=tuple(ex.kv_len.shape), dtype=np.int32),
-    ]
-    outputs = [ct.TensorType(name="logits", dtype=np.float16)]
-    states = _kv_state_specs(ct, num_layers, head_dim, model)
-
-    with torch.no_grad():
-        traced = torch.jit.trace(
-            wrapper,
-            (ex.inputs_embeds, ex.rope_cos, ex.rope_sin, ex.cur_len, ex.kv_len),
-            strict=False,
-        )
-        mlmodel = ct.convert(
-            traced,
-            source="pytorch",
-            inputs=inputs,
-            outputs=outputs,
-            states=states,
-            minimum_deployment_target=target,
-            compute_precision=precision,
-        )
-    if not skip_quantization:
-        mlmodel = quantize_decoder(mlmodel)
-    _save(mlmodel, package_path)
-
-
-def _kv_state_specs(ct: Any, num_layers: int, head_dim: int, model: torch.nn.Module) -> list:
-    num_kv = int(model.config.text_config.num_key_value_heads)
-    states = []
-    for i in range(num_layers):
-        for tag in ("k_cache", "v_cache"):
-            states.append(
-                ct.StateType(
-                    wrapped_type=ct.TensorType(
-                        shape=(1, num_kv, MAX_KV_LEN, head_dim),
-                        dtype=np.float16,
-                    ),
-                    name=f"{tag}_{i}",
-                )
-            )
-    return states
-
-
 # -------------------------------------------------------------------- #
 # Pipeline metadata
 # -------------------------------------------------------------------- #
 def _pipeline_spec(
     *,
     vision_pkg: Path,
-    prefill_pkg: Path,
-    decode_pkg: Path,
     head_dim: int,
     hidden_size: int,
     num_layers: int,
@@ -381,54 +221,35 @@ def _pipeline_spec(
             "head_dim": head_dim,
             "hidden_size": hidden_size,
             "num_layers": num_layers,
-            "max_kv_len": MAX_KV_LEN,
             "patch_size": PATCH_SIZE,
         },
         "buckets": {
             "image_grids": [list(g) for g in GRID_BUCKETS],
             "patch_counts": list(patch_count_buckets()),
             "merged_token_counts": list(merged_token_buckets()),
-            "prompt_lens": list(PROMPT_BUCKETS),
         },
         "models": {
             "vision_embed": vision_pkg.name,
-            "prefill_decoder": prefill_pkg.name,
-            "decode_decoder": decode_pkg.name,
         },
         "io": {
             "vision_embed": {
                 "inputs": ["pixel_values", "image_grid_thw"],
                 "outputs": ["image_embeds"],
             },
-            "prefill_decoder": {
-                "inputs": [
-                    "inputs_embeds",
-                    "attention_mask",
-                    "rope_cos",
-                    "rope_sin",
-                    "prompt_len_used",
-                ],
-                "outputs": ["logits"],
-                "states_per_layer": ["k_cache_{i}", "v_cache_{i}"],
-            },
-            "decode_decoder": {
-                "inputs": ["inputs_embeds", "rope_cos", "rope_sin", "cur_len", "kv_len"],
-                "outputs": ["logits"],
-                "states_per_layer": ["k_cache_{i}", "v_cache_{i}"],
-            },
         },
         "phase_1_status": {
             "vision_embed_buckets_enumerated": False,
-            "prefill_buckets_enumerated": False,
-            "decode_kv_rangedim_enabled": False,
-            "stateful_kv_enabled": True,
-            "image_tokens_must_be_at_prompt_prefix": True,
+            "image_tokens_must_be_at_prompt_prefix": False,
+            "decoder_runtime": "mlx",
             "notes": (
-                "Phase 1 ships the default bucket only; bucket enumeration "
-                "lands in Phase 2. vision_embed.mlpackage emits image_embeds "
-                "(projector output, [num_image_tokens, hidden]); the host "
-                "scatters into the prompt embedding buffer at IMAGE_PLACEHOLDER "
-                "positions (see paddleOcrVlScatterImageEmbeddings, embed.dart)."
+                "Phase 1 ships the default vision bucket only; bucket "
+                "enumeration lands in Phase 2. vision_embed.mlpackage emits "
+                "image_embeds (projector output, [num_image_tokens, hidden]); "
+                "PaddleOcrVlHybridRunner (commit #8) scatters those into MLX "
+                "prompt embeddings via paddleOcrVlScatterImageEmbeddings "
+                "(embed.dart). The legacy 4-stage CoreML pipeline "
+                "(token_embed/prefill_decoder/decode_decoder) was removed in "
+                "commit #11; the decoder now runs in MLX."
             ),
         },
     }
@@ -443,8 +264,8 @@ def _load_model_and_image(cfg: PipelineConfig):
     # rather than AutoModelForCausalLM(trust_remote_code=True). The remote-code
     # ("SHIPPED") variant exports an mlpackage whose vision tower disagrees
     # with the LIB reference at cos≈0.46 even though weights are nominally
-    # the same; every downstream consumer (parity.py, e2e_token_golden.py,
-    # diag_*) is already on LIB so the converter must match.
+    # the same; every downstream consumer (parity.py, diag_*) is already on
+    # LIB so the converter must match.
     from transformers import AutoProcessor, PaddleOCRVLForConditionalGeneration
 
     processor = AutoProcessor.from_pretrained(str(cfg.hf_snapshot))
@@ -526,6 +347,8 @@ def _resolve_target(ct: Any, value: str) -> Any:
         return ct.target.iOS18
     if v in {"ios17", "macos14"}:
         # Stateful conversion REQUIRES iOS18; fall through with a warning.
+        # (Vision-only conversion is stateless but we keep the floor at iOS18
+        # for consistency with the runtime requirements documented in ADR.)
         print("[warn] stateful KV cache requires iOS18 — using iOS18 instead of", value)
         return ct.target.iOS18
     raise ValueError(f"unknown deployment target: {value}")

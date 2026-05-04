@@ -26,9 +26,9 @@
 /// immediately after the safetensors file is parsed. On the real
 /// PaddleOCR-VL-1.5 weights this saves roughly 385 MB of GPU memory.
 ///
-/// The legacy 4-stage [PaddleOcrVlCoremlRunner] in `coreml_runner.dart`
-/// stays available for the time being. Commit #11 will remove it once the
-/// hybrid path has been validated end-to-end.
+/// The legacy 4-stage `PaddleOcrVlCoremlRunner` was removed in commit #11
+/// once this hybrid path was validated end-to-end. The CoreML loader/session
+/// abstractions it used to expose now live in `coreml_loader.dart`.
 library;
 
 import 'dart:typed_data';
@@ -36,13 +36,13 @@ import 'dart:typed_data';
 import 'package:dart_inference/mlx.dart';
 
 import 'coreml_image.dart';
-import 'coreml_pipeline_manifest.dart';
-import 'coreml_runner.dart'
+import 'coreml_loader.dart'
     show
         CoremlLoader,
         CoremlSession,
         defaultCoremlLoader,
         testCoremlLoaderOverride;
+import 'coreml_pipeline_manifest.dart';
 import 'paddle_ocr_vl.dart';
 
 /// Hybrid runner: CoreML for the ViT, MLX for the decoder.
@@ -150,13 +150,10 @@ final class PaddleOcrVlHybridRunner {
   }) {
     _ensureOpen();
 
-    // ── 1. Image preprocessing — same logic as PaddleOcrVlCoremlRunner. ──
-    // We deliberately re-use the public helpers from `coreml_image.dart`
-    // rather than extracting a shared wrapper: this keeps both runners
-    // independent during the deprecation window of the legacy 4-stage
-    // runner. Once commit #11 deletes that runner, this block becomes the
-    // sole call site and a small `_prepareVisionInput` helper would be a
-    // safe refactor.
+    // ── 1. Image preprocessing. ────────────────────────────────────────
+    // Uses the public helpers from `coreml_image.dart` (smartResize,
+    // pickImageBucket, preprocessImage). The legacy 4-stage runner that
+    // used to share this preprocessing was removed in commit #11.
     final resized = smartResize(
       height: imageHeight,
       width: imageWidth,

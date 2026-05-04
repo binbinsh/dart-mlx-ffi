@@ -19,7 +19,7 @@ import 'dart:typed_data';
 
 import 'package:dart_inference/mlx.dart';
 import 'package:dart_inference/src/models/paddle_ocr_vl/coreml_pipeline_manifest.dart';
-import 'package:dart_inference/src/models/paddle_ocr_vl/coreml_runner.dart';
+import 'package:dart_inference/src/models/paddle_ocr_vl/coreml_loader.dart';
 import 'package:dart_inference/src/models/paddle_ocr_vl/hybrid_runner.dart';
 import 'package:test/test.dart';
 
