@@ -55,6 +55,11 @@ final class PaddleOcrVlRunner {
   /// Release all vision encoder weights (ViT blocks + projector + patch
   /// embedding + position embedding + post-layernorm) to free ~385 MB of
   /// GPU memory.  After this call, the vision encoder cannot be used again.
+  ///
+  /// See issue #1 (hybrid CoreML-NaViT + MLX-decoder refactor) — the new
+  /// `keepVisionWeights: false` load path on `runner_load.dart` makes this
+  /// release structurally unnecessary in the hybrid runner; this method
+  /// remains for the legacy full-model load path.
   void _releaseVisionWeights() => _releaseRunnerVisionWeights(this);
 
   // -----------------------------------------------------------------------

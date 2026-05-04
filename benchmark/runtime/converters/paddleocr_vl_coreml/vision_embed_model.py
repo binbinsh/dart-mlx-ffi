@@ -1,4 +1,4 @@
-"""Model A: vision encoder + projector + embed_tokens + scatter.
+"""Model A: NaViT vision encoder + projector.
 
 Inputs (CoreML):
   - pixel_values   : float16, EnumeratedShapes over (1, num_patches, 3*14*14)
@@ -7,6 +7,13 @@ Inputs (CoreML):
 
 Outputs:
   - inputs_embeds  : float16, (1, prompt_len, hidden_size=1024)
+
+NOTE: This package currently still emits the fused ``inputs_embeds`` (text
+embed_tokens + scattered image tokens) for backwards compatibility with the
+4-stage CoreML pipeline. The hybrid-runner refactor (issue #1) will slim
+this package to emit only ``image_embeds: [num_image_tokens, hidden]`` and
+move embed_tokens + scatter to the MLX side. Until that commit lands, the
+docstring below describes the current (transitional) behaviour.
 
 The host computes ``image_token_mask = (input_ids == image_token_id)`` and
 right-pads ``input_ids`` to the prompt bucket. Projector output (M merged
