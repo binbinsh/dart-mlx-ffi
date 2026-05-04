@@ -109,16 +109,14 @@ def build_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
     model, processor, image = _load_model_and_image(cfg)
 
     # Bug V: text-decoder hyperparameters live on `config.text_config` for
-    # the LIB PaddleOCRVLConfig (multimodal). image_token_id stays on the
-    # top-level config.
+    # the LIB PaddleOCRVLConfig (multimodal).
     text_cfg = model.config.text_config
     head_dim = int(text_cfg.head_dim)
     hidden_size = int(text_cfg.hidden_size)
-    image_token_id = int(model.config.image_token_id)
     num_layers = int(text_cfg.num_hidden_layers)
 
     # --------------------------------------------------------------- #
-    print("[2/4] converting Model A (vision + embed + scatter)")
+    print("[2/4] converting Model A (vision + projector → image_embeds)")
     vision_pkg = cfg.output_dir / "vision_embed.mlpackage"
     _convert_vision_embed(
         ct=ct,
@@ -126,7 +124,6 @@ def build_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
         package_path=vision_pkg,
         target=target,
         precision=precision,
-        image_token_id=image_token_id,
         skip_quantization=cfg.skip_quantization,
     )
     _free_torch_mem()
@@ -202,19 +199,18 @@ def _convert_vision_embed(
     package_path: Path,
     target: Any,
     precision: Any,
-    image_token_id: int,
     skip_quantization: bool,
 ) -> None:
-    """Trace one VisionEmbedWrapper per (bucket, prompt_len), then assemble
-    EnumeratedShapes. For Phase 1 we ship the smallest bucket only and add
-    enumeration in Phase 2 — keeps trace memory bounded.
+    """Trace one VisionEmbedWrapper per bucket, then assemble EnumeratedShapes.
+
+    Hybrid-OCR contract (issue #1): vision_embed.mlpackage emits the
+    projector output ``image_embeds`` directly. Scatter into prompt embeds
+    happens host-side. For Phase 1 we ship the smallest bucket only and
+    add enumeration in Phase 2 — keeps trace memory bounded.
     """
     bucket = default_image_bucket()
-    prompt_len = default_prompt_len()
-    wrapper = VisionEmbedWrapper(model, bucket, prompt_len=prompt_len).eval()
-    ex = make_vision_example(
-        bucket, prompt_len=prompt_len, image_token_id=image_token_id, dtype=torch.float32,
-    )
+    wrapper = VisionEmbedWrapper(model, bucket).eval()
+    ex = make_vision_example(bucket, dtype=torch.float32)
 
     inputs = [
         ct.TensorType(
@@ -222,19 +218,18 @@ def _convert_vision_embed(
             shape=tuple(ex.pixel_values.shape),
             dtype=np.float16,
         ),
-        ct.TensorType(name="input_ids", shape=tuple(ex.input_ids.shape), dtype=np.int32),
         ct.TensorType(
-            name="image_token_mask",
-            shape=tuple(ex.image_token_mask.shape),
-            dtype=bool,
+            name="image_grid_thw",
+            shape=tuple(ex.image_grid_thw.shape),
+            dtype=np.int32,
         ),
     ]
-    outputs = [ct.TensorType(name="inputs_embeds", dtype=np.float16)]
+    outputs = [ct.TensorType(name="image_embeds", dtype=np.float16)]
 
     with torch.no_grad():
         traced = torch.jit.trace(
             wrapper,
-            (ex.pixel_values, ex.input_ids, ex.image_token_mask),
+            (ex.pixel_values, ex.image_grid_thw),
             strict=False,
         )
         mlmodel = ct.convert(
@@ -402,8 +397,8 @@ def _pipeline_spec(
         },
         "io": {
             "vision_embed": {
-                "inputs": ["pixel_values", "input_ids", "image_token_mask"],
-                "outputs": ["inputs_embeds"],
+                "inputs": ["pixel_values", "image_grid_thw"],
+                "outputs": ["image_embeds"],
             },
             "prefill_decoder": {
                 "inputs": [
@@ -430,9 +425,10 @@ def _pipeline_spec(
             "image_tokens_must_be_at_prompt_prefix": True,
             "notes": (
                 "Phase 1 ships the default bucket only; bucket enumeration "
-                "lands in Phase 2. The vision-embed scatter places merged "
-                "image embeds at input_ids[0:M] — host MUST pad the prompt "
-                "so IMAGE_PLACEHOLDER tokens occupy positions [0, M)."
+                "lands in Phase 2. vision_embed.mlpackage emits image_embeds "
+                "(projector output, [num_image_tokens, hidden]); the host "
+                "scatters into the prompt embedding buffer at IMAGE_PLACEHOLDER "
+                "positions (see paddleOcrVlScatterImageEmbeddings, embed.dart)."
             ),
         },
     }

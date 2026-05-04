@@ -1,38 +1,37 @@
 """Model A: NaViT vision encoder + projector.
 
+Hybrid OCR contract (issue #1):
+
 Inputs (CoreML):
-  - pixel_values   : float16, EnumeratedShapes over (1, num_patches, 3*14*14)
-  - input_ids      : int32,   EnumeratedShapes over (1, prompt_len) — PROMPT_BUCKETS
-  - image_token_mask: bool,   same shape as input_ids; precomputed on host
+  - pixel_values    : float16, EnumeratedShapes over (1, num_patches, 3*14*14)
+  - image_grid_thw  : int32,   shape (3,) — runtime metadata (T, H, W). Used
+                      by the host to pick the right enumerated bucket; the
+                      traced graph itself is bucket-specialized so the values
+                      are not consumed numerically. We thread the tensor
+                      through a no-op cast/sum so the converter does not
+                      prune the input.
 
 Outputs:
-  - inputs_embeds  : float16, (1, prompt_len, hidden_size=1024)
+  - image_embeds    : float16, (num_image_tokens, hidden=1024) — the
+                      projector output BEFORE scatter into prompt embeddings.
+                      ``num_image_tokens`` equals ``bucket.num_merged_tokens``
+                      and is fixed per traced subgraph; one mlpackage holds
+                      one subgraph per image bucket via EnumeratedShapes.
 
-NOTE: This package currently still emits the fused ``inputs_embeds`` (text
-embed_tokens + scattered image tokens) for backwards compatibility with the
-4-stage CoreML pipeline. The hybrid-runner refactor (issue #1) will slim
-this package to emit only ``image_embeds: [num_image_tokens, hidden]`` and
-move embed_tokens + scatter to the MLX side. Until that commit lands, the
-docstring below describes the current (transitional) behaviour.
-
-The host computes ``image_token_mask = (input_ids == image_token_id)`` and
-right-pads ``input_ids`` to the prompt bucket. Projector output (M merged
-image tokens) is broadcast-scattered into the embedding table output via
-``torch.where``. This avoids dynamic ``index_put_`` which CoreML can't trace.
-
-Padding scheme: image tokens occupy a contiguous run inside the prompt. We
-require the *number* of merged image tokens to equal the count of True in
-the mask — the host guarantees this when picking buckets.
+The Dart-side runner performs the scatter into the prompt embedding
+buffer (see ``paddleOcrVlScatterImageEmbeddings`` in ``embed.dart``).
+This package no longer holds an ``embed_tokens`` lookup table or a
+``torch.where`` scatter — those moved to the host.
 
 The pixel_values input is the post-processor flat layout
 ``[num_patches, 3, 14, 14]`` reshaped to ``[1, num_patches, 588]`` so all
 buckets share a single rank-3 tensor with one variable axis.
 
-The projector internals (rope, position_embedding, merge_kernel) depend on
-the *grid* (T, H, W). To keep one mlpackage per CoreML model, we trace
+The projector internals (rope, position_embedding, merge_kernel) depend
+on the *grid* (T, H, W). To keep one mlpackage per CoreML model, we trace
 6 separate vision graphs (one per bucket) and combine them via
-EnumeratedShapes — which means the scalar buffers used inside the trace are
-fine because each enumerated shape produces its own subgraph in MIL.
+EnumeratedShapes — which means the scalar buffers used inside the trace
+are fine because each enumerated shape produces its own subgraph in MIL.
 """
 
 from __future__ import annotations
@@ -51,14 +50,12 @@ from .enumerated_shapes import (
 @dataclass
 class VisionEmbedTraceExample:
     pixel_values: torch.Tensor       # (1, num_patches, 3*14*14) fp16
-    input_ids: torch.Tensor          # (1, prompt_len) int32
-    image_token_mask: torch.Tensor   # (1, prompt_len) bool
+    image_grid_thw: torch.Tensor     # (3,) int32
     bucket: ImageBucket
-    prompt_len: int
 
 
 class VisionEmbedWrapper(torch.nn.Module):
-    """Vision encoder + Projector + scatter into the text embedding table.
+    """Vision encoder + Projector. Emits ``image_embeds`` only.
 
     A single instance is bound to a single ``ImageBucket`` because the
     rotary cache, position-embedding interpolation, and merge reshape all
@@ -71,13 +68,9 @@ class VisionEmbedWrapper(torch.nn.Module):
         self,
         model: torch.nn.Module,
         bucket: ImageBucket,
-        *,
-        prompt_len: int,
     ) -> None:
         super().__init__()
         self.bucket = bucket
-        self.prompt_len = int(prompt_len)
-        self.image_token_id = int(model.config.image_token_id)
 
         # ---- Vision tower ------------------------------------------------
         # Bug V: LIB layout. SHIPPED used `model.visual` / `model.mlp_AR`;
@@ -137,15 +130,11 @@ class VisionEmbedWrapper(torch.nn.Module):
         self.register_buffer("rope_cos", rope_cos, persistent=False)
         self.register_buffer("rope_sin", rope_sin, persistent=False)
 
-        # ---- Text embedding table ---------------------------------------
-        self.embed_tokens = model.get_input_embeddings()
-
     # ------------------------------------------------------------------ #
     def forward(
         self,
         pixel_values: torch.Tensor,
-        input_ids: torch.Tensor,
-        image_token_mask: torch.Tensor,
+        image_grid_thw: torch.Tensor,
     ) -> torch.Tensor:
         # pixel_values: (1, num_patches, 3*14*14) — reshape to model's expected
         # 5D layout (1, num_patches, 3, 14, 14) then run vision tower.
@@ -164,23 +153,11 @@ class VisionEmbedWrapper(torch.nn.Module):
         image_features = self.post_layernorm(hidden_states).squeeze(0)
         image_embeds = self._project(image_features)  # (M, text_hidden=1024)
 
-        # Text embeddings.
-        text_embeds = self.embed_tokens(input_ids.long())  # (1, P, 1024)
-
-        # Scatter the image embeds into the front of a zero buffer of the
-        # same shape as the text embeds. The host pads input_ids so the
-        # IMAGE_PLACEHOLDER positions occupy slots [0:M] contiguously
-        # — match the trace example. The actual gating is done by the mask
-        # via torch.where below, so any host arrangement that puts True at
-        # exactly M positions works at runtime; the *static slice* here is
-        # only used inside the trace and emerges as a constant-shape op.
-        M = self.num_merged_tokens
-        scatter_buf = torch.zeros_like(text_embeds)
-        # Static slice write — the tracer sees fixed start/end constants.
-        scatter_buf[:, :M, :] = image_embeds.unsqueeze(0).to(text_embeds.dtype)
-
-        mask_b = image_token_mask.unsqueeze(-1)
-        return torch.where(mask_b, scatter_buf, text_embeds)
+        # Thread image_grid_thw through a numerically-zero op so coremltools
+        # keeps the input alive in the converted graph. The traced subgraph
+        # is bucket-specialized; grid_thw values are runtime metadata only.
+        grid_noop = image_grid_thw.to(image_embeds.dtype).sum() * 0.0
+        return image_embeds + grid_noop
 
     # ------------------------------------------------------------------ #
     def _project(self, image_features: torch.Tensor) -> torch.Tensor:
@@ -254,36 +231,22 @@ class VisionEmbedWrapper(torch.nn.Module):
 def make_trace_example(
     bucket: ImageBucket,
     *,
-    prompt_len: int,
-    image_token_id: int,
     dtype: torch.dtype = torch.float16,
 ) -> VisionEmbedTraceExample:
     """Build a self-consistent dummy batch for tracing.
 
-    The mask has ``num_merged_tokens`` True entries packed at the front
-    of the prompt — matches the processor's contiguous placeholder run.
+    Non-degenerate values so ``torch.jit.trace`` cannot constant-fold any
+    input. Zero pixel_values would let the tracer collapse the entire
+    vision tower (every q*0/k*0/v*0 chain folds).
     """
-    # Non-degenerate values so ``torch.jit.trace`` cannot constant-fold any
-    # input. Zero pixel_values would let the tracer collapse the entire
-    # vision tower (every q*0/k*0/v*0 chain folds), and a mask whose True
-    # region exactly equals the static scatter slice still works at runtime
-    # but trains the tracer on the right shapes — we keep that arrangement
-    # but populate with non-trivial token ids outside the image run.
     n = bucket.num_patches
     g = torch.Generator().manual_seed(0)
-    pixel_values = torch.randn(1, n, 3 * PATCH_SIZE * PATCH_SIZE, generator=g, dtype=torch.float32).to(dtype)
-    input_ids = torch.zeros(1, prompt_len, dtype=torch.int32)
-    m = bucket.num_merged_tokens
-    input_ids[0, :m] = image_token_id
-    # Fill the post-image positions with a non-zero, non-image-id token so
-    # the embed_tokens lookup and the torch.where branch see real data.
-    text_id = (image_token_id + 1) if image_token_id != 1 else 2
-    input_ids[0, m:] = text_id
-    image_token_mask = (input_ids == image_token_id)
+    pixel_values = torch.randn(
+        1, n, 3 * PATCH_SIZE * PATCH_SIZE, generator=g, dtype=torch.float32
+    ).to(dtype)
+    image_grid_thw = torch.tensor([bucket.t, bucket.h, bucket.w], dtype=torch.int32)
     return VisionEmbedTraceExample(
         pixel_values=pixel_values,
-        input_ids=input_ids,
-        image_token_mask=image_token_mask,
+        image_grid_thw=image_grid_thw,
         bucket=bucket,
-        prompt_len=prompt_len,
     )

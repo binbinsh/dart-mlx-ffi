@@ -5,9 +5,18 @@ Phase A v2 — subprocess-isolated CoreML predicts.
 We compare three stages of the converted pipeline against the HF PyTorch
 reference (FP32) on identical image-first inputs:
 
-    Stage A  vision_embed       — fused inputs_embeds after image scatter.
+    Stage A  vision_embed       — projector output (image_embeds) BEFORE
+                                  scatter into prompt embeddings.
     Stage B  prefill_decoder    — last-token logits after one prefill step.
     Stage C  decode_decoder     — per-step logits for K greedy decode steps.
+
+Hybrid-OCR transition (issue #1, commit #5):
+    vision_embed.mlpackage now emits ``image_embeds`` of shape
+    ``[num_image_tokens, hidden]``. Stages B and C still expect a fused
+    ``inputs_embeds`` so this harness contains a transitional adapter
+    (``_scatter_image_embeds_into_prompt``) that performs the scatter in
+    PyTorch using HF ``embed_tokens``. The adapter is removed in commit
+    #11 when Stages B and C are deleted from the pipeline.
 
 CoreML predicts run in spawn-based subprocesses (see ``_coreml_subprocess``),
 which sidesteps the coremltools↔torch memory-corruption SIGSEGVs we hit in v1.
@@ -617,10 +626,22 @@ class ParityHarness:
             )
 
             # ============================================================ A
+            #
+            # Stage A now compares CoreML image_embeds (projector output,
+            # rank-2 [M, hidden]) against the HF projector output before
+            # scatter. Stages B and C still consume the fused inputs_embeds
+            # — they are fed from the HF reference path
+            # (``hf_ref["fused_embeds"]``), which is the transitional
+            # adapter for the hybrid-OCR refactor: HF embed_tokens scatters
+            # the projected image features into the prompt-embedding
+            # buffer in PyTorch so Stages B/C see a valid input. This
+            # adapter goes away in commit #11 when Stages B and C are
+            # deleted from the pipeline (the Dart-side scatter becomes the
+            # only path).
             rep.stage_a_vision_embed = self._stage_a(
-                input_ids_first=input_ids_first,
                 pv_flat_fp16=pv_flat_fp16,
-                hf_fused_embeds=hf_ref["fused_embeds"],
+                grid_thw=list(grid),
+                hf_image_embeds_projected=hf_ref["image_embeds_projected"],
             )
 
             # ============================================================ B
@@ -758,6 +779,8 @@ class ParityHarness:
 
         return {
             "fused_embeds": fused_embeds,
+            "image_embeds_projected": image_embeds,
+            "image_token_mask": mask,
             "last_logits": last_logits,
             "seed_token": seed_token,
             "per_step_logits": per_step_logits,
@@ -768,24 +791,33 @@ class ParityHarness:
     def _stage_a(
         self,
         *,
-        input_ids_first: torch.Tensor,
         pv_flat_fp16: torch.Tensor,
-        hf_fused_embeds: torch.Tensor,
+        grid_thw: list[int],
+        hf_image_embeds_projected: torch.Tensor,
     ) -> StageAReport:
-        self._log("[A] vision_embed (subprocess)")
-        image_token_mask_np = (
-            (input_ids_first == IMAGE_TOKEN_ID).numpy().astype(np.float32)
-        )
+        """Compare CoreML ``image_embeds`` against the HF projector output.
+
+        Hybrid-OCR contract (issue #1): vision_embed.mlpackage emits the
+        projector output directly, before any scatter into prompt embeds.
+        We compare against ``image_outputs.pooler_output`` from
+        ``inner.get_image_features(...)`` — same path HF takes internally
+        before the masked_scatter into text embeds.
+        """
+        self._log("[A] vision_embed (subprocess) → image_embeds")
         cm_in = {
             "pixel_values": pv_flat_fp16.numpy().astype(np.float16),
-            "input_ids": input_ids_first.to(torch.int32).numpy(),
-            "image_token_mask": image_token_mask_np,
+            "image_grid_thw": np.asarray(grid_thw, dtype=np.int32),
         }
         t0 = time.time()
         cm_out = predict_isolated(self.vision_path, cm_in, stateful=False)
         self._log(f"  predict {time.time()-t0:.2f}s")
-        cm_embeds = cm_out["inputs_embeds"].astype(np.float32)
-        pt = hf_fused_embeds.numpy().astype(np.float32)
+        cm_embeds = np.asarray(cm_out["image_embeds"]).astype(np.float32)
+        # Accept either rank-2 [M, H] or rank-3 [1, M, H] from the package.
+        if cm_embeds.ndim == 3 and cm_embeds.shape[0] == 1:
+            cm_embeds = cm_embeds[0]
+        pt = hf_image_embeds_projected.detach().to(torch.float32).numpy()
+        if pt.ndim == 3 and pt.shape[0] == 1:
+            pt = pt[0]
         if cm_embeds.shape != pt.shape:
             raise ValueError(
                 f"vision shape mismatch: pt={pt.shape} vs cm={cm_embeds.shape}"
@@ -795,7 +827,8 @@ class ParityHarness:
         any_nan_cm = bool(np.isnan(cm_embeds).any())
         passed = (mae < self.vision_tol) and not (any_nan_pt or any_nan_cm)
         self._log(
-            f"  Stage A: mae={mae:.4e} max={mx:.4e} mse={mse:.4e} cos={cos:.5f} "
+            f"  Stage A: shape={list(cm_embeds.shape)} "
+            f"mae={mae:.4e} max={mx:.4e} mse={mse:.4e} cos={cos:.5f} "
             f"nan_pt={any_nan_pt} nan_cm={any_nan_cm} → "
             f"{'PASS' if passed else 'FAIL'}"
         )
