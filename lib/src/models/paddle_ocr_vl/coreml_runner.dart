@@ -7,9 +7,9 @@
 /// **Pipeline cadence per `generate()` call:**
 ///
 /// 1. `vision_embed` runs **once** to fuse pixel patches + token embeds.
-/// 2. `prefill_decoder` runs **once** to seed the KV cache.
-/// 3. `decode_decoder` runs **N times** (N ≤ `maxNewTokens`, capped by EOS)
-///    sharing the same `MLState` with `prefill_decoder`.
+/// 2. `prefill_decoder` runs **once** for first-token logits.
+/// 3. `decode_decoder` replays the prompt embeddings into its own MLState,
+///    then runs **N** decode steps (N ≤ `maxNewTokens`, capped by EOS).
 ///
 /// See:
 ///   - `docs/adr/0001-paddleocr-vl-coreml-rearchitecture.md` §1, §2, §7, §8
@@ -19,8 +19,15 @@
 ///   - `coreml_pipeline_manifest.dart` for `pipeline.json` parsing
 library;
 
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import '../shared/model_spec.dart';
+import '../shared/runtime_metadata.dart';
+import '../../runtime/coreml_runtime.dart' as coreml_runtime;
+import '../../runtime/native_runtime.dart';
+import '../../runtime/runtime.dart';
 import 'coreml_image.dart';
 import 'coreml_mrope.dart';
 import 'coreml_pipeline_manifest.dart';
@@ -118,10 +125,10 @@ final class PaddleOcrVlCoremlRunner {
     required CoremlSession tokenEmbed,
     required CoremlSession prefill,
     required CoremlSession decode,
-  })  : _visionEmbed = visionEmbed,
-        _tokenEmbed = tokenEmbed,
-        _prefill = prefill,
-        _decode = decode;
+  }) : _visionEmbed = visionEmbed,
+       _tokenEmbed = tokenEmbed,
+       _prefill = prefill,
+       _decode = decode;
 
   final String bundlePath;
   final CoremlPipelineManifest manifest;
@@ -135,7 +142,9 @@ final class PaddleOcrVlCoremlRunner {
 
   /// Load a Phase 1 bundle directory and instantiate all 4 sessions.
   static Future<PaddleOcrVlCoremlRunner> load(String bundlePath) async {
-    final manifest = CoremlPipelineManifest.loadFile('$bundlePath/pipeline.json');
+    final manifest = CoremlPipelineManifest.loadFile(
+      '$bundlePath/pipeline.json',
+    );
     final loader = testCoremlLoaderOverride ?? _defaultLoader();
 
     CoremlSession open(String name) {
@@ -225,11 +234,13 @@ final class PaddleOcrVlCoremlRunner {
     );
 
     // Sanity: prompt must contain merged-token count of placeholders.
-    final mergedCount = (bucket.$1 *
-            (bucket.$2 ~/ manifest.vision.spatialMerge) *
-            (bucket.$3 ~/ manifest.vision.spatialMerge));
-    final placeholderCount =
-        promptIds.where((id) => id == manifest.tokens.imageTokenId).length;
+    final mergedCount =
+        (bucket.$1 *
+        (bucket.$2 ~/ manifest.vision.spatialMerge) *
+        (bucket.$3 ~/ manifest.vision.spatialMerge));
+    final placeholderCount = promptIds
+        .where((id) => id == manifest.tokens.imageTokenId)
+        .length;
     if (placeholderCount != mergedCount) {
       throw StateError(
         'prompt has $placeholderCount image-token placeholders but bucket '
@@ -242,8 +253,9 @@ final class PaddleOcrVlCoremlRunner {
     _decode.resetState();
 
     // ── 3. Vision + embed: fused inputs_embeds in one shot ───────────────
-    final inputIdsI32 =
-        Int32List.fromList(promptIds); // CoreML int input is i32
+    final inputIdsI32 = Int32List.fromList(
+      promptIds,
+    ); // CoreML int input is i32
     final gridI32 = Int32List.fromList([bucket.$1, bucket.$2, bucket.$3]);
     final visionOut = _visionEmbed.predict({
       _CoremlIo.visionPixels: (
@@ -304,6 +316,12 @@ final class PaddleOcrVlCoremlRunner {
 
     final generated = <int>[];
     if (nextToken == eos) return generated;
+    _primeDecodeState(
+      fusedEmbeds: fusedEmbeds,
+      promptLen: promptIds.length,
+      hiddenSize: hiddenSize,
+      positionIds: prefillPositions,
+    );
     generated.add(nextToken);
     onToken?.call(nextToken, 0);
 
@@ -417,6 +435,28 @@ final class PaddleOcrVlCoremlRunner {
     return mask;
   }
 
+  void _primeDecodeState({
+    required Float32List fusedEmbeds,
+    required int promptLen,
+    required int hiddenSize,
+    required Float32List positionIds,
+  }) {
+    _decode.resetState();
+    for (var index = 0; index < promptLen; index++) {
+      final embed = Float32List(hiddenSize);
+      embed.setRange(0, hiddenSize, fusedEmbeds, index * hiddenSize);
+      final pos = Float32List(3);
+      for (var stream = 0; stream < 3; stream++) {
+        pos[stream] = positionIds[stream * promptLen + index];
+      }
+      _decode.predict({
+        _CoremlIo.decodeTokenEmbed: ([1, 1, hiddenSize], embed),
+        _CoremlIo.decodePositionIds: ([3, 1, 1], pos),
+        _CoremlIo.decodePastKvLen: ([1], Int32List.fromList([index])),
+      });
+    }
+  }
+
   /// Greedy argmax over the last logits row. Tiny (~100k vocab) so a plain
   /// linear scan is faster than reaching for an isolate.
   static int _argmax(Float32List logits) {
@@ -433,23 +473,204 @@ final class PaddleOcrVlCoremlRunner {
   }
 }
 
-/// Default real-FFI loader. Stubbed until Phase 2 lands — throws so any
-/// accidental call without setting a test override fails fast.
 CoremlLoader _defaultLoader() {
-  return _UnimplementedCoremlLoader();
+  return const _NativeCoremlLoader();
 }
 
-class _UnimplementedCoremlLoader implements CoremlLoader {
+final class _NativeCoremlLoader implements CoremlLoader {
+  const _NativeCoremlLoader();
+
   @override
   CoremlSession loadStage({
     required String packagePath,
     required CoremlComputeUnits computeUnits,
     required bool stateful,
   }) {
-    throw UnimplementedError(
-      'PaddleOcrVlCoremlRunner default loader requires Phase 2 '
-      '(coreml_runtime.dart). Set testCoremlLoaderOverride to inject a fake '
-      'loader for tests, or wait for Phase 2 to land.',
+    final artifactPath = _stagePipelineSpecPath(
+      packagePath: packagePath,
+      computeUnits: computeUnits,
+      stateful: stateful,
+    );
+    final artifact = RuntimeArtifact(
+      engine: RuntimeEngine.coreml,
+      path: artifactPath,
+      format: 'coreml-stage-pipeline',
+      targetPlatforms: const ['ios', 'macos'],
+      accelerators: const [Accelerator.ane, Accelerator.gpu, Accelerator.cpu],
+      metadata: {
+        'modelId': 'paddle_ocr_vl',
+        'stateful': stateful,
+        'computeUnits': _computeUnitsOption(computeUnits),
+      },
+    );
+    final spec = ModelSpec(
+      id: 'paddle_ocr_vl_coreml_stage',
+      family: 'PaddleOCR-VL',
+      modalities: const [ModelModality.visionLanguage],
+      description: 'PaddleOCR-VL CoreML stage',
+      requiredFiles: const [],
+      platformArtifacts: {RuntimeEngine.coreml: artifact},
+    );
+    final session = NativeModelRuntime(RuntimeEngine.coreml).load(
+      ModelBundle(spec: spec, rootPath: '', artifact: artifact),
+      RuntimeOptions(
+        engine: RuntimeEngine.coreml,
+        allowFallback: false,
+        prefer: const [Accelerator.ane, Accelerator.gpu, Accelerator.cpu],
+        backendOptions: {
+          'coremlComputeUnits': _computeUnitsOption(computeUnits),
+        },
+      ),
+    );
+    return _RuntimeCoremlSession(session, stateful: stateful);
+  }
+}
+
+final class _RuntimeCoremlSession implements CoremlSession {
+  _RuntimeCoremlSession(this._session, {required this.stateful});
+
+  final ModelSession _session;
+  final bool stateful;
+
+  @override
+  Map<String, Object> predict(Map<String, Object> inputs) {
+    final outputs = _session.run(ModelInputs(_runtimeInputs(inputs)));
+    try {
+      return outputs.values.map(
+        (key, value) => MapEntry(key, _runtimeOutput(key, value)),
+      );
+    } finally {
+      outputs.close();
+    }
+  }
+
+  @override
+  void resetState() {
+    if (!stateful) return;
+    final session = _session;
+    if (session is coreml_runtime.CoremlStateResettable) {
+      (session as coreml_runtime.CoremlStateResettable).resetCoremlState();
+      return;
+    }
+    throw StateError('CoreML session does not support state reset.');
+  }
+
+  @override
+  void close() {
+    _session.close();
+  }
+
+  static Map<String, Object?> _runtimeInputs(Map<String, Object> inputs) {
+    return inputs.map(
+      (name, value) => MapEntry(name, _runtimeInput(name, value)),
     );
   }
+
+  static Object _runtimeInput(String name, Object value) {
+    if (value is (List<int>, Float32List)) {
+      return RuntimeTensor.float32(value.$1, value.$2);
+    }
+    if (value is (List<int>, Int32List)) {
+      return RuntimeTensor.int32(value.$1, value.$2);
+    }
+    if (value is (List<int>, Int64List)) {
+      return RuntimeTensor.int64(value.$1, value.$2);
+    }
+    if (value is (List<int>, Uint8List)) {
+      return RuntimeTensor.uint8(value.$1, value.$2);
+    }
+    if (value is (List<int>, Float64List)) {
+      return RuntimeTensor.float64(value.$1, value.$2);
+    }
+    if (value is TypedData) return value;
+    throw ArgumentError.value(value, name, 'Unsupported CoreML input tensor');
+  }
+
+  static Object _runtimeOutput(String name, Object? value) {
+    if (value is! RuntimeTensor) {
+      throw StateError('CoreML output "$name" is not a runtime tensor.');
+    }
+    return switch (value.dtype) {
+      RuntimeTensorDataType.float32 => (
+        List<int>.unmodifiable(value.shape),
+        Float32List.fromList(value.asFloat32List()),
+      ),
+      RuntimeTensorDataType.int32 => (
+        List<int>.unmodifiable(value.shape),
+        Int32List.fromList(value.asInt32List()),
+      ),
+      RuntimeTensorDataType.int64 => (
+        List<int>.unmodifiable(value.shape),
+        Int64List.fromList(value.asInt64List()),
+      ),
+      RuntimeTensorDataType.float64 => (
+        List<int>.unmodifiable(value.shape),
+        Float64List.fromList(value.asFloat64List()),
+      ),
+      RuntimeTensorDataType.uint8 || RuntimeTensorDataType.boolean => (
+        List<int>.unmodifiable(value.shape),
+        Uint8List.fromList(value.asUint8List()),
+      ),
+      RuntimeTensorDataType.float16 => throw StateError(
+        'CoreML output "$name" uses float16; PaddleOCR CoreML runner expects '
+        'float32 outputs.',
+      ),
+    };
+  }
+}
+
+String _computeUnitsOption(CoremlComputeUnits units) => switch (units) {
+  CoremlComputeUnits.cpuOnly => 'cpuOnly',
+  CoremlComputeUnits.cpuAndGpu => 'cpuAndGPU',
+  CoremlComputeUnits.cpuAndNeuralEngine => 'cpuAndNeuralEngine',
+  CoremlComputeUnits.all => 'all',
+};
+
+String _pipelineComputeUnits(CoremlComputeUnits units) => switch (units) {
+  CoremlComputeUnits.cpuOnly => 'cpu_only',
+  CoremlComputeUnits.cpuAndGpu => 'cpu_and_gpu',
+  CoremlComputeUnits.cpuAndNeuralEngine => 'cpu_and_neural_engine',
+  CoremlComputeUnits.all => 'all',
+};
+
+String _stagePipelineSpecPath({
+  required String packagePath,
+  required CoremlComputeUnits computeUnits,
+  required bool stateful,
+}) {
+  final stageName = _stageName(packagePath);
+  final unitName = _pipelineComputeUnits(computeUnits);
+  final file = File(
+    '${Directory.systemTemp.path}/dart_inference_${stageName}_'
+    '${unitName}_${stateful ? "stateful" : "stateless"}_'
+    '${packagePath.hashCode.toUnsigned(32)}.coreml_pipeline.json',
+  );
+  if (!file.existsSync()) {
+    file.writeAsStringSync(
+      jsonEncode({
+        'format': 'dart_inference.coreml_pipeline.v1',
+        'stages': [
+          {
+            'name': stageName,
+            'model': packagePath,
+            'compute_units': unitName,
+            'stateful': stateful,
+          },
+        ],
+      }),
+      flush: true,
+    );
+  }
+  return file.path;
+}
+
+String _stageName(String packagePath) {
+  final name = packagePath.split(Platform.pathSeparator).last;
+  if (name.endsWith('.mlpackage')) {
+    return name.substring(0, name.length - '.mlpackage'.length);
+  }
+  if (name.endsWith('.mlmodelc')) {
+    return name.substring(0, name.length - '.mlmodelc'.length);
+  }
+  return name.replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_');
 }
