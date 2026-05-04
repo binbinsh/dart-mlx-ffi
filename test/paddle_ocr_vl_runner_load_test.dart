@@ -89,6 +89,77 @@ void main() {
       },
     );
 
+    test(
+      'keepVisionWeights:false skips visual.* entirely; vision APIs throw',
+      () {
+        // Snapshot still contains visual.* tensors — the loader must drop
+        // them silently and never feed them to `_loadRunnerVisionWeights`.
+        final snap = _SyntheticSnapshot(_tinyConfig());
+        addTearDown(snap.dispose);
+        snap.write();
+
+        final runner = PaddleOcrVlRunner.load(
+          snap.path,
+          keepVisionWeights: false,
+        );
+        addTearDown(runner.close);
+
+        // Decoder loaded normally.
+        expect(runner.config.numHiddenLayers, _tinyConfig().numHiddenLayers);
+        expect(runner.config.tieWordEmbeddings, isFalse);
+
+        // Vision-touching API surfaces the documented StateError.
+        expect(
+          () => runner.visionInputDType,
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('keepVisionWeights: false'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'keepVisionWeights:false against a decoder-only snapshot '
+      '(no visual.* tensors) succeeds — models the future '
+      'paddleocr-vl-ernie-mlx-4bit artifact',
+      () {
+        final snap = _SyntheticSnapshot(_tinyConfig(), includeVision: false);
+        addTearDown(snap.dispose);
+        snap.write();
+
+        final runner = PaddleOcrVlRunner.load(
+          snap.path,
+          keepVisionWeights: false,
+        );
+        addTearDown(runner.close);
+
+        expect(runner.config.numHiddenLayers, _tinyConfig().numHiddenLayers);
+        expect(
+          () => runner.visionInputDType,
+          throwsA(isA<StateError>()),
+        );
+      },
+    );
+
+    test(
+      'keepVisionWeights:true (default) on decoder-only snapshot still '
+      'throws — flag is the only way to load the hybrid artifact',
+      () {
+        final snap = _SyntheticSnapshot(_tinyConfig(), includeVision: false);
+        addTearDown(snap.dispose);
+        snap.write();
+
+        expect(
+          () => PaddleOcrVlRunner.load(snap.path),
+          throwsA(isA<Error>()),
+        );
+      },
+    );
+
     test('baseline: missing a language_model.* layer weight makes load throw',
         () {
       final snap = _SyntheticSnapshot(_tinyConfig());
@@ -229,10 +300,15 @@ _SyntheticConfig _tinyConfig() => const _SyntheticConfig(
     );
 
 class _SyntheticSnapshot {
-  _SyntheticSnapshot(this.config, {this.includeLmHead = true});
+  _SyntheticSnapshot(
+    this.config, {
+    this.includeLmHead = true,
+    this.includeVision = true,
+  });
 
   final _SyntheticConfig config;
   final bool includeLmHead;
+  final bool includeVision;
   final Directory _dir =
       Directory.systemTemp.createTempSync('paddle-ocr-vl-loadtest-');
   bool _disposed = false;
@@ -295,6 +371,7 @@ class _SyntheticSnapshot {
     }
 
     // ── Vision encoder ────────────────────────────────────────────────────
+    if (!includeVision) return;
     const vp = 'visual.';
     // Conv2d kernel: [outChannels, inChannels, pH, pW].
     put('${vp}patch_embedding.weight',

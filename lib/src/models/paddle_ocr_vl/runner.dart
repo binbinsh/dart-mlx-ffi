@@ -18,7 +18,7 @@ final class PaddleOcrVlRunner {
   PaddleOcrVlRunner._(
     this.config,
     this._tensors,
-    this._visionWeights,
+    this._visionWeightsOrNull,
     this._lmLayers,
     this._embedWeights,
     this._finalNorm,
@@ -26,8 +26,22 @@ final class PaddleOcrVlRunner {
   );
 
   /// Load model weights from a snapshot directory.
-  factory PaddleOcrVlRunner.load(String snapshotPath) =>
-      _loadPaddleOcrVlRunner(snapshotPath);
+  ///
+  /// When [keepVisionWeights] is `true` (default), the full model is loaded
+  /// — both the language-model decoder and the ViT vision encoder. When
+  /// `false`, every tensor whose name starts with `visual.` is dropped
+  /// immediately after the safetensors map is built; the runner's vision
+  /// fields stay unset and any vision-touching API throws a [StateError].
+  /// This is the loader entry point for the hybrid CoreML-ViT + MLX-decoder
+  /// runner described in issue #1.
+  factory PaddleOcrVlRunner.load(
+    String snapshotPath, {
+    bool keepVisionWeights = true,
+  }) =>
+      _loadPaddleOcrVlRunner(
+        snapshotPath,
+        keepVisionWeights: keepVisionWeights,
+      );
 
   void _maybeSynchronizeGpuPerToken() => _maybeSynchronizeRunnerGpuPerToken(this);
 
@@ -36,7 +50,24 @@ final class PaddleOcrVlRunner {
 
   final PaddleOcrVlConfig config;
   final Map<String, MlxArray> _tensors;
-  final _VisionWeights _visionWeights;
+  final _VisionWeights? _visionWeightsOrNull;
+
+  /// Whether the runner was loaded with `keepVisionWeights: true` and still
+  /// holds a (non-released) vision encoder. False after a flag-off load and
+  /// also false after [_releaseVisionWeights] has run.
+  bool get _hasVisionWeights {
+    final vw = _visionWeightsOrNull;
+    return vw != null && !vw.isReleased;
+  }
+
+  /// Vision weights accessor used by every vision-touching code path. Throws
+  /// [StateError] when the runner was loaded without vision weights.
+  _VisionWeights get _visionWeights =>
+      _visionWeightsOrNull ??
+      (throw StateError(
+        'Runner loaded with keepVisionWeights: false; '
+        'vision encoder unavailable',
+      ));
   final List<_LmLayerWeights> _lmLayers;
   final _LinearBase _embedWeights;
   final MlxArray _finalNorm;
@@ -48,9 +79,17 @@ final class PaddleOcrVlRunner {
   final Map<int, ({MlxArray weight, MlxArray scales, MlxArray? biases})>
       _debugLmHeadPrefixQuantCache = {};
 
-  MlxDType get visionInputDType => config.forceFloat32VisionForCurrentPlatform
-      ? MlxDType.MLX_FLOAT32
-      : _visionWeights.patchEmbedWeight.dtype;
+  MlxDType get visionInputDType {
+    if (!_hasVisionWeights) {
+      throw StateError(
+        'Runner loaded with keepVisionWeights: false; '
+        'vision encoder unavailable',
+      );
+    }
+    return config.forceFloat32VisionForCurrentPlatform
+        ? MlxDType.MLX_FLOAT32
+        : _visionWeights.patchEmbedWeight.dtype;
+  }
 
   /// Release all vision encoder weights (ViT blocks + projector + patch
   /// embedding + position embedding + post-layernorm) to free ~385 MB of

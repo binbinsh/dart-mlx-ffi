@@ -1,11 +1,32 @@
 part of 'paddle_ocr_vl.dart';
 
-PaddleOcrVlRunner _loadPaddleOcrVlRunner(String snapshotPath) {
+PaddleOcrVlRunner _loadPaddleOcrVlRunner(
+  String snapshotPath, {
+  bool keepVisionWeights = true,
+}) {
   final config = PaddleOcrVlConfig.fromSnapshot(snapshotPath);
   final tensors = loadTensorMap(snapshotPath);
   final defaultQuant = config._defaultQuantSpec();
 
-  final visionWeights = _loadRunnerVisionWeights(tensors, config, defaultQuant);
+  // When the caller opts out of the vision encoder, drop every `visual.*`
+  // tensor before any wrapper structure is built. `loadTensorMap` resolves
+  // the safetensors map eagerly (see `lib/src/models/shared/tensor_map.dart`)
+  // so we cannot avoid the initial materialization at the byte level without
+  // changing that shared helper. Closing the MlxArray handles here releases
+  // the underlying buffers immediately, which still removes the largest
+  // chunk of GPU memory (~385 MB on the real PaddleOCR-VL-1.5 weights) and
+  // keeps every `_LinearBase.load` call below from touching `visual.*`.
+  if (!keepVisionWeights) {
+    final visualKeys =
+        tensors.keys.where((k) => k.startsWith('visual.')).toList();
+    for (final k in visualKeys) {
+      tensors.remove(k)?.close();
+    }
+  }
+
+  final _VisionWeights? visionWeights = keepVisionWeights
+      ? _loadRunnerVisionWeights(tensors, config, defaultQuant)
+      : null;
 
   const lmPrefix = 'language_model.model.';
   final embedWeights = _LinearBase.load(
@@ -170,8 +191,10 @@ bool _runnerShouldEvalDecodeCacheState(
 }
 
 void _releaseRunnerVisionWeights(PaddleOcrVlRunner runner) {
-  if (runner._visionWeights.isReleased) return;
-  runner._visionWeights.release(runner._tensors);
+  final vw = runner._visionWeightsOrNull;
+  if (vw == null) return;
+  if (vw.isReleased) return;
+  vw.release(runner._tensors);
   runner._visionPositionEmbeddingCache = null;
   try {
     MlxMemory.clearCache();
