@@ -582,6 +582,7 @@ void main() {
           'ios': RuntimeValidationStatus(
             platform: 'ios',
             engine: RuntimeEngine.coreml,
+            identityPassed: true,
             correctnessPassed: true,
             speedPassed: true,
             peakMemoryPassed: true,

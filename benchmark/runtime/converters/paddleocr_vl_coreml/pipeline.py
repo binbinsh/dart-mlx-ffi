@@ -31,13 +31,11 @@ import numpy as np
 import torch
 
 from .enumerated_shapes import (
-    GRID_BUCKETS,
+    MAX_KV_LEN,
     PATCH_SIZE,
-    ImageBucket,
-    all_image_buckets,
+    PROMPT_BUCKETS,
+    SPATIAL_MERGE,
     default_image_bucket,
-    merged_token_buckets,
-    patch_count_buckets,
 )
 from .palettization import palettize_embed
 from .parity import ParityReport, compare_logits, write_report
@@ -110,6 +108,18 @@ def build_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
     head_dim = int(text_cfg.head_dim)
     hidden_size = int(text_cfg.hidden_size)
     num_layers = int(text_cfg.num_hidden_layers)
+    kv_heads = int(text_cfg.num_key_value_heads)
+    image_token_id = _int_attr(model.config, "image_token_id")
+    eos_token_id = _int_attr(
+        model.generation_config,
+        "eos_token_id",
+        default=_int_attr(model.config, "eos_token_id", default=2),
+    )
+    pad_token_id = _int_attr(
+        model.generation_config,
+        "pad_token_id",
+        default=_int_attr(model.config, "pad_token_id", default=0),
+    )
 
     # --------------------------------------------------------------- #
     print("[2/2] converting Model A (vision + projector → image_embeds)")
@@ -130,6 +140,10 @@ def build_pipeline(cfg: PipelineConfig) -> dict[str, Any]:
         head_dim=head_dim,
         hidden_size=hidden_size,
         num_layers=num_layers,
+        kv_heads=kv_heads,
+        image_token_id=image_token_id,
+        eos_token_id=eos_token_id,
+        pad_token_id=pad_token_id,
         deployment_target=cfg.deployment_target,
     )
     (cfg.output_dir / "pipeline.json").write_text(
@@ -182,7 +196,7 @@ def _convert_vision_embed(
             dtype=np.int32,
         ),
     ]
-    outputs = [ct.TensorType(name="image_embeds", dtype=np.float16)]
+    outputs = [ct.TensorType(name="image_embeds", dtype=np.float32)]
 
     with torch.no_grad():
         traced = torch.jit.trace(
@@ -212,11 +226,48 @@ def _pipeline_spec(
     head_dim: int,
     hidden_size: int,
     num_layers: int,
+    kv_heads: int,
+    image_token_id: int,
+    eos_token_id: int,
+    pad_token_id: int,
     deployment_target: str,
 ) -> dict[str, Any]:
+    # The current converted package traces only the default bucket. Keep the
+    # manifest equally narrow so the Dart runner never selects an unsupported
+    # CoreML enumerated shape at runtime.
+    bucket = default_image_bucket()
+    image_grids = [[bucket.t, bucket.h, bucket.w]]
     return {
+        "schema": 2,
+        "model": "paddleocr-vl-1.5-hybrid-coreml-vision-mlx-decoder",
         "format": "dart_inference.coreml_pipeline.v2",
         "deployment_target": deployment_target,
+        "stages": [
+            {
+                "name": "vision_embed",
+                "package": vision_pkg.name,
+                "compute_units": "cpu_and_neural_engine",
+                "stateful": False,
+            },
+        ],
+        "kv": {
+            "layers": num_layers,
+            "kv_heads": kv_heads,
+            "head_dim": head_dim,
+            "max_len": MAX_KV_LEN,
+            "dtype": "fp16",
+        },
+        "vision": {
+            "buckets": image_grids,
+            "patch_size": PATCH_SIZE,
+            "spatial_merge": SPATIAL_MERGE,
+        },
+        "tokens": {
+            "image_token_id": image_token_id,
+            "eos_token_id": eos_token_id,
+            "pad_token_id": pad_token_id,
+        },
+        "prefill_buckets": list(PROMPT_BUCKETS),
         "config": {
             "head_dim": head_dim,
             "hidden_size": hidden_size,
@@ -224,9 +275,9 @@ def _pipeline_spec(
             "patch_size": PATCH_SIZE,
         },
         "buckets": {
-            "image_grids": [list(g) for g in GRID_BUCKETS],
-            "patch_counts": list(patch_count_buckets()),
-            "merged_token_counts": list(merged_token_buckets()),
+            "image_grids": image_grids,
+            "patch_counts": [bucket.num_patches],
+            "merged_token_counts": [bucket.num_merged_tokens],
         },
         "models": {
             "vision_embed": vision_pkg.name,
@@ -253,6 +304,21 @@ def _pipeline_spec(
             ),
         },
     }
+
+
+def _int_attr(obj: Any, name: str, *, default: int | None = None) -> int:
+    value = getattr(obj, name, None)
+    if value is None:
+        if default is None:
+            raise AttributeError(f"{obj!r} has no integer attribute {name!r}")
+        return default
+    if isinstance(value, (list, tuple)):
+        if not value:
+            if default is None:
+                raise ValueError(f"{name!r} is empty")
+            return default
+        value = value[0]
+    return int(value)
 
 
 # -------------------------------------------------------------------- #

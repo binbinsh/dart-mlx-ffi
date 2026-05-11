@@ -6,8 +6,8 @@
     "published_at": "2026-04-02T20:02:41+00:00"
   },
   {
-    "model_id": "mlx-community/Qwen3.6-27B-4bit",
-    "kind": "text",
+    "model_id": "unsloth/Qwen3.6-27B-UD-MLX-4bit",
+    "kind": "vlm",
     "published_at": "2026-04-01T00:00:00+00:00"
   },
   {

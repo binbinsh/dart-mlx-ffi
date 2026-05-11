@@ -95,9 +95,9 @@ models:
         allow_patterns: *mlx_snapshot
       coreml:
         repo: mlboydaisuke/qwen3.5-0.8B-CoreML
-        artifact: qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        artifact: qwen3_5_0_8b_decode_chunks_mlkv
         allow_patterns:
-          - "qwen3_5_0_8b_decode_int8_mseq128.mlpackage/**"
+          - "qwen3_5_0_8b_decode_chunks_mlkv/**"
           - "*.json"
           - "tokenizer*"
       onnx:

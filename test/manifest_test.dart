@@ -48,6 +48,27 @@ void main() {
       expect(manifest['nonexistent'], isNull);
     });
 
+    test('Qwen3.6 27B is registered as the preferred MLX VLM bundle', () {
+      final qwen36 = ModelManifest.builtIn()['qwen3_6_27b'];
+
+      expect(qwen36, isNotNull);
+      expect(
+        qwen36!.modalities,
+        containsAll([
+          ModelModality.textGeneration,
+          ModelModality.visionLanguage,
+        ]),
+      );
+      expect(
+        qwen36.platformArtifacts[RuntimeEngine.mlx]!.path,
+        'hf://unsloth/Qwen3.6-27B-UD-MLX-4bit/.',
+      );
+      expect(
+        qwen36.platformArtifacts[RuntimeEngine.mlx]!.metadata['sourceModel'],
+        'Qwen/Qwen3.6-27B',
+      );
+    });
+
     test('byModality filters correctly', () {
       final manifest = ModelManifest.builtIn();
 
@@ -110,6 +131,11 @@ void main() {
       for (final spec in manifest.models) {
         expect(spec.platformArtifacts, isNotEmpty, reason: spec.id);
         for (final artifact in spec.platformArtifacts.values) {
+          if (artifact.metadata['source'] == 'superplanner-r2') {
+            expect(artifact.sourceUri, startsWith('https://'), reason: spec.id);
+            expect(artifact.metadata['manifestUrl'], artifact.sourceUri);
+            continue;
+          }
           expect(artifact.path, startsWith('hf://'), reason: spec.id);
           expect(artifact.sourceUri, artifact.path, reason: spec.id);
           expect(artifact.metadata['source'], 'huggingface', reason: spec.id);
@@ -122,6 +148,12 @@ void main() {
 
     test('builtIn artifacts pin upgraded same-model runtime sources', () {
       final manifest = ModelManifest.builtIn();
+
+      final qwen35 = manifest['qwen3_5']!;
+      expect(
+        qwen35.platformArtifacts[RuntimeEngine.coreml]!.path,
+        contains('qwen3_5_0_8b_decode_int4_mseq128.mlpackage'),
+      );
 
       final qwenAsr = manifest['qwen3_asr']!;
       expect(

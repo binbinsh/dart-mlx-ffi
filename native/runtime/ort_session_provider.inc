@@ -609,6 +609,60 @@ bool AppendProvider(
     }
   }
 
+#if defined(__APPLE__)
+  // CoreML uses a legacy C-style entry point exported from libonnxruntime,
+  // not the OrtApi vtable. We resolve it dynamically via dlsym so the bridge
+  // doesn't have to link against the CoreML provider header at build time.
+  // Flags follow `coreml_provider_factory.h`:
+  //   COREML_FLAG_USE_CPU_ONLY                    = 0x001
+  //   COREML_FLAG_ENABLE_ON_SUBGRAPH              = 0x002
+  //   COREML_FLAG_ONLY_ENABLE_DEVICE_WITH_ANE     = 0x004
+  //   COREML_FLAG_ONLY_ALLOW_STATIC_INPUT_SHAPES  = 0x008
+  //   COREML_FLAG_CREATE_MLPROGRAM                = 0x010
+  if (provider == "CoreMLExecutionProvider") {
+    using CoreMLAppendFn = OrtStatus* (*)(OrtSessionOptions*, uint32_t);
+    auto coreml_append = reinterpret_cast<CoreMLAppendFn>(
+        dlsym(RTLD_DEFAULT, "OrtSessionOptionsAppendExecutionProvider_CoreML"));
+    if (coreml_append == nullptr) {
+      if (dinf_option_bool(runtime_options, "requireProvider", false)) {
+        *error =
+            "CoreML provider entry point not found in loaded ONNX Runtime "
+            "(OrtSessionOptionsAppendExecutionProvider_CoreML missing).";
+        return false;
+      }
+      return true;
+    }
+    uint32_t coreml_flags = 0;
+    if (dinf_option_bool(runtime_options, "coremlMlProgram", true)) {
+      coreml_flags |= 0x010;  // COREML_FLAG_CREATE_MLPROGRAM
+    }
+    if (dinf_option_bool(runtime_options, "coremlCpuOnly", false)) {
+      coreml_flags |= 0x001;
+    }
+    if (dinf_option_bool(runtime_options, "coremlEnableOnSubgraph", false)) {
+      coreml_flags |= 0x002;
+    }
+    if (dinf_option_bool(runtime_options, "coremlOnlyAne", false)) {
+      coreml_flags |= 0x004;
+    }
+    if (dinf_option_bool(runtime_options, "coremlStaticShapesOnly", false)) {
+      coreml_flags |= 0x008;
+    }
+    std::string append_error;
+    if (Ok(api, coreml_append(options, coreml_flags), &append_error)) {
+      if (appended != nullptr) {
+        *appended = true;
+      }
+      return true;
+    }
+    if (dinf_option_bool(runtime_options, "requireProvider", false)) {
+      *error = append_error;
+      return false;
+    }
+    return true;
+  }
+#endif
+
   std::string append_error;
   if (!Ok(api,
           api->SessionOptionsAppendExecutionProvider(

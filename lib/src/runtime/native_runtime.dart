@@ -8,6 +8,7 @@ import 'native_ffi.dart' as dz;
 import 'package:ffi/ffi.dart';
 
 import '../models/shared/runtime_metadata.dart';
+import 'coreml_runtime.dart' as coreml;
 import 'native_ffi_types.dart';
 import 'native_bindings.dart' as native;
 import 'native_byte_buffer.dart';
@@ -574,7 +575,8 @@ final class NativeModelRuntime implements ModelRuntime {
   }
 }
 
-final class _NativeModelSession implements ModelSession {
+final class _NativeModelSession
+    implements ModelSession, coreml.CoremlStateResettable {
   _NativeModelSession(this._handle, {required bool diagnosticsEnabled})
     : _diagnosticsEnabled = diagnosticsEnabled;
 
@@ -640,6 +642,12 @@ final class _NativeModelSession implements ModelSession {
   @override
   Stream<ModelOutputs> stream(ModelInputs inputs) async* {
     yield run(inputs);
+  }
+
+  @override
+  void resetCoremlState() {
+    _checkOpen();
+    coreml.resetCoremlState(_handle);
   }
 
   @override

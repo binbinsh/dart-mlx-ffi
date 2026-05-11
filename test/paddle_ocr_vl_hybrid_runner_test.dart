@@ -30,9 +30,12 @@ void main() {
     late _SyntheticSnapshot snapshot;
 
     setUp(() {
-      bundleDir = Directory.systemTemp.createTempSync('paddle-ocr-vl-hybrid-bundle-');
-      File('${bundleDir.path}/pipeline.json')
-          .writeAsStringSync(jsonEncode(_fixtureManifest));
+      bundleDir = Directory.systemTemp.createTempSync(
+        'paddle-ocr-vl-hybrid-bundle-',
+      );
+      File(
+        '${bundleDir.path}/pipeline.json',
+      ).writeAsStringSync(jsonEncode(_fixtureManifest));
       snapshot = _SyntheticSnapshot(_tinyConfig());
       snapshotDir = Directory(snapshot.path);
       snapshot.write();
@@ -94,9 +97,15 @@ void main() {
         // Prompt: 5 prefix tokens + 144 image-token placeholders + 3
         // trailing tokens (matches bucket (1,24,24) merged-token count).
         final promptIds = <int>[
-          1, 2, 3, 4, 5,
+          1,
+          2,
+          3,
+          4,
+          5,
           ...List<int>.filled(_mergedTokens, _imageTokenId),
-          6, 7, 8,
+          6,
+          7,
+          8,
         ];
 
         final out = runner.generate(
@@ -122,6 +131,10 @@ void main() {
         expect(grid.$1, [3]);
         expect(grid.$2.toList(), [1, 24, 24]);
 
+        final pixels = inputs['pixel_values']! as (List<int>, Float32List);
+        expect(pixels.$1, [1, 24 * 24, 3 * 14 * 14]);
+        expect(pixels.$2.length, 24 * 24 * 3 * 14 * 14);
+
         // ── 2. token_embed / prefill_decoder / decode_decoder NEVER open ─
         expect(fake.openedStages, ['vision_embed']);
         expect(fake.byStage.containsKey('token_embed'), isFalse);
@@ -142,43 +155,45 @@ void main() {
       },
     );
 
-    test('placeholder count mismatch with chosen bucket throws StateError',
-        () async {
-      final fake = _FakeLoader(hiddenSize: _hiddenSize);
-      testCoremlLoaderOverride = fake;
+    test(
+      'placeholder count mismatch with chosen bucket throws StateError',
+      () async {
+        final fake = _FakeLoader(hiddenSize: _hiddenSize);
+        testCoremlLoaderOverride = fake;
 
-      final runner = await PaddleOcrVlHybridRunner.load(
-        coremlBundlePath: bundleDir.path,
-        mlxSnapshotPath: snapshotDir.path,
-      );
-      addTearDown(runner.close);
+        final runner = await PaddleOcrVlHybridRunner.load(
+          coremlBundlePath: bundleDir.path,
+          mlxSnapshotPath: snapshotDir.path,
+        );
+        addTearDown(runner.close);
 
-      final badPrompt = <int>[
-        1, 2, 3, 4, 5,
-        ...List<int>.filled(10, _imageTokenId), // wrong count
-        6, 7, 8,
-      ];
+        final badPrompt = <int>[
+          1, 2, 3, 4, 5,
+          ...List<int>.filled(10, _imageTokenId), // wrong count
+          6, 7, 8,
+        ];
 
-      expect(
-        () => runner.generate(
-          imageBytes: _whiteRgb(_imageDim, _imageDim),
-          imageHeight: _imageDim,
-          imageWidth: _imageDim,
-          promptIds: badPrompt,
-          maxNewTokens: 2,
-        ),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            allOf(contains('placeholder'), contains('10')),
+        expect(
+          () => runner.generate(
+            imageBytes: _whiteRgb(_imageDim, _imageDim),
+            imageHeight: _imageDim,
+            imageWidth: _imageDim,
+            promptIds: badPrompt,
+            maxNewTokens: 2,
           ),
-        ),
-      );
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('placeholder'), contains('10')),
+            ),
+          ),
+        );
 
-      // The placeholder-count guard fires before vision_embed.predict.
-      expect(fake.byStage['vision_embed']!.calls, isEmpty);
-    });
+        // The placeholder-count guard fires before vision_embed.predict.
+        expect(fake.byStage['vision_embed']!.calls, isEmpty);
+      },
+    );
   });
 }
 
@@ -362,56 +377,57 @@ class _SyntheticConfig {
   int get kvOutDim => numKeyValueHeads * headDim;
 
   Map<String, Object?> toConfigJson() => {
-        'architectures': ['PaddleOCRVLForConditionalGeneration'],
-        'head_dim': headDim,
-        'hidden_size': hiddenSize,
-        'image_token_id': _imageTokenId,
-        'intermediate_size': intermediateSize,
-        'num_attention_heads': numAttentionHeads,
-        'num_hidden_layers': numHiddenLayers,
-        'num_key_value_heads': numKeyValueHeads,
-        'rms_norm_eps': 1e-5,
-        'rope_scaling': {
-          'mrope_section': [1, 1, 2],
-          'rope_type': 'default',
-        },
-        'rope_theta': 500000,
-        'tie_word_embeddings': tieWordEmbeddings,
-        'vision_start_token_id': 101305,
-        'vision_end_token_id': 101306,
-        'eos_token_id': _eosTokenId,
-        'vocab_size': vocabSize,
-        'vision_config': {
-          'hidden_size': 8,
-          'image_size': 16,
-          'intermediate_size': 16,
-          'num_attention_heads': 2,
-          'num_channels': 3,
-          'num_hidden_layers': 2,
-          'patch_size': 4,
-          'spatial_merge_size': 2,
-          'layer_norm_eps': 1e-6,
-        },
-      };
+    'architectures': ['PaddleOCRVLForConditionalGeneration'],
+    'head_dim': headDim,
+    'hidden_size': hiddenSize,
+    'image_token_id': _imageTokenId,
+    'intermediate_size': intermediateSize,
+    'num_attention_heads': numAttentionHeads,
+    'num_hidden_layers': numHiddenLayers,
+    'num_key_value_heads': numKeyValueHeads,
+    'rms_norm_eps': 1e-5,
+    'rope_scaling': {
+      'mrope_section': [1, 1, 2],
+      'rope_type': 'default',
+    },
+    'rope_theta': 500000,
+    'tie_word_embeddings': tieWordEmbeddings,
+    'vision_start_token_id': 101305,
+    'vision_end_token_id': 101306,
+    'eos_token_id': _eosTokenId,
+    'vocab_size': vocabSize,
+    'vision_config': {
+      'hidden_size': 8,
+      'image_size': 16,
+      'intermediate_size': 16,
+      'num_attention_heads': 2,
+      'num_channels': 3,
+      'num_hidden_layers': 2,
+      'patch_size': 4,
+      'spatial_merge_size': 2,
+      'layer_norm_eps': 1e-6,
+    },
+  };
 }
 
 _SyntheticConfig _tinyConfig() => const _SyntheticConfig(
-      hiddenSize: 16,
-      intermediateSize: 32,
-      numHiddenLayers: 2,
-      numAttentionHeads: 2,
-      numKeyValueHeads: 1,
-      headDim: 8,
-      vocabSize: 32,
-      tieWordEmbeddings: false,
-    );
+  hiddenSize: 16,
+  intermediateSize: 32,
+  numHiddenLayers: 2,
+  numAttentionHeads: 2,
+  numKeyValueHeads: 1,
+  headDim: 8,
+  vocabSize: 32,
+  tieWordEmbeddings: false,
+);
 
 class _SyntheticSnapshot {
   _SyntheticSnapshot(this.config);
 
   final _SyntheticConfig config;
-  final Directory _dir =
-      Directory.systemTemp.createTempSync('paddle-ocr-vl-hybrid-snap-');
+  final Directory _dir = Directory.systemTemp.createTempSync(
+    'paddle-ocr-vl-hybrid-snap-',
+  );
   bool _disposed = false;
 
   String get path => _dir.path;
@@ -425,8 +441,9 @@ class _SyntheticSnapshot {
   }
 
   void write() {
-    File('${_dir.path}/config.json')
-        .writeAsStringSync(jsonEncode(config.toConfigJson()));
+    File(
+      '${_dir.path}/config.json',
+    ).writeAsStringSync(jsonEncode(config.toConfigJson()));
     final tensors = <String, MlxArray>{};
     try {
       _buildTensors(tensors);
@@ -447,27 +464,31 @@ class _SyntheticSnapshot {
     put('${lm}embed_tokens.weight', [config.vocabSize, config.hiddenSize]);
     put('${lm}norm.weight', [config.hiddenSize]);
     if (!config.tieWordEmbeddings) {
-      put('language_model.lm_head.weight',
-          [config.vocabSize, config.hiddenSize]);
+      put('language_model.lm_head.weight', [
+        config.vocabSize,
+        config.hiddenSize,
+      ]);
     }
     for (var i = 0; i < config.numHiddenLayers; i++) {
       final p = '${lm}layers.$i.';
       put('${p}input_layernorm.weight', [config.hiddenSize]);
       put('${p}post_attention_layernorm.weight', [config.hiddenSize]);
-      put('${p}self_attn.q_proj.weight',
-          [config.qOutDim, config.hiddenSize]);
-      put('${p}self_attn.k_proj.weight',
-          [config.kvOutDim, config.hiddenSize]);
-      put('${p}self_attn.v_proj.weight',
-          [config.kvOutDim, config.hiddenSize]);
-      put('${p}self_attn.o_proj.weight',
-          [config.hiddenSize, config.qOutDim]);
-      put('${p}mlp.gate_proj.weight',
-          [config.intermediateSize, config.hiddenSize]);
-      put('${p}mlp.up_proj.weight',
-          [config.intermediateSize, config.hiddenSize]);
-      put('${p}mlp.down_proj.weight',
-          [config.hiddenSize, config.intermediateSize]);
+      put('${p}self_attn.q_proj.weight', [config.qOutDim, config.hiddenSize]);
+      put('${p}self_attn.k_proj.weight', [config.kvOutDim, config.hiddenSize]);
+      put('${p}self_attn.v_proj.weight', [config.kvOutDim, config.hiddenSize]);
+      put('${p}self_attn.o_proj.weight', [config.hiddenSize, config.qOutDim]);
+      put('${p}mlp.gate_proj.weight', [
+        config.intermediateSize,
+        config.hiddenSize,
+      ]);
+      put('${p}mlp.up_proj.weight', [
+        config.intermediateSize,
+        config.hiddenSize,
+      ]);
+      put('${p}mlp.down_proj.weight', [
+        config.hiddenSize,
+        config.intermediateSize,
+      ]);
     }
     // visual.* tensors are intentionally absent — the hybrid loader uses
     // keepVisionWeights:false, which the loader handles even on

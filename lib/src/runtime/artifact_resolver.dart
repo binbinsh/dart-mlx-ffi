@@ -278,37 +278,37 @@ final class HuggingFaceArtifactCache implements RuntimeArtifactResolver {
     );
     await destination.parent.create(recursive: true);
     final tmp = File('${destination.path}.incomplete');
-    try {
-      await _withResponse(_fileUri(ref, filePath), (response) async {
-        if (response.statusCode != HttpStatus.ok) {
-          throw StateError(
-            'Hugging Face download failed for hf://${ref.repo}/$filePath: '
-            'HTTP ${response.statusCode} ${await _readError(response)}',
-          );
-        }
-        final sink = tmp.openWrite();
-        try {
-          await response.pipe(sink);
-        } finally {
-          await sink.close();
-        }
-      });
-      if (await destination.exists()) {
-        await destination.delete();
+    final resumeBytes = await tmp.exists() ? await tmp.length() : 0;
+    await _withResponse(_fileUri(ref, filePath), (response) async {
+      final append =
+          resumeBytes > 0 && response.statusCode == HttpStatus.partialContent;
+      if (response.statusCode != HttpStatus.ok &&
+          response.statusCode != HttpStatus.partialContent) {
+        throw StateError(
+          'Hugging Face download failed for hf://${ref.repo}/$filePath: '
+          'HTTP ${response.statusCode} ${await _readError(response)}',
+        );
       }
-      await tmp.rename(destination.path);
-    } catch (_) {
-      if (await tmp.exists()) {
-        await tmp.delete();
+      final sink = tmp.openWrite(
+        mode: append ? FileMode.append : FileMode.write,
+      );
+      try {
+        await response.pipe(sink);
+      } finally {
+        await sink.close();
       }
-      rethrow;
+    }, rangeStart: resumeBytes > 0 ? resumeBytes : null);
+    if (await destination.exists()) {
+      await destination.delete();
     }
+    await tmp.rename(destination.path);
   }
 
   Future<T> _withResponse<T>(
     Uri uri,
-    Future<T> Function(HttpClientResponse response) handle,
-  ) async {
+    Future<T> Function(HttpClientResponse response) handle, {
+    int? rangeStart,
+  }) async {
     final client = HttpClient()..connectionTimeout = timeout;
     try {
       var current = uri;
@@ -320,6 +320,9 @@ final class HuggingFaceArtifactCache implements RuntimeArtifactResolver {
           'dart-inference-runtime',
         );
         request.headers.set(HttpHeaders.acceptHeader, '*/*');
+        if (rangeStart != null && rangeStart > 0) {
+          request.headers.set(HttpHeaders.rangeHeader, 'bytes=$rangeStart-');
+        }
         if (_shouldAuthenticate(current)) {
           request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
         }

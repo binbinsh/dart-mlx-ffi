@@ -16,6 +16,7 @@ String? canonicalOnnxExecutionProvider(String value) {
   final normalized = value.trim().toLowerCase();
   return switch (normalized) {
     'cpu' || 'cpuexecutionprovider' => 'CPUExecutionProvider',
+    'coreml' || 'coremlexecutionprovider' => 'CoreMLExecutionProvider',
     'cuda' || 'cudaexecutionprovider' => 'CUDAExecutionProvider',
     'trt' ||
     'tensorrt' ||
@@ -93,8 +94,14 @@ final class DartOnnxSession {
   }
 
   static DartOnnxSession _loadNative(DartOnnxConfig config) {
+    // Send the canonical provider name (e.g. 'CoreMLExecutionProvider')
+    // to the native bridge so its provider-availability gate matches
+    // values returned by GetAvailableProviders. Falls back to the raw
+    // string for unknown aliases.
+    final canonicalProvider =
+        canonicalOnnxExecutionProvider(config.provider) ?? config.provider;
     final backendOptions = <String, Object?>{
-      'provider': config.provider,
+      'provider': canonicalProvider,
       'deviceId': config.deviceId,
       if (config.requireProvider) 'requireProvider': true,
       ...config.backendOptions,

@@ -63,8 +63,8 @@ final class PaddleOcrVlHybridRunner {
     required this.manifest,
     required CoremlSession visionEmbed,
     required PaddleOcrVlRunner mlxRunner,
-  })  : _visionEmbed = visionEmbed,
-        _mlxRunner = mlxRunner;
+  }) : _visionEmbed = visionEmbed,
+       _mlxRunner = mlxRunner;
 
   /// Directory containing `pipeline.json` + the `vision_embed.mlpackage`.
   /// Other stages (`token_embed`, `prefill_decoder`, `decode_decoder`) may
@@ -174,11 +174,13 @@ final class PaddleOcrVlHybridRunner {
       spatialMergeSize: manifest.vision.spatialMerge,
     );
 
-    final mergedCount = bucket.$1 *
+    final mergedCount =
+        bucket.$1 *
         (bucket.$2 ~/ manifest.vision.spatialMerge) *
         (bucket.$3 ~/ manifest.vision.spatialMerge);
-    final placeholderCount =
-        promptIds.where((id) => id == manifest.tokens.imageTokenId).length;
+    final placeholderCount = promptIds
+        .where((id) => id == manifest.tokens.imageTokenId)
+        .length;
     if (placeholderCount != mergedCount) {
       throw StateError(
         'prompt has $placeholderCount image-token placeholders but bucket '
@@ -187,16 +189,20 @@ final class PaddleOcrVlHybridRunner {
     }
 
     // ── 2. CoreML vision_embed — only stage we open. ─────────────────────
+    final numPatches = bucket.$1 * bucket.$2 * bucket.$3;
     final gridI32 = Int32List.fromList([bucket.$1, bucket.$2, bucket.$3]);
     final visionOut = _visionEmbed.predict({
       'pixel_values': (
-        [1, 3, pre.resizedHeight, pre.resizedWidth],
+        [
+          1,
+          numPatches,
+          3 * manifest.vision.patchSize * manifest.vision.patchSize,
+        ],
         pre.pixelValues,
       ),
       'image_grid_thw': ([3], gridI32),
     });
-    final imageRecord =
-        visionOut['image_embeds']! as (List<int>, Float32List);
+    final imageRecord = visionOut['image_embeds']! as (List<int>, Float32List);
     final imageEmbedShape = imageRecord.$1;
     final imageEmbedFloats = imageRecord.$2;
     if (imageEmbedShape.length != 2) {
@@ -299,11 +305,13 @@ final class PaddleOcrVlHybridRunner {
       patchSize: manifest.vision.patchSize,
       spatialMergeSize: manifest.vision.spatialMerge,
     );
-    final mergedCount = bucket.$1 *
+    final mergedCount =
+        bucket.$1 *
         (bucket.$2 ~/ manifest.vision.spatialMerge) *
         (bucket.$3 ~/ manifest.vision.spatialMerge);
-    final placeholderCount =
-        promptIds.where((id) => id == manifest.tokens.imageTokenId).length;
+    final placeholderCount = promptIds
+        .where((id) => id == manifest.tokens.imageTokenId)
+        .length;
     if (placeholderCount != mergedCount) {
       throw StateError(
         'prompt has $placeholderCount image-token placeholders but bucket '
@@ -312,15 +320,19 @@ final class PaddleOcrVlHybridRunner {
     }
 
     final gridI32 = Int32List.fromList([bucket.$1, bucket.$2, bucket.$3]);
+    final numPatches = bucket.$1 * bucket.$2 * bucket.$3;
     final visionOut = _visionEmbed.predict({
       'pixel_values': (
-        [1, 3, pre.resizedHeight, pre.resizedWidth],
+        [
+          1,
+          numPatches,
+          3 * manifest.vision.patchSize * manifest.vision.patchSize,
+        ],
         pre.pixelValues,
       ),
       'image_grid_thw': ([3], gridI32),
     });
-    final imageRecord =
-        visionOut['image_embeds']! as (List<int>, Float32List);
+    final imageRecord = visionOut['image_embeds']! as (List<int>, Float32List);
     final imageEmbedShape = imageRecord.$1;
     final imageEmbedFloats = imageRecord.$2;
     if (imageEmbedShape.length != 2) {

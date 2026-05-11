@@ -193,12 +193,54 @@ final class _RuntimeCoremlSession implements CoremlSession {
         List<int>.unmodifiable(value.shape),
         Uint8List.fromList(value.asUint8List()),
       ),
-      RuntimeTensorDataType.float16 => throw StateError(
-        'CoreML output "$name" uses float16; PaddleOCR CoreML loader expects '
-        'float32 outputs.',
+      RuntimeTensorDataType.float16 => (
+        List<int>.unmodifiable(value.shape),
+        _float16BytesToFloat32List(value.bytes, value.byteLength),
       ),
     };
   }
+}
+
+Float32List _float16BytesToFloat32List(Uint8List bytes, int byteLength) {
+  if (byteLength.isOdd) {
+    throw StateError('Invalid float16 byte length: $byteLength');
+  }
+  final data = ByteData.view(bytes.buffer, bytes.offsetInBytes, byteLength);
+  final out = Float32List(byteLength ~/ 2);
+  for (var i = 0; i < out.length; i++) {
+    out[i] = _float16BitsToFloat32(data.getUint16(i * 2, Endian.little));
+  }
+  return out;
+}
+
+double _float16BitsToFloat32(int bits) {
+  final sign = (bits & 0x8000) == 0 ? 1.0 : -1.0;
+  final exponent = (bits >> 10) & 0x1f;
+  final fraction = bits & 0x03ff;
+  if (exponent == 0) {
+    if (fraction == 0) return sign == 1.0 ? 0.0 : -0.0;
+    return sign * (fraction / 1024.0) * 0.00006103515625;
+  }
+  if (exponent == 0x1f) {
+    if (fraction == 0) return sign * double.infinity;
+    return double.nan;
+  }
+  return sign * (1.0 + fraction / 1024.0) * _pow2(exponent - 15);
+}
+
+double _pow2(int exponent) {
+  if (exponent == 0) return 1.0;
+  var result = 1.0;
+  if (exponent > 0) {
+    for (var i = 0; i < exponent; i++) {
+      result *= 2.0;
+    }
+  } else {
+    for (var i = 0; i < -exponent; i++) {
+      result *= 0.5;
+    }
+  }
+  return result;
 }
 
 String _computeUnitsOption(CoremlComputeUnits units) => switch (units) {

@@ -31,6 +31,14 @@ import mlx.core as mx
 from mlx_vlm.utils import load, prepare_inputs
 
 PROMPT = "Describe this image briefly."
+PREFERRED_BUNDLE_IDS = {
+    "mlx-community/Qwen3.6-27B-4bit": "qwen3_6_27b",
+    "unsloth/Qwen3.6-27B-UD-MLX-4bit": "qwen3_6_27b",
+}
+SOURCE_MODEL_IDS = {
+    "mlx-community/Qwen3.6-27B-4bit": "Qwen/Qwen3.6-27B",
+    "unsloth/Qwen3.6-27B-UD-MLX-4bit": "Qwen/Qwen3.6-27B",
+}
 
 
 def prompt_for_model(model_id: str) -> str:
@@ -129,12 +137,19 @@ def python_forward(model_id: str):
     return model, processor, call_inputs, input_names, values, elapsed_ms
 
 
-def export_model(model_id: str, export_dir: Path):
+def export_model(
+    model_id: str,
+    export_dir: Path,
+    *,
+    bundle_id: str | None = None,
+    bundle_name: str | None = None,
+):
     export_dir.mkdir(parents=True, exist_ok=True)
     export_path = export_dir / "function.mlxfn"
     input_path = export_dir / "inputs.safetensors"
     input_names_path = export_dir / "input_names.json"
     inputs_json_path = export_dir / "inputs.json"
+    manifest_path = export_dir / "mlx_bundle.json"
 
     model, _processor, call_inputs = prepare_model_inputs(model_id)
     input_names = [
@@ -148,6 +163,13 @@ def export_model(model_id: str, export_dir: Path):
             inputs_json_path.write_text(
                 json.dumps({"input_order": input_names}),
                 encoding="utf-8",
+            )
+            write_bundle_manifest(
+                model_id=model_id,
+                export_dir=export_dir,
+                input_names=input_names,
+                bundle_id=bundle_id,
+                bundle_name=bundle_name,
             )
             del model, _processor, call_inputs
             cleanup_mlx(mx)
@@ -168,6 +190,8 @@ def export_model(model_id: str, export_dir: Path):
 
     if export_path.exists():
         export_path.unlink()
+    if manifest_path.exists():
+        manifest_path.unlink()
     mx.export_function(
         str(export_path),
         forward,
@@ -176,9 +200,54 @@ def export_model(model_id: str, export_dir: Path):
     mx.save_safetensors(str(input_path), {name: call_inputs[name] for name in input_names})
     input_names_path.write_text(json.dumps(input_names), encoding="utf-8")
     inputs_json_path.write_text(json.dumps({"input_order": input_names}), encoding="utf-8")
+    write_bundle_manifest(
+        model_id=model_id,
+        export_dir=export_dir,
+        input_names=input_names,
+        bundle_id=bundle_id,
+        bundle_name=bundle_name,
+    )
     del model, _processor, call_inputs
     cleanup_mlx(mx)
     return export_path, input_path, input_names
+
+
+def write_bundle_manifest(
+    *,
+    model_id: str,
+    export_dir: Path,
+    input_names: list[str],
+    bundle_id: str | None = None,
+    bundle_name: str | None = None,
+) -> Path:
+    manifest_path = export_dir / "mlx_bundle.json"
+    resolved_bundle_id = bundle_id or PREFERRED_BUNDLE_IDS.get(model_id) or slug(model_id)
+    manifest = {
+        "id": resolved_bundle_id,
+        "name": bundle_name or model_id.rsplit("/", maxsplit=1)[-1].replace("-", " "),
+        "kind": "vlm",
+        "description": "Exported MLX vision-language forward graph",
+        "source_model_id": model_id,
+        "entrypoint": "function.mlxfn",
+        "sample_inputs": "inputs.safetensors",
+        "input_names": input_names,
+        "output_names": ["logits"],
+        "metadata": {
+            "schema_version": 1,
+            "exporter": "dart-inference/benchmark/vlm_export_sweep.py",
+            "inputs_json": "inputs.json",
+            **(
+                {"source_model": source_model}
+                if (source_model := SOURCE_MODEL_IDS.get(model_id)) is not None
+                else {}
+            ),
+        },
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
 
 
 def dart_forward(

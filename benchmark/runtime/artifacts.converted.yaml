@@ -72,15 +72,15 @@ models:
     platforms:
       ios:
         engine: coreml
-        artifact: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
-        source_uri: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        artifact: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_chunks_mlkv
+        source_uri: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_chunks_mlkv
         artifact_source: huggingface
         baseline_engine: coreml-llm
         coreml_mode: decode
       macos:
         engine: coreml
-        artifact: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
-        source_uri: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_int8_mseq128.mlpackage
+        artifact: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_chunks_mlkv
+        source_uri: hf://mlboydaisuke/qwen3.5-0.8B-CoreML/qwen3_5_0_8b_decode_chunks_mlkv
         artifact_source: huggingface
         baseline_engine: coreml-llm
         coreml_mode: decode

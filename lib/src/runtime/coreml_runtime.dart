@@ -101,6 +101,11 @@ class CoremlResetStateException implements Exception {
   String toString() => 'CoremlResetStateException(code=$code, $message)';
 }
 
+/// Implemented by native Core ML sessions that can clear their `MLState`.
+abstract interface class CoremlStateResettable {
+  void resetCoremlState();
+}
+
 /// Clear the `MLState` held by a Core ML pipeline session.
 ///
 /// `session` must be the opaque pointer returned by `dinf_open` for a

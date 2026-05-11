@@ -45,7 +45,8 @@ void main(List<String> arguments) async {
       code: code,
     );
 
-    if (_isAppleTarget(code.targetOS)) {
+    if (_isAppleTarget(code.targetOS) &&
+        code.targetArchitecture == Architecture.arm64) {
       await _buildMlxAsset(
         logger,
         input: input,
@@ -53,6 +54,11 @@ void main(List<String> arguments) async {
         packageRoot: packageRoot,
         packageRootPath: packageRootPath,
         code: code,
+      );
+    } else if (_isAppleTarget(code.targetOS)) {
+      logger.warning(
+        'Skipping MLX native asset for ${code.targetOS.name}/'
+        '${_appleArchitectureName(code.targetArchitecture)}.',
       );
     }
 
@@ -85,7 +91,7 @@ Future<void> _buildRuntimeAsset(
   final cxxCompiler = _deriveCppCompiler(compiler);
   final generator = _cmakeGenerator();
   final runtimeEnv = _runtimeBuildEnvironment(packageRootPath);
-  final ortEnabled =
+  final configuredOrtEnabled =
       _runtimeEnvValue(runtimeEnv, 'DART_INFERENCE_ENABLE_ORT') == '1';
   final ortInclude = _runtimeEnvValue(
     runtimeEnv,
@@ -95,6 +101,12 @@ Future<void> _buildRuntimeAsset(
   final ortRuntimeLibrary = _runtimeEnvValue(
     runtimeEnv,
     'DART_INFERENCE_ORT_RUNTIME_LIBRARY',
+  );
+  final ortEnabled = _resolveOrtEnabled(
+    logger,
+    code: code,
+    configured: configuredOrtEnabled,
+    libraryPath: ortLibrary,
   );
   final litertRuntimeLibrary =
       _runtimeEnvValue(runtimeEnv, 'DART_INFERENCE_LITERT_LIBRARY') ??
@@ -310,7 +322,9 @@ Future<void> _buildMlxAsset(
   );
 
   if (!File.fromUri(libraryFile).existsSync()) {
-    throw StateError('Expected MLX native library was not produced: $libraryFile');
+    throw StateError(
+      'Expected MLX native library was not produced: $libraryFile',
+    );
   }
 
   output.assets.code.add(
@@ -341,10 +355,12 @@ Future<void> _bundleRuntimeDependency(
   final filename = source.uri.pathSegments.last;
   final destination = outputDirectory.resolve(filename);
   final destinationPath = destination.toFilePath();
+  final destinationFile = File(destinationPath);
   if (source.absolute.path != File(destinationPath).absolute.path) {
     logger.info('Bundling native runtime dependency $sourcePath');
     await source.copy(destinationPath);
   }
+  await _ensureOwnerWritable(destinationFile);
   output.dependencies.add(source.uri);
   output.assets.code.add(
     CodeAsset(
@@ -369,6 +385,18 @@ Future<void> _bundleRuntimeDependency(
         linkMode: DynamicLoadingBundled(),
         file: alias.uri,
       ),
+    );
+  }
+}
+
+Future<void> _ensureOwnerWritable(File file) async {
+  if (Platform.isWindows || !file.existsSync()) {
+    return;
+  }
+  final result = await Process.run('chmod', ['u+w', file.path]);
+  if (result.exitCode != 0) {
+    throw StateError(
+      'Failed to make native runtime dependency writable: ${file.path}',
     );
   }
 }
@@ -542,14 +570,6 @@ Future<bool> _resolveMetalSupport(
   CodeConfig code,
   String sdkName,
 ) async {
-  if (code.targetOS == OS.iOS && code.iOS.targetSdk == IOSSdk.iPhoneSimulator) {
-    logger.warning(
-      'Metal is disabled for iphonesimulator builds. '
-      'The simulator toolchain currently produces incompatible deployment '
-      'flags when compiling MLX Metal kernels.',
-    );
-    return false;
-  }
   return _hasMetalToolchain(logger, sdkName);
 }
 
@@ -559,11 +579,7 @@ Future<Set<Uri>> _collectDependencies(Uri packageRoot) async {
   if (runtimeOverride != null) {
     dependencies.add(runtimeOverride.uri);
   }
-  for (final relativePath in const [
-    'native',
-    'vendors',
-    'hook/build.dart',
-  ]) {
+  for (final relativePath in const ['native', 'vendors', 'hook/build.dart']) {
     final uri = packageRoot.resolve(relativePath);
     final type = FileSystemEntity.typeSync(uri.toFilePath());
     if (type == FileSystemEntityType.notFound) {
@@ -590,6 +606,94 @@ bool _supportsRuntime(OS os) =>
     os == OS.windows ||
     os == OS.linux ||
     os == OS.android;
+
+bool _resolveOrtEnabled(
+  Logger logger, {
+  required CodeConfig code,
+  required bool configured,
+  required String? libraryPath,
+}) {
+  if (!configured) {
+    return false;
+  }
+
+  final expectedApplePlatform = _expectedAppleOrtPlatform(code);
+  if (expectedApplePlatform == null) {
+    return true;
+  }
+
+  final expectedAppleArch = _appleArchitectureName(code.targetArchitecture);
+  if (!_appleDylibSupportsArchitecture(libraryPath, expectedAppleArch)) {
+    logger.warning(
+      'Disabling ONNX Runtime for ${code.targetOS.name}/$expectedAppleArch: '
+      '$libraryPath does not contain that architecture.',
+    );
+    return false;
+  }
+
+  final actualApplePlatform = _appleDylibPlatform(libraryPath);
+  if (actualApplePlatform == null ||
+      actualApplePlatform == expectedApplePlatform) {
+    return true;
+  }
+
+  logger.warning(
+    'Disabling ONNX Runtime for ${code.targetOS.name}: $libraryPath was built '
+    'for $actualApplePlatform, expected $expectedApplePlatform.',
+  );
+  return false;
+}
+
+String? _expectedAppleOrtPlatform(CodeConfig code) {
+  if (code.targetOS == OS.macOS) {
+    return 'MACOS';
+  }
+  if (code.targetOS == OS.iOS) {
+    return switch (code.iOS.targetSdk) {
+      IOSSdk.iPhoneOS => 'IOS',
+      IOSSdk.iPhoneSimulator => 'IOSSIMULATOR',
+      IOSSdk() => null,
+    };
+  }
+  return null;
+}
+
+String? _appleDylibPlatform(String? path) {
+  if (path == null || path.isEmpty || !Platform.isMacOS) {
+    return null;
+  }
+  final file = File(path);
+  if (!file.existsSync()) {
+    return null;
+  }
+  final result = Process.runSync('xcrun', ['vtool', '-show-build', path]);
+  if (result.exitCode != 0) {
+    return null;
+  }
+  final match = RegExp(
+    r'^\s*platform\s+(\S+)\s*$',
+    multiLine: true,
+  ).firstMatch(result.stdout.toString());
+  return match?.group(1);
+}
+
+bool _appleDylibSupportsArchitecture(String? path, String architecture) {
+  if (path == null || path.isEmpty || !Platform.isMacOS) {
+    return true;
+  }
+  final file = File(path);
+  if (!file.existsSync()) {
+    return false;
+  }
+  final result = Process.runSync('lipo', ['-info', path]);
+  if (result.exitCode != 0) {
+    return true;
+  }
+  final output = '${result.stdout}\n${result.stderr}';
+  return output.contains('architecture: $architecture') ||
+      output.contains('are:') &&
+          RegExp('(?:^|\\s)$architecture(?:\\s|\$)').hasMatch(output);
+}
 
 String? _dynamicLibraryPath(String? path) {
   if (path == null || path.isEmpty) {
