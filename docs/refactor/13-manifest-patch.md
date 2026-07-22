@@ -1,9 +1,9 @@
 # Commit #13 — manifest patch for the hybrid PaddleOCR-VL runner
 
 This document captures the edits the user must apply to
-[`lib/src/models/shared/manifest.dart`](../../lib/src/models/shared/manifest.dart)
+`models/shared/dart_contracts/lib/manifest.dart`
 **after** the decoder-only MLX 4-bit snapshot produced by
-[`models/text_lm/convert_paddle_ocr_vl_decoder.sh`](../../models/text_lm/convert_paddle_ocr_vl_decoder.sh)
+`models/dart/tool/text_lm/convert_paddle_ocr_vl_decoder.sh`
 has been uploaded to Hugging Face.
 
 `manifest.dart` is **not edited in this commit** because that file already
@@ -24,8 +24,8 @@ carries unrelated WIP changes from earlier in the hybrid OCR refactor
 ## Edits
 
 The current state of the `paddle_ocr_vl` `ModelSpec` lives at
-`lib/src/models/shared/manifest.dart:220-253` (line numbers approximate;
-this section may have shifted under WIP edits).
+`models/shared/dart_contracts/lib/manifest.dart` (line numbers may have shifted
+under WIP edits).
 
 ### 1. `mlxRepo` — point at the new decoder-only snapshot
 
@@ -61,7 +61,7 @@ GPU memory.
 ```
 
 `PaddleOcrVlHybridRunner` is in
-[`lib/src/models/paddle_ocr_vl/hybrid_runner.dart`](../../lib/src/models/paddle_ocr_vl/hybrid_runner.dart).
+`models/paddle_ocr_vl/dart/hybrid_runner.dart`.
 Note that commit #11 (parallel) deletes the legacy
 `PaddleOcrVlCoremlRunner`, so leaving this string at `*.CoremlRunner.load`
 will reference a non-existent class.
@@ -83,9 +83,9 @@ no longer accurate.
 **Recommendation: do NOT add `config.json` to `requiredFiles`.**
 
 Evidence (from
-[`lib/src/models/paddle_ocr_vl/hybrid_runner.dart:103-130`](../../lib/src/models/paddle_ocr_vl/hybrid_runner.dart),
-[`lib/src/models/paddle_ocr_vl/runner_load.dart`](../../lib/src/models/paddle_ocr_vl/runner_load.dart),
-and [`lib/src/models/shared/tensor_map.dart`](../../lib/src/models/shared/tensor_map.dart)):
+`models/paddle_ocr_vl/dart/hybrid_runner.dart`,
+`models/paddle_ocr_vl/dart/runner_load.dart`,
+and `models/shared/dart/tensor_map.dart`):
 
 | File on disk                          | Read by                                   | Side                  |
 |---------------------------------------|-------------------------------------------|-----------------------|
@@ -122,8 +122,8 @@ that directly. No change.
 2. `dart test test/manifest_test.dart` — should pass (note: this file
    itself has unrelated WIP edits in commit #11/#12; merge ordering may
    matter).
-3. End-to-end smoke via `benchmark/paddle_ocr_vl/dart_bench.dart` (or
-   whatever the post-#11 hybrid bench entry point is named) against the
+3. End-to-end smoke via the current `models/validation/runtime/` matrix or
+   model-specific Dart smoke entry point against the
    newly-published HF repo.
 
 ## Architectures patch reference
@@ -151,7 +151,7 @@ yet expose `Ernie4_5ForCausalLM`, fall back via the wrapper's
 `--architecture` argument:
 
 ```sh
-uv run python models/text_lm/patch_decoder_config.py \
+uv run python models/dart/tool/text_lm/patch_decoder_config.py \
   --config ~/snapshots/paddleocr-vl-ernie-mlx-4bit/config.json \
   --architecture ErnieForCausalLM
 ```

@@ -1,5 +1,6 @@
 # System files
 .DS_Store
+.com.apple.backupd.*
 *.class
 *.log
 *.swp
@@ -55,6 +56,7 @@ __pycache__/
 /vendors/CoreML-*
 /vendors/mlx-audio
 /vendors/mlx-vlm
+/third_party/
 
 # Native build outputs
 **/build/

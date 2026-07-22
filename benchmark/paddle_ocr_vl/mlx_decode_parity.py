@@ -3,7 +3,7 @@
 This script closes the test-coverage gap that opens once commit #11 of the
 hybrid-OCR refactor (issue #1) retires the CoreML decode stage and the
 existing Stage C parity check in
-``benchmark/runtime/converters/paddleocr_vl_coreml/parity.py``. After that
+``models/validation/runtime/converters/paddleocr_vl_coreml/parity.py``. After that
 removal the only path through the decoder is the new MLX runner driven by
 ``PaddleOcrVlHybridRunner``; this script asserts numerical agreement of
 that path against the HF PyTorch reference for K greedy decode steps.

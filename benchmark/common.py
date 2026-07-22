@@ -113,7 +113,7 @@ def benchmark_dart_export(
     cmd = [
         "dart",
         "run",
-        "benchmark/runtime/dart_runtime_runner.dart",
+        "../../../models/validation/runtime/dart_runtime_runner.dart",
         "--model-id",
         "mlx_export",
         "--engine",

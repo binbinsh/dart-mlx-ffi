@@ -7,9 +7,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'package:dart_inference/dart_mlx_ffi.dart';
-import 'package:dart_inference/models.dart'
-    show Qwen3AsrCoreMlRunner, Qwen3AsrNativeRunner;
 import 'package:dart_inference/runtime.dart';
+
+import 'package:gridheap_model_modules/qwen3_asr.dart'
+    show Qwen3AsrCoreMlRunner, Qwen3AsrNativeRunner;
+import 'package:gridheap_model_contracts/model_spec.dart';
+import 'package:gridheap_model_contracts/manifest.dart';
+import 'package:gridheap_model_contracts/runtime_metadata.dart';
 
 const _runtimeSmokeEnabled = bool.fromEnvironment(
   'DMF_RUNTIME_SMOKE',

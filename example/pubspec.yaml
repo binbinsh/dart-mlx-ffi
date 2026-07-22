@@ -32,6 +32,8 @@ dependencies:
     sdk: flutter
   dart_inference:
     path: ..
+  gridheap_model_modules:
+    path: ../../../../models/dart
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

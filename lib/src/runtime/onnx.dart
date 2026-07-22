@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import '../models/shared/model_spec.dart';
-import '../models/shared/runtime_metadata.dart';
+import 'package:gridheap_model_contracts/model_spec.dart';
+import 'package:gridheap_model_contracts/runtime_metadata.dart';
 import 'native_tensor_buffers.dart';
 import 'runtime.dart';
 import 'runtime_deps.dart';

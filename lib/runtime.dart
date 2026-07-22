@@ -5,12 +5,9 @@
 /// Runtime, LiteRT, and native-backed MLX backends.
 library;
 
-export 'src/models/shared/model_spec.dart'
-    show ModelModality, ModelSpec, QuantScheme;
-export 'src/models/shared/manifest.dart';
-export 'src/models/shared/runtime_metadata.dart';
 export 'src/runtime/artifact_resolver.dart';
 export 'src/runtime/coreml_layout.dart';
+export 'src/runtime/input_json.dart';
 export 'src/runtime/native_byte_buffer.dart' show NativeByteBuffer;
 export 'src/runtime/native_float32_source.dart'
     show

@@ -2,5 +2,4 @@
 library;
 
 export 'mlx.dart';
-export 'models.dart';
 export 'runtime.dart';

@@ -7,7 +7,7 @@ import 'dart:typed_data';
 import 'native_ffi.dart' as dz;
 import 'package:ffi/ffi.dart';
 
-import '../models/shared/runtime_metadata.dart';
+import 'package:gridheap_model_contracts/runtime_metadata.dart';
 import 'native_ffi_types.dart';
 import 'native_bindings.dart' as native;
 import 'native_byte_buffer.dart';

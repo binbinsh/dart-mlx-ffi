@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:test/test.dart';
 
-import '../benchmark/runtime/input_json.dart';
 import 'package:dart_inference/runtime.dart';
 
 void main() {

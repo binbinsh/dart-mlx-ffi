@@ -24,6 +24,10 @@ endif()
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../vendors/mlx
                  ${CMAKE_CURRENT_BINARY_DIR}/mlx)
 
+if(TARGET mlx-embedded-metallib AND TARGET mlx-metallib)
+  add_dependencies(mlx-embedded-metallib mlx-metallib)
+endif()
+
 set(MLXC_SRC
     ${CMAKE_CURRENT_LIST_DIR}/bridge_core.cpp
     ${CMAKE_CURRENT_LIST_DIR}/bridge_array.cpp

@@ -24,8 +24,8 @@ swift benchmark/coreml-llm/baseline_runner.swift \
   --model-id qwen3_5 \
   --artifact /path/to/coreml-llm-model \
   --task text \
-  --prompt-file benchmark/runtime/fixtures/text_prompt.txt \
-  --out benchmark/out/runtime/qwen3_5/ios/coreml_llm.json
+  --prompt-file ../../../models/validation/runtime/fixtures/text_prompt.txt \
+  --out ../../../models/validation/out/runtime/qwen3_5/ios/coreml_llm.json
 ```
 
 To validate the package without building every upstream sample executable:

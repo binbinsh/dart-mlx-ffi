@@ -2,8 +2,14 @@
 
 ### Unreleased
 
+- Removed the Dart model aggregate and model re-export entrypoints from
+  `dart_inference`; model-specific Dart code now lives under
+  `0x-software/models/<model>/dart/` and callers import those model modules
+  directly.
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.85`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.124`.
+- Fixed clean parallel MLX builds by ordering Metal library generation before
+  the embedded metallib target consumes its output.
 - Added a generic TTS ONNX component bundle that can inspect, load, run, and metadata-smoke any provider ONNX target declared in the catalog, so newly exported Chatterbox, IndexTTS2, NeuTTS Air, Dia2, VibeVoice, and Qwen3-TTS graphs automatically use the same Dart -> native FFI -> ONNX Runtime path.
 - Added Sarashina2 TensorRT EPContext preparation and auto-discovery so the direct Dart/FFI ONNX path can use a cached TensorRT flow-step engine without a TTS server process.
 - Fixed ONNX session `requireProvider=false` fallback so CUDA/TensorRT initialization failures retry with sanitized CPU options instead of blocking component bundle loads.
@@ -147,7 +153,7 @@
 ### 26.405.15
 
 - Removed the experimental private ANE and Core ML bridge surfaces from the Dart API, native build, tests, local tooling, and vendored `espresso_ane` sources so the package scope is MLX-only again.
-- Added a Dart `PaddleOCR-VL` runner under `lib/src/models/paddle_ocr_vl/` and exported `PaddleOcrVlRunner` / `PaddleOcrVlConfig` from `lib/models.dart`.
+- Added a Dart `PaddleOCR-VL` runner now owned under `models/paddle_ocr_vl/dart/` and exported through the model Module aggregate.
 - Simplified the package build hook and native CMake configuration after the ANE removal, including dropping the `DART_INFERENCE_ENABLE_PRIVATE_ANE` toggle and the now-unused `coremltools` Python dependency.
 - Patched the vendored MLX Metal build scripts to honor the active Apple SDK and deployment flags for iOS builds, and to skip `jaccl` on iOS.
 
@@ -155,7 +161,7 @@
 
 - Replaced `mlx-community/Kimi-K2-Instruct-4bit` in the publish-time text matrix with the official `unsloth/gemma-4-E2B-it-UD-MLX-4bit` MLX snapshot and verified `Python MLX` vs `Dart MLX` parity at `0` max abs diff.
 - Added a dedicated `unsloth_mlx` publish benchmark runner so release reports can use official MLX snapshots that require patched `mlx-lm` model definitions, including `Gemma 4`.
-- Regenerated the 10-model publish report and refreshed `README.md` / `models/text_lm/README.md` to document the current benchmark matrix, timings, and `HF_HUB_DISABLE_XET=1` reproduce path for large Hub downloads.
+- Regenerated the 10-model publish report and refreshed `README.md` / `models/dart/tool/text_lm/README.md` to document the current benchmark matrix, timings, and `HF_HUB_DISABLE_XET=1` reproduce path for large Hub downloads.
 
 ### 26.331.11
 
@@ -166,8 +172,8 @@
 
 ### 26.325.7
 
-- Moved Dart model implementations out of `benchmark/` and into `lib/src/models/`, including `parakeet_tdt`, `qwen2_5`, `kitten_tts`, shared helpers, and synthetic benchmark code.
-- Added `lib/models.dart` as the unified public export surface for Dart model implementations.
+- Moved Dart model implementations out of `benchmark/` and, in the current repository layout, into `models/<model>/dart/`, including `parakeet_tdt`, `qwen2_5`, `kitten_tts`, shared helpers, and synthetic benchmark code.
+- Added `models/dart/lib/` as the unified public export surface for Dart model implementations.
 - Renamed benchmark sweep scripts away from `recent_*` naming and introduced `publish_model_list.json` plus `parakeet_tdt_sweep.py`.
 - Added `TDT v3` to the publish benchmark list and regenerated `benchmark/out/publish_report.json` with `14` rows.
 - Fixed multiple `dart-inference` native bridge ops to run on `default_device_stream()` where appropriate, including `addmm` and `conv2d`, improving Dart MLX parity and speed.

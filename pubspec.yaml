@@ -1,9 +1,10 @@
 name: dart_inference
-description: Dart FFI inference runtime for Core ML, ONNX Runtime, and LiteRT backends
-version: 1.2026.85
-homepage: https://github.com/binbinsh/dart-inference
-repository: https://github.com/binbinsh/dart-inference
-issue_tracker: https://github.com/binbinsh/dart-inference/issues
+description: Private Dart FFI runtime module for Grid Heap 0x Software
+version: 1.2026.124
+publish_to: none
+homepage: https://0x.software
+repository: https://github.com/gridheap-inc/0x-software
+issue_tracker: https://github.com/gridheap-inc/0x-software/issues
 
 topics:
   - ffi
@@ -24,6 +25,8 @@ dependencies:
   archive: ^4.0.7
   code_assets: ^1.0.0
   ffi: ^2.1.4
+  gridheap_model_contracts:
+    path: ../../../models/shared/dart_contracts
   hooks: ^1.0.0
   logging: ^1.3.0
   path: ^1.9.1

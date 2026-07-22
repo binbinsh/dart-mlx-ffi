@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:dart_inference/runtime.dart';
+import 'runtime.dart' show RuntimeTensor, RuntimeTensorDataType;
 
 Map<String, Object?> readRuntimeInputsJson(String path) {
   final file = File(path);

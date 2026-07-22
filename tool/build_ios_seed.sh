@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+MODEL_PLATFORM_ROOT="$(cd "${PACKAGE_DIR}/../../.." && pwd)"
+DEFAULT_OCR_FIXTURE="${MODEL_PLATFORM_ROOT}/models/validation/runtime/fixtures/image.png"
+
 MODEL_SNAPSHOT="${MODEL_SNAPSHOT:-$HOME/.cache/huggingface/hub/models--mlx-community--PaddleOCR-VL-1.5-8bit/snapshots/37d4c85284434b6e6fd4c03f8b719b1aefaa013c}"
 OUT_ROOT="${OUT_ROOT:-/tmp/paddle_ios_seed}"
 DOCS_ROOT="${OUT_ROOT}/Documents"
 MODEL_OUT="${DOCS_ROOT}/paddle_ocr_vl_model"
 CASES_OUT="${DOCS_ROOT}/paddle_ocr_vl_cases"
 
-PHOTO_IMAGE="${PHOTO_IMAGE:-/Users/binbinsh/Pictures/Photos Library.photoslibrary/resources/renders/E/E9B2420E-9029-4146-9BE9-47F0380FAB9E_1_201_a.jpeg}"
+PHOTO_IMAGE="${PHOTO_IMAGE:-${DEFAULT_OCR_FIXTURE}}"
 PHOTO_MAX_PIXELS="${PHOTO_MAX_PIXELS:-401408}"
 
-RECIPE_IMAGE="${RECIPE_IMAGE:-/Users/binbinsh/Projects/Personal/chef-de-mise/test-ocr-input.jpg}"
+RECIPE_IMAGE="${RECIPE_IMAGE:-${DEFAULT_OCR_FIXTURE}}"
 RECIPE_MAX_PIXELS="${RECIPE_MAX_PIXELS:-501760}"
 
 CASES="${CASES:-photo_render_512,recipe_ref_501760}"

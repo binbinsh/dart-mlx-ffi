@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:dart_inference/runtime.dart';
 
 import 'onnx_server_preflight.dart';
+import 'package:gridheap_model_contracts/model_spec.dart';
+import 'package:gridheap_model_contracts/runtime_metadata.dart';
 
 Future<void> main(List<String> args) async {
   final parsed = _Args(args);

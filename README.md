@@ -11,8 +11,7 @@ Dart API -> dinf_* ABI -> native -> private C/C++/ObjC++ libs
 
 Dart exposes the migrated MLX stable/raw tensor APIs through package-owned FFI.
 Model sessions, tensor packing, backend dispatch, and native memory ownership
-belong behind the native runtime boundary. MLX tensor APIs are exposed through
-the package-owned Dart FFI bridge for compatibility with `dart_mlx_ffi`.
+belong behind the native runtime seam.
 
 ## Status
 
@@ -28,7 +27,6 @@ the package-owned Dart FFI bridge for compatibility with `dart_mlx_ffi`.
 
 - `package:dart_inference/dart_inference.dart`
 - `package:dart_inference/runtime.dart`
-- `package:dart_inference/models.dart`
 - `package:dart_inference/mlx.dart`
 - `package:dart_inference/raw.dart`
 - `package:dart_inference/dart_mlx_ffi.dart`
@@ -81,15 +79,12 @@ Useful runtime build environment variables:
 The Dart helpers also read `.dart_inference_runtime_env.json`, or the file named
 by `DART_INFERENCE_RUNTIME_ENV_FILE`, for staged native runtime paths.
 
-## Model Helpers
+## Model Implementations
 
-`models.dart` exports runtime-first helpers:
-
-- shared model specs, manifests, tuning, metadata, and small utilities
-- Kokoro ONNX TTS helpers
-- UniFrontend structured text helpers
-- MLX model helpers migrated from `dart_mlx_ffi`
-- TTS backend catalog and registry helpers
+Model-specific Dart Implementation code lives in the top-level model Module map
+under `../../../models/<model>/dart/`. This package does not re-export model
+Implementations; it supplies only the runtime Interface, FFI bridge, build hooks,
+native backend glue, and runtime helper types.
 
 ### UniFrontend TTS Smoke
 

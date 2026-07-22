@@ -32,25 +32,18 @@
   through the package-owned Dart FFI/native MLX bridge and avoid ad-hoc external
   converter or runtime paths.
 - For MLX snapshot preparation and benchmark inputs, use the repository's canonical conversion wrapper:
-  - [`models/text_lm/convert_unsloth_mlx.py`](models/text_lm/convert_unsloth_mlx.py)
+  - [`../../../models/dart/tool/text_lm/convert_unsloth_mlx.py`](../../../models/dart/tool/text_lm/convert_unsloth_mlx.py)
 - Treat that wrapper as the default path for:
   - benchmark runs
   - parity checks
   - reproducible local evaluation
 - Do not introduce alternative MLX conversion flows or ad-hoc manual converter invocations unless there is an explicit reason and that reason is documented in the change.
 
-## Publishing
+## Distribution
 
-- Refresh the publish benchmark report before releasing:
-  - `uv sync`
-  - `uv run --no-project --with mlx-lm --with pillow --with mlx-vlm --with mlx-audio --with parakeet-mlx python benchmark/publish_report.py`
-- Validate locally before release:
-  - `dart analyze`
-  - `dart test`
-  - `dart pub publish --dry-run`
-- Manual first publish:
-  - `dart pub publish`
-- GitHub Actions auto-publish can be enabled after the package exists on pub.dev.
-  - In pub.dev package admin, enable publishing from GitHub Actions for this repository.
-  - The release tag must match the package version format: `v<1.yyyy.commit-count>`.
-  - Example: `v1.2026.81`
+- This is a private `0x-software` module and must keep `publish_to: none` while
+  it depends on sibling model contracts by path.
+- Validate changes from this module directory with `dart analyze` and
+  `dart test`.
+- Keep the standalone repository as the source-history mirror used by the
+  `0x-software` submodule; release work happens from its `main` branch only.

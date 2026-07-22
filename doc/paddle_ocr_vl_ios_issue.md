@@ -79,7 +79,7 @@ These experiments did **not** materially change the slope:
 
 The repo also records the current findings in:
 
-- [paddle_ocr_vl_ios_runtime.md](/Users/binbinsh/Projects/Personal/dart-inference/doc/paddle_ocr_vl_ios_runtime.md)
+- `runtimes/dart-inference/current/doc/paddle_ocr_vl_ios_runtime.md`
 
 ## Why This Looks Runtime-Level
 
@@ -102,7 +102,7 @@ That combination makes the remaining leading hypothesis:
 Current repo-side artifacts:
 
 - Summary script:
-  [summarize_ios_runtime.py](/Users/binbinsh/Projects/Personal/dart-inference/tool/summarize_ios_runtime.py)
+  `runtimes/dart-inference/current/tool/summarize_ios_runtime.py`
 - Latest generated summary:
   `/tmp/ios_runtime_summary.md`
 - Example logs:

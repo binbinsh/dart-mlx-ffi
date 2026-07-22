@@ -6,6 +6,9 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 
 import 'package:dart_inference/runtime.dart';
+import 'package:gridheap_model_contracts/model_spec.dart';
+import 'package:gridheap_model_contracts/manifest.dart';
+import 'package:gridheap_model_contracts/runtime_metadata.dart';
 
 void main() {
   group('RuntimeResolver', () {
@@ -582,6 +585,7 @@ void main() {
           'ios': RuntimeValidationStatus(
             platform: 'ios',
             engine: RuntimeEngine.coreml,
+            identityPassed: true,
             correctnessPassed: true,
             speedPassed: true,
             peakMemoryPassed: true,
