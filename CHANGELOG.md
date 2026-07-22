@@ -7,7 +7,7 @@
   `0x-software/models/<model>/dart/` and callers import those model modules
   directly.
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
-- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.124`.
+- Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.151`.
 - Fixed clean parallel MLX builds by ordering Metal library generation before
   the embedded metallib target consumes its output.
 - Added a generic TTS ONNX component bundle that can inspect, load, run, and metadata-smoke any provider ONNX target declared in the catalog, so newly exported Chatterbox, IndexTTS2, NeuTTS Air, Dia2, VibeVoice, and Qwen3-TTS graphs automatically use the same Dart -> native FFI -> ONNX Runtime path.
