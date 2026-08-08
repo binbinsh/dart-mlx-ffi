@@ -4,7 +4,7 @@
 
 - Removed the Dart model aggregate and model re-export entrypoints from
   `dart_inference`; model-specific Dart code now lives under
-  `0x-software/models/<model>/dart/` and callers import those model modules
+  `airuntime-dev/models/<model>/dart/` and callers import those model modules
   directly.
 - Renamed the package to `dart_inference` and the repository identity to `dart-inference`.
 - Switched the package version format to `1.yyyy.commit-count`; this release is `1.2026.159`.

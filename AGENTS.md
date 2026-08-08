@@ -41,9 +41,9 @@
 
 ## Distribution
 
-- This is a private `0x-software` module and must keep `publish_to: none` while
+- This is a private `airuntime-dev` module and must keep `publish_to: none` while
   it depends on sibling model contracts by path.
 - Validate changes from this module directory with `dart analyze` and
   `dart test`.
 - Keep the standalone repository as the source-history mirror used by the
-  `0x-software` submodule; release work happens from its `main` branch only.
+  `airuntime-dev` submodule; release work happens from its `main` branch only.

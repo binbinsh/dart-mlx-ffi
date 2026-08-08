@@ -1,10 +1,10 @@
 name: dart_inference
-description: Private Dart FFI runtime module for Grid Heap 0x Software
+description: Private Dart FFI runtime module for Grid Heap AI Runtime
 version: 1.2026.159
 publish_to: none
-homepage: https://0x.software
-repository: https://github.com/gridheap-inc/0x-software
-issue_tracker: https://github.com/gridheap-inc/0x-software/issues
+homepage: https://airuntime.dev
+repository: https://github.com/gridheap-inc/airuntime-dev
+issue_tracker: https://github.com/gridheap-inc/airuntime-dev/issues
 
 topics:
   - ffi
